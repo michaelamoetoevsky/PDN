@@ -87,6 +87,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires CAP_SYS_ADMIN for mount syscall"]
     fn test_setup_cgroup_v2_creates_dirs() {
         let dir = tempdir().unwrap();
         // This will fail on non-Linux or without mount privileges,

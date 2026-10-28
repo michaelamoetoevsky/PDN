@@ -71,6 +71,7 @@ pub fn translate_host_to_guest(host_path: &Path, host_root: &std::path::Path, gu
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use std::io::Write;
 
     #[test]
     fn test_resolve_symlink_chain() {

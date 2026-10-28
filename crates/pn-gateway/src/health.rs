@@ -276,7 +276,7 @@ pub struct HealthStatus {
 
 impl HealthStatus {
     pub fn is_healthy(&self) -> bool {
-        self.checks.values().all(|c| c.status == HealthCheckStatus::Healthy)
+        !self.checks.is_empty() && self.checks.values().all(|c| c.status == HealthCheckStatus::Healthy)
     }
     
     fn update_overall(&mut self) {

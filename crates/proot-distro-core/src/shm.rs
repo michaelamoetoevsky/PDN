@@ -15,7 +15,22 @@ pub struct ShmManager {
 
 impl ShmManager {
     pub fn new() -> Result<Self> {
-        let shm_dir = dirs::runtime_dir()
+        let shm_dir = std::env::var("PN_SHM_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| {
+                // In test environment, use a temp directory
+                if cfg!(test) {
+                    // Use temp_dir() which should be writable, or current dir
+                    std::env::var("PN_TEST_ROOT")
+                        .ok()
+                        .map(|p| PathBuf::from(p).join("shm"))
+                        .or_else(|| Some(std::env::temp_dir().join("pn-next-test").join("shm")))
+                } else {
+                    None
+                }
+            })
+            .or_else(|| dirs::runtime_dir())
             .unwrap_or_else(|| std::path::PathBuf::from("/dev/shm"))
             .join("pn-next");
         

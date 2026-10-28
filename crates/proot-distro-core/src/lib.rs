@@ -54,14 +54,29 @@ pub struct ProotDistroCore {
 
 impl ProotDistroCore {
     pub fn new() -> Result<Self> {
+        let container_manager = ContainerManager::new()
+            .map_err(|e| anyhow::anyhow!("ContainerManager::new failed: {}", e))?;
+        let image_manager = ImageManager::new()
+            .map_err(|e| anyhow::anyhow!("ImageManager::new failed: {}", e))?;
+        let config_manager = ConfigManager::new()
+            .map_err(|e| anyhow::anyhow!("ConfigManager::new failed: {}", e))?;
+        let session_manager = SessionManager::new()
+            .map_err(|e| anyhow::anyhow!("SessionManager::new failed: {}", e))?;
+        let lock_manager = LockManager::new()
+            .map_err(|e| anyhow::anyhow!("LockManager::new failed: {}", e))?;
+        let sysdata_manager = SysdataManager::new()
+            .map_err(|e| anyhow::anyhow!("SysdataManager::new failed: {}", e))?;
+        let shm_manager = ShmManager::new()
+            .map_err(|e| anyhow::anyhow!("ShmManager::new failed: {}", e))?;
+        
         Ok(Self {
-            container_manager: ContainerManager::new()?,
-            image_manager: ImageManager::new()?,
-            config_manager: ConfigManager::new()?,
-            session_manager: SessionManager::new()?,
-            lock_manager: LockManager::new()?,
-            sysdata_manager: SysdataManager::new()?,
-            shm_manager: ShmManager::new()?,
+            container_manager,
+            image_manager,
+            config_manager,
+            session_manager,
+            lock_manager,
+            sysdata_manager,
+            shm_manager,
         })
     }
 
@@ -122,7 +137,18 @@ mod tests {
 
     #[test]
     fn test_init() {
+        // Don't set PN_TEST_ROOT - let it use temp_dir() fallback which is writable
+        // std::env::set_var("PN_TEST_ROOT", "/tmp/pn-next-test-init");
         let core = init();
+        if let Err(ref e) = core {
+            eprintln!("Init error: {}", e);
+            // Print full error chain
+            let mut source = e.source();
+            while let Some(err) = source {
+                eprintln!("  Caused by: {}", err);
+                source = err.source();
+            }
+        }
         assert!(core.is_ok());
     }
 }

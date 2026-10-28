@@ -15,7 +15,15 @@ pub struct ContainerPaths {
 
 impl ContainerPaths {
     pub fn new() -> Result<Self> {
-        let root = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/user")).join(".pn-next");
+        let root = dirs::home_dir()
+            .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
+            .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+            .or_else(|| std::env::var("PN_TEST_ROOT").ok().map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("/tmp/pn-next-test"));
+        
+        // Ensure we can create the directory
+        std::fs::create_dir_all(&root)?;
+        
         Ok(Self {
             root_dir: root.clone(),
             containers_dir: root.join("containers"),
