@@ -128,6 +128,20 @@ enum Commands {
         limit: usize,
     },
 
+    /// List active sessions (better formatted)
+    Sessions,
+
+    /// Attach to a container session (creates new session)
+    Attach {
+        /// Container name
+        container: String,
+        /// User to run as
+        #[arg(short, long)]
+        user: Option<String>,
+        /// Command to run instead of shell (after --)
+        command: Vec<String>,
+    },
+
     /// Show system information
     #[command(name = "info")]
     Info,
@@ -185,6 +199,8 @@ async fn execute_command(cmd: Commands) -> Result<()> {
         Commands::Login { container, user, command } => cmd_login(container, user, command).await,
         Commands::Run { container, command } => cmd_run(container, command).await,
         Commands::Ps => cmd_ps().await,
+        Commands::Sessions => cmd_sessions().await,
+        Commands::Attach { container, user, command } => cmd_attach(container, user, command).await,
         Commands::Kill { container } => cmd_kill(container).await,
         Commands::Remove { name, force } => cmd_remove(name, force).await,
         Commands::Search { query, limit } => cmd_search(query, limit).await,
@@ -289,6 +305,44 @@ async fn cmd_ps() -> Result<()> {
     Ok(())
 }
 
+async fn cmd_sessions() -> Result<()> {
+    println!("Active Sessions:");
+    println!("{:<20} {:<15} {:<15} {:<10} {}", "CONTAINER", "USER", "PID", "STATUS", "STARTED");
+    println!("{}", "-".repeat(75));
+
+    let status = Command::new("proot-distro")
+        .args(["ps"])
+        .status()?;
+
+    if !status.success() {
+        bail!("Failed to list sessions");
+    }
+    println!("\nNote: Use 'podnext attach <container>' to create a new session.");
+    Ok(())
+}
+
+async fn cmd_attach(container: String, user: Option<String>, command: Vec<String>) -> Result<()> {
+    let mut args: Vec<String> = vec!["login".to_string(), container];
+    if let Some(u) = user {
+        args.push("-u".to_string());
+        args.push(u);
+    }
+    if !command.is_empty() {
+        args.push("--".to_string());
+        args.extend(command);
+    }
+
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let status = Command::new("proot-distro")
+        .args(&args_ref)
+        .status()?;
+
+    if !status.success() {
+        bail!("Failed to attach to container");
+    }
+    Ok(())
+}
+
 async fn cmd_kill(container: String) -> Result<()> {
     let status = Command::new("proot-distro")
         .args(["kill", &container])
@@ -365,7 +419,9 @@ SUBCOMMANDS:
     list         List containers
     login        Start interactive shell in container
     run          Run command in container
-    ps           List active sessions
+    ps           List active sessions (raw)
+    sessions     List active sessions (formatted)
+    attach       Attach to container (creates new session)
     kill         Stop container
     remove       Delete container
     search       Search images on Docker Hub
@@ -390,6 +446,8 @@ EXAMPLES:
     podnext login ubuntu
     podnext run ubuntu -- apt update
     podnext list
+    podnext sessions
+    podnext attach ubuntu
     podnext search ubuntu
     podnext remove ubuntu
 

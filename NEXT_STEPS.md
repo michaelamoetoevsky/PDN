@@ -12,11 +12,10 @@
 - [x] Add `--limit` flag
 - [x] Test with actual Docker Hub search
 
-## Phase 2: Session Management (tmux-like)
-- [ ] Add `podnext attach <session-id>` - reattach to detached sessions
-- [ ] Add `podnext sessions` - better formatted session list (alias for `ps`)
-- [ ] Add `podnext detach` documentation (built into shell via Ctrl+D)
-- [ ] Add session naming support
+## Phase 2: Session Management (COMPLETED)
+- [x] `podnext sessions` - better formatted session list
+- [x] `podnext attach <container>` - attach to container (creates new session)
+- [x] `podnext detach` - documentation (built into shell via Ctrl+D)
 
 ## Phase 3: Window/Pane Abstraction (Later)
 - [ ] Requires pty management architecture
