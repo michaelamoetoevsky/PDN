@@ -119,6 +119,15 @@ enum Commands {
         force: bool,
     },
 
+    /// Search images on Docker Hub
+    Search {
+        /// Search query
+        query: String,
+        /// Limit results
+        #[arg(short, long, default_value = "25")]
+        limit: usize,
+    },
+
     /// Show system information
     #[command(name = "info")]
     Info,
@@ -178,14 +187,14 @@ async fn execute_command(cmd: Commands) -> Result<()> {
         Commands::Ps => cmd_ps().await,
         Commands::Kill { container } => cmd_kill(container).await,
         Commands::Remove { name, force } => cmd_remove(name, force).await,
+        Commands::Search { query, limit } => cmd_search(query, limit).await,
         Commands::Info => cmd_info().await,
         Commands::Version => cmd_version().await,
     }
 }
 
 async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result<()> {
-    let name_clone = name.clone();
-    let container_name = name.unwrap_or_else(|| {
+    let container_name = name.clone().unwrap_or_else(|| {
         image.split(':').next().unwrap_or(&image).to_string()
     });
 
@@ -197,7 +206,7 @@ async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result
         args.push("--force");
     }
     args.push(&image);
-    if let Some(n) = name_clone {
+    if let Some(_n) = name {
         // proot-distro doesn't support custom names directly, we'll rename after
     }
 
@@ -322,6 +331,23 @@ async fn cmd_info() -> Result<()> {
     Ok(())
 }
 
+async fn cmd_search(query: String, limit: usize) -> Result<()> {
+    let limit_str = limit.to_string();
+    let mut args = vec!["search"];
+    args.push("--limit");
+    args.push(&limit_str);
+    args.push(&query);
+
+    let status = Command::new("proot-distro")
+        .args(&args)
+        .status()?;
+
+    if !status.success() {
+        bail!("Failed to search images");
+    }
+    Ok(())
+}
+
 async fn cmd_version() -> Result<()> {
     println!("podnext 0.1.0");
     Ok(())
@@ -342,6 +368,7 @@ SUBCOMMANDS:
     ps           List active sessions
     kill         Stop container
     remove       Delete container
+    search       Search images on Docker Hub
     info         Show system information
     version      Show version
     help         Show this help
@@ -363,6 +390,7 @@ EXAMPLES:
     podnext login ubuntu
     podnext run ubuntu -- apt update
     podnext list
+    podnext search ubuntu
     podnext remove ubuntu
 
     # Direct execution (like proot)
