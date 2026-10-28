@@ -7,10 +7,10 @@
 - ✅ podnext CLI simplified, wrapping proot-distro
 - ✅ Release binary builds successfully
 
-## Phase 1: Search Command (IMMEDIATE)
-- [ ] Add `podnext search <query>` - wraps `proot-distro search`
-- [ ] Add `--limit` flag
-- [ ] Test with actual Docker Hub search
+## Phase 1: Search Command (COMPLETED)
+- [x] Add `podnext search <query>` - wraps `proot-distro search`
+- [x] Add `--limit` flag
+- [x] Test with actual Docker Hub search
 
 ## Phase 2: Session Management (tmux-like)
 - [ ] Add `podnext attach <session-id>` - reattach to detached sessions
