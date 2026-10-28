@@ -21,7 +21,7 @@ pub mod shm;
 pub mod network;
 pub mod storage;
 
-pub use container::{Container, ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus, ResourceLimits, NetworkConfig, SecurityConfig, BindMount, NetworkMode, PortMapping};
+pub use container::{Container, ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus, SessionInfo, ResourceLimits, NetworkConfig, SecurityConfig, BindMount, NetworkMode, PortMapping};
 pub use image::{Image, ImageManager, ImageSource};
 pub use config::{DistroConfig, Config, PathsConfig, LoggingConfig, FileRotationConfig, Repository, Scripts, InstallOptions};
 pub use install::{Installer};

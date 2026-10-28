@@ -54,6 +54,22 @@ impl ContainerManager {
         Ok(containers.values().map(|c| c.info()).collect())
     }
     
+    pub fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
+        // For now, return empty - sessions are managed by SessionManager
+        Ok(Vec::new())
+    }
+    
+    pub fn kill(&self, name: &str) -> Result<()> {
+        let mut containers = self.containers.lock().unwrap();
+        if let Some(container) = containers.get_mut(name) {
+            container.status = ContainerStatus::Stopped;
+            container.pid = None;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Container '{}' not found", name))
+        }
+    }
+    
     pub fn backup(&self, container: &Container, dest: &Path) -> Result<()> {
         // Implementation for backing up container
         Ok(())
@@ -244,4 +260,14 @@ pub enum ContainerStatus {
     Running,
     Paused,
     Error,
+}
+
+/// Session info for listing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub container_name: String,
+    pub user: String,
+    pub pid: Option<u32>,
+    pub status: String,
+    pub started_at: DateTime<Utc>,
 }

@@ -5,13 +5,18 @@
 use clap::{Parser, Subcommand, Args, ValueEnum};
 use anyhow::{Result, Context, bail};
 use std::path::PathBuf;
-use std::process::Command;
-use std::io::{self, Write};
 use tracing_subscriber::EnvFilter;
 
 mod utils;
+mod native;
 
 use utils::{parse_size, format_size, parse_container_path};
+use native::{
+    search_docker_hub, install_image_native, list_containers_native,
+    login_container_native, run_container_native, list_sessions_native,
+    kill_container_native, remove_container_native,
+};
+use proot_distro_core::{ContainerInfo, SessionInfo};
 
 #[derive(Parser)]
 #[command(name = "podnext")]
@@ -216,25 +221,11 @@ async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result
 
     println!("Installing '{}' as '{}'...", image, container_name);
 
-    // Use proot-distro directly for now since it works
-    let mut args = vec!["install"];
-    if force {
-        args.push("--force");
-    }
-    args.push(&image);
-    if let Some(_n) = name {
-        // proot-distro doesn't support custom names directly, we'll rename after
-    }
+    // Native installation using proot-distro-core + direct Docker Hub API
+    let rootfs: PathBuf = install_image_native(&image, &container_name, force, None).await?;
 
-    let status = Command::new("proot-distro")
-        .args(&args)
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to install image");
-    }
-
-    println!("Container '{}' installed successfully!", container_name);
+    println!("\nContainer '{}' installed successfully!", container_name);
+    println!("Rootfs: {}", rootfs.display());
     println!("\nTo start the container:");
     println!("  podnext login {}", container_name);
 
@@ -242,140 +233,77 @@ async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result
 }
 
 async fn cmd_list(all: bool) -> Result<()> {
-    let mut args = vec!["list"];
-    if all {
-        args.push("--all");
-    }
+    let containers = list_containers_native(all).await?;
 
-    let status = Command::new("proot-distro")
-        .args(&args)
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to list containers");
+    println!("{:<20} {:<15} {:<15} {:<12} {}", "NAME", "DISTRO", "VERSION", "STATUS", "CREATED");
+    println!("{}", "-".repeat(80));
+    for c in containers {
+        println!("{:<20} {:<15} {:<15} {:<12} {}", 
+            c.name, c.distro, c.version, format!("{:?}", c.status), c.created_at.format("%Y-%m-%d %H:%M"));
     }
     Ok(())
 }
 
 async fn cmd_login(container: String, user: Option<String>, command: Vec<String>) -> Result<()> {
-    let mut args: Vec<String> = vec!["login".to_string(), container];
-    if let Some(u) = user {
-        args.push("-u".to_string());
-        args.push(u);
-    }
-    if !command.is_empty() {
-        args.push("--".to_string());
-        args.extend(command);
-    }
-
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let status = Command::new("proot-distro")
-        .args(&args_ref)
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to login to container");
-    }
-    Ok(())
+    let cmd = if command.is_empty() {
+        vec!["/bin/bash".to_string()]
+    } else {
+        command
+    };
+    
+    login_container_native(&container, user, cmd).await
 }
 
 async fn cmd_run(container: String, command: Vec<String>) -> Result<()> {
-    let mut args: Vec<String> = vec!["login".to_string(), container, "--".to_string()];
-    args.extend(command);
-
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let status = Command::new("proot-distro")
-        .args(&args_ref)
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to run command in container");
-    }
-    Ok(())
+    run_container_native(&container, command).await
 }
 
 async fn cmd_ps() -> Result<()> {
-    let status = Command::new("proot-distro")
-        .args(["ps"])
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to list sessions");
+    let sessions = list_sessions_native().await?;
+    
+    println!("{:<20} {:<15} {:<15} {:<10} {}", "CONTAINER", "USER", "PID", "STATUS", "STARTED");
+    println!("{}", "-".repeat(75));
+    for s in sessions {
+        println!("{:<20} {:<15} {:<15} {:<10} {}", 
+            s.container_name, s.user, 
+            s.pid.map_or("-".to_string(), |p| p.to_string()), 
+            s.status, s.started_at.format("%Y-%m-%d %H:%M"));
     }
     Ok(())
 }
 
 async fn cmd_sessions() -> Result<()> {
+    let sessions = list_sessions_native().await?;
+    
     println!("Active Sessions:");
     println!("{:<20} {:<15} {:<15} {:<10} {}", "CONTAINER", "USER", "PID", "STATUS", "STARTED");
     println!("{}", "-".repeat(75));
-
-    let status = Command::new("proot-distro")
-        .args(["ps"])
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to list sessions");
+    for s in sessions {
+        println!("{:<20} {:<15} {:<15} {:<10} {}", 
+            s.container_name, s.user, 
+            s.pid.map_or("-".to_string(), |p| p.to_string()), 
+            s.status, s.started_at.format("%Y-%m-%d %H:%M"));
     }
     println!("\nNote: Use 'podnext attach <container>' to create a new session.");
     Ok(())
 }
 
 async fn cmd_attach(container: String, user: Option<String>, command: Vec<String>) -> Result<()> {
-    let mut args: Vec<String> = vec!["login".to_string(), container];
-    if let Some(u) = user {
-        args.push("-u".to_string());
-        args.push(u);
-    }
-    if !command.is_empty() {
-        args.push("--".to_string());
-        args.extend(command);
-    }
-
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let status = Command::new("proot-distro")
-        .args(&args_ref)
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to attach to container");
-    }
-    Ok(())
+    let cmd = if command.is_empty() {
+        vec!["/bin/bash".to_string()]
+    } else {
+        command
+    };
+    
+    login_container_native(&container, user, cmd).await
 }
 
 async fn cmd_kill(container: String) -> Result<()> {
-    let status = Command::new("proot-distro")
-        .args(["kill", &container])
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to kill container");
-    }
-    println!("Container '{}' stopped.", container);
-    Ok(())
+    kill_container_native(&container).await
 }
 
 async fn cmd_remove(name: String, force: bool) -> Result<()> {
-    if !force {
-        print!("Remove container '{}'? [y/N]: ", name);
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Cancelled.");
-            return Ok(());
-        }
-    }
-
-    let status = Command::new("proot-distro")
-        .args(["remove", &name])
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to remove container");
-    }
-    println!("Container '{}' removed.", name);
-    Ok(())
+    remove_container_native(name, force).await
 }
 
 async fn cmd_info() -> Result<()> {
@@ -386,18 +314,19 @@ async fn cmd_info() -> Result<()> {
 }
 
 async fn cmd_search(query: String, limit: usize) -> Result<()> {
-    let limit_str = limit.to_string();
-    let mut args = vec!["search"];
-    args.push("--limit");
-    args.push(&limit_str);
-    args.push(&query);
+    let images = search_docker_hub(&query, limit).await?;
 
-    let status = Command::new("proot-distro")
-        .args(&args)
-        .status()?;
-
-    if !status.success() {
-        bail!("Failed to search images");
+    println!("{:<40} {:<50} {:<8} {:<10} {}", "NAME", "DESCRIPTION", "STARS", "PULLS", "OFFICIAL");
+    println!("{}", "-".repeat(120));
+    for img in images {
+        let desc = if img.short_description.len() > 48 {
+            format!("{}...", &img.short_description[..48])
+        } else {
+            img.short_description
+        };
+        println!("{:<40} {:<50} {:<8} {:<10} {}", 
+            img.repo_name, desc, img.star_count, img.pull_count, 
+            if img.is_official { "[OK]" } else { "" });
     }
     Ok(())
 }

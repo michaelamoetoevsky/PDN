@@ -50,6 +50,17 @@ impl SessionManager {
         self.sessions.lock().unwrap().values().cloned().collect()
     }
     
+    pub fn list_all(&self) -> Vec<crate::container::SessionInfo> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.values().map(|s| crate::container::SessionInfo {
+            container_name: s.container_name.clone(),
+            user: s.user.clone(),
+            pid: s.pid,
+            status: format!("{:?}", s.status),
+            started_at: s.started_at.unwrap_or(s.created_at),
+        }).collect()
+    }
+    
     pub fn end(&self, id: &str) -> Result<()> {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(session) = sessions.get_mut(id) {
