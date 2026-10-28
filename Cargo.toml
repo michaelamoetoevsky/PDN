@@ -8,7 +8,7 @@ members = [
     "crates/proot-compat",
     "crates/pn-gateway",
     "crates/pn-next",
-    "crates/pn-cli",
+    "crates/podnext",
 ]
 
 [workspace.dependencies]
