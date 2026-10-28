@@ -1,0 +1,26 @@
+[package]
+name = "pn-cli"
+version = "0.1.0"
+edition = "2021"
+description = "PN CLI - Command line interface for PRoot Distro Next"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/hermes-agent/PDN"
+
+[dependencies]
+pn-next = { path = "../pn-next" }
+pn-gateway = { path = "../pn-gateway" }
+proot-distro-core = { path = "../proot-distro-core" }
+proot-core = { path = "../proot-core" }
+proot-compat = { path = "../proot-compat" }
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full", "macros"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+console = "0.15"
+indicatif = "0.17"
+tabled = "0.16"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }

@@ -1,0 +1,38 @@
+[package]
+name = "pn-next"
+version = "0.1.0"
+edition = "2021"
+description = "PN Next - Advanced architecture for PRoot Distro Next"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/hermes-agent/PDN"
+
+[dependencies]
+proot-core = { path = "../proot-core" }
+proot-distro-core = { path = "../proot-distro-core" }
+proot-compat = { path = "../proot-compat" }
+pn-gateway = { path = "../pn-gateway" }
+libc = "0.2"
+nix = { version = "0.27", features = ["mount", "process"] }
+thiserror = "1.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full", "macros"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+clap = { version = "4.0", features = ["derive"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+rustls = "0.21"
+tokio-rustls = "0.24"
+hyper = { version = "1.0", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+axum = "0.7"
+tower-service = "0.3"
+bytes = "1.0"
+async-trait = "0.1"
+parking_lot = "0.12"
+crossbeam = "0.8"
+futures = "0.3"

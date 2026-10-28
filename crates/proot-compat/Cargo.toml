@@ -1,0 +1,20 @@
+[package]
+name = "proot-compat"
+version = "0.1.0"
+edition = "2021"
+description = "PRoot compatibility layer for Termux Android 16+"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/hermes-agent/PDN"
+
+[dependencies]
+proot-core = { path = "../proot-core" }
+proot-distro-core = { path = "../proot-distro-core" }
+libc = "0.2"
+nix = { version = "0.27", features = ["mount"] }
+thiserror = "1.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
+clap = { version = "4.0", features = ["derive"] }
