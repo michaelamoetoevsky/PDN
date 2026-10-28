@@ -18,6 +18,8 @@ pub mod names;
 pub mod progress;
 pub mod compress;
 pub mod shm;
+pub mod network;
+pub mod storage;
 
 pub use container::{Container, ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus, ResourceLimits, NetworkConfig, SecurityConfig, BindMount, NetworkMode, PortMapping};
 pub use image::{Image, ImageManager, ImageSource};
@@ -38,6 +40,8 @@ pub use names::NameValidator;
 pub use progress::ProgressTracker;
 pub use compress::{Compressor, CompressionFormat};
 pub use shm::ShmManager;
+pub use network::{NetworkManager, NetworkInfo};
+pub use storage::{StorageManager, VolumeConfig, VolumeInfo};
 
 use anyhow::Result;
 

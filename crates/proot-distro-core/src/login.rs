@@ -3,20 +3,30 @@
 use std::path::PathBuf;
 use anyhow::Result;
 use crate::container::Container;
+use crate::bindings::BindMount;
 use serde::{Serialize, Deserialize};
 
 /// Login options
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginOptions {
     pub container_name: String,
     pub user: Option<String>,
     pub command: Vec<String>,
     pub env: Vec<(String, String)>,
+    pub env_vars: Vec<(String, String)>,  // Alias for env
     pub cwd: Option<String>,
     pub detach: bool,
     pub stdin: bool,
     pub stdout: bool,
     pub stderr: bool,
+    pub isolated: bool,
+    pub minimal: bool,
+    pub shared_home: bool,
+    pub shared_tmp: bool,
+    pub bind_mounts: Vec<BindMount>,  // Use BindMount directly
+    pub work_dir: Option<String>,
+    pub redirect_ports: bool,
+    pub get_proot_cmd: bool,
 }
 
 impl Default for LoginOptions {
@@ -26,11 +36,20 @@ impl Default for LoginOptions {
             user: None,
             command: vec!["/bin/bash".to_string()],
             env: Vec::new(),
+            env_vars: Vec::new(),
             cwd: None,
             detach: false,
             stdin: true,
             stdout: true,
             stderr: true,
+            isolated: false,
+            minimal: false,
+            shared_home: true,
+            shared_tmp: true,
+            bind_mounts: Vec::new(),
+            work_dir: None,
+            redirect_ports: false,
+            get_proot_cmd: false,
         }
     }
 }

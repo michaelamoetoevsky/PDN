@@ -98,17 +98,10 @@ impl PnGateway {
         for attempt in 0..=self.fail_safe_manager.config().max_retries {
             let result = async {
                 if let Some(distro) = self.distro_core.as_mut() {
-                    distro.login(proot_distro_core::LoginOptions {
-                        container_name: container_name.clone(),
-                        user: None,
-                        command: vec!["/bin/bash".to_string()],
-                        env: vec![],
-                        cwd: None,
-                        detach: false,
-                        stdin: true,
-                        stdout: true,
-                        stderr: true,
-                    })?;
+                    let mut options = proot_distro_core::LoginOptions::default();
+                    options.container_name = container_name.clone();
+                    options.command = vec!["/bin/bash".to_string()];
+                    distro.login(options)?;
                 }
                 Ok(())
             }.await;
