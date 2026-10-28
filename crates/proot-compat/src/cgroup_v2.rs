@@ -4,70 +4,14 @@
 use std::fs;
 use std::path::Path;
 use std::os::unix::fs::PermissionsExt;
+use crate::cap_sys_admin::{CapSysAdminManager, MountConfig, MountFlags};
 
 /// Setup cgroup v2 inside the guest rootfs.
 /// This enables resource control (CPU, memory, IO, PIDs) for containers.
 pub fn setup_cgroup_v2(rootfs: &Path) -> Result<(), String> {
-    let cgroup_path = rootfs.join("sys/fs/cgroup");
-
-    fs::create_dir_all(&cgroup_path).map_err(|e| {
-        format!("Failed to create {:?}: {}", cgroup_path, e)
-    })?;
-
-    // Mount cgroup2 filesystem
-    mount_cgroup2(&cgroup_path)?;
-
-    // Create default cgroup hierarchy
-    create_default_cgroups(&cgroup_path)?;
-
-    Ok(())
-}
-
-/// Mount cgroup2 filesystem.
-fn mount_cgroup2(target: &Path) -> Result<(), String> {
-    use nix::mount::{mount, MsFlags};
-
-    mount(
-        Some("cgroup2"),
-        target,
-        Some("cgroup2"),
-        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-        None::<&str>,
-    )
-    .map_err(|e| format!("Failed to mount cgroup2 on {:?}: {}", target, e))?;
-
-    Ok(())
-}
-
-/// Create default cgroup hierarchy for container resource control.
-fn create_default_cgroups(cgroup_root: &Path) -> Result<(), String> {
-    // Create system.slice for system services
-    let system_slice = cgroup_root.join("system.slice");
-    fs::create_dir_all(&system_slice).map_err(|e| {
-        format!("Failed to create {:?}: {}", system_slice, e)
-    })?;
-
-    // Create user.slice for user processes
-    let user_slice = cgroup_root.join("user.slice");
-    fs::create_dir_all(&user_slice).map_err(|e| {
-        format!("Failed to create {:?}: {}", user_slice, e)
-    })?;
-
-    // Create machine.slice for containers/machines
-    let machine_slice = cgroup_root.join("machine.slice");
-    fs::create_dir_all(&machine_slice).map_err(|e| {
-        format!("Failed to create {:?}: {}", machine_slice, e)
-    })?;
-
-    // Set permissions on cgroup directories
-    for dir in [system_slice, user_slice, machine_slice] {
-        let mut perms = fs::metadata(&dir).map_err(|e| format!("metadata failed: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&dir, perms).map_err(|e| format!("chmod failed: {}", e))?;
-    }
-
-    Ok(())
+    let mut manager = CapSysAdminManager::new();
+    manager.check_capability();
+    manager.setup_cgroup_v2(rootfs)
 }
 
 /// Check if cgroup v2 is available in the rootfs.

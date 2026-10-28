@@ -27,25 +27,14 @@ const ANDROID_ALLOWED_SYSCALLS: &[libc::c_long] = &[
 /// This prevents double-blocking when PRoot's seccomp filter
 /// interacts with Android's app-level seccomp.
 pub fn configure_seccomp_filter() -> Result<(), String> {
-    // Set no_new_privs before installing seccomp filter
-    unsafe {
-        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-            return Err(format!(
-                "prctl(PR_SET_NO_NEW_PRIVS) failed: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-    }
-
-    // In a full implementation, we would build a BPF filter program
-    // using the seccomp-sys crate or similar, and install it with
-    // prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &filter).
-    // For now, we document the Android syscalls that need to be allowed.
-
+    // On Android, PR_SET_NO_NEW_PRIVS might cause SIGSYS on some kernels.
+    // We skip this call and rely on PRoot's built-in seccomp handling.
+    // The Android syscalls are documented for reference.
+    
     #[cfg(debug_assertions)]
     {
         eprintln!(
-            "[proot-compat] Android allowed syscalls: {:?}",
+            "[proot-compat] Android allowed syscalls (reference): {:?}",
             ANDROID_ALLOWED_SYSCALLS
         );
     }

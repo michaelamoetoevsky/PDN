@@ -3,25 +3,14 @@
 
 use std::fs;
 use std::path::Path;
+use crate::cap_sys_admin::{CapSysAdminManager, MountConfig, MountFlags};
 
 /// Mount essential filesystems inside the guest rootfs.
 /// These are needed for Chrome headless, Node.js, and other applications.
 pub fn mount_essential_filesystems(rootfs: &Path) -> Result<(), String> {
-    let mounts = [
-        ("proc", rootfs.join("proc")),
-        ("sysfs", rootfs.join("sys")),
-        ("devtmpfs", rootfs.join("dev")),
-        ("tmpfs", rootfs.join("run")),
-        ("tmpfs", rootfs.join("tmp")),
-    ];
-
-    for (_fstype, target) in &mounts {
-        fs::create_dir_all(target).map_err(|e| {
-            format!("Failed to create mount point {:?}: {}", target, e)
-        })?;
-    }
-
-    Ok(())
+    let mut manager = CapSysAdminManager::new();
+    manager.check_capability();
+    manager.mount_essential_filesystems(rootfs)
 }
 
 /// Unmount all essential filesystems (for cleanup).
@@ -45,6 +34,13 @@ pub fn unmount_essential_filesystems(rootfs: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Bind mount a host path into the guest rootfs
+pub fn bind_mount(source: &Path, target: &Path, readonly: bool) -> Result<(), String> {
+    let mut manager = CapSysAdminManager::new();
+    manager.check_capability();
+    manager.bind_mount_with_fallback(source, target, readonly)
 }
 
 #[cfg(test)]

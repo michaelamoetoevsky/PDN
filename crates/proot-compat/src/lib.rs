@@ -2,12 +2,13 @@
 //!
 //! This crate provides compatibility layers for running PRoot on Termux Android 16+,
 //! addressing common issues like:
-//! - Platform personality (android -> linux)
-//! - Path translation (symlink chain resolution)
-//! - Seccomp filter bypass for Android
-//! - Stub filesystem creation (/run/dbus, /tmp, /sys/fs/cgroup, /sys/class, /dev/shm)
-//! - Essential filesystem mounting (/proc, /sys, /dev, /run, /tmp)
-//! - Cgroup v2 support
+// - Platform personality (android -> linux)
+// - Path translation (symlink chain resolution)
+// - Seccomp filter bypass for Android
+// - Stub filesystem creation (/run/dbus, /tmp, /sys/fs/cgroup, /sys/class, /dev/shm)
+// - Essential filesystem mounting (/proc, /sys, /dev, /run, /tmp)
+// - Cgroup v2 support
+// - CAP_SYS_ADMIN detection and fallback handling
 
 pub mod platform_shim;
 pub mod path_translation;
@@ -15,10 +16,15 @@ pub mod seccomp_bypass;
 pub mod stub_fs;
 pub mod mount_helper;
 pub mod cgroup_v2;
+pub mod cap_sys_admin;
 
 /// Initialize all compatibility layers for PRoot on Termux Android 16+.
 /// This should be called before launching any guest process.
 pub fn init_compat() -> anyhow::Result<()> {
+    // Initialize global CAP_SYS_ADMIN manager with fallback mode by default
+    // Use init_global_manager_with_testing(true) for integration tests that need actual mount capability
+    crate::cap_sys_admin::init_global_manager(false);
+    
     platform_shim::set_linux_personality().map_err(|e| anyhow::anyhow!(e))?;
     seccomp_bypass::configure_seccomp_filter().map_err(|e| anyhow::anyhow!(e))?;
     Ok(())
