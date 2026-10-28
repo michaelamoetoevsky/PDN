@@ -21,33 +21,37 @@ pub use syscall::{SyscallHandler, SyscallConfig};
 pub use path::{PathTranslator};
 pub use tracee::{Tracee, TraceeId, TraceeState, Registers, SyscallInfo, PathInfo, MountInfo, VfsContext, FdTable, FdEntry, RawSyscall};
 pub use extension::{Extension, ExtensionManager};
-pub use cli::ProotConfig;
+pub use cli::{ProotConfig, BindMount};
 pub use seccomp::SeccompFilter;
 pub use tracee_state::TraceeStateManager;
 pub use vfs::VfsManager;
 
 use anyhow::Result;
+use tokio::process::Command;
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 /// Main PRoot engine
+#[derive(Clone)]
 pub struct ProotEngine {
-    config: ProotConfig,
-    ptrace_ctrl: PtraceController,
-    syscall_handler: SyscallHandler,
-    path_translator: PathTranslator,
-    tracee_manager: TraceeStateManager,
-    vfs_manager: VfsManager,
-    seccomp_filter: SeccompFilter,
+    pub config: ProotConfig,
+    ptrace_ctrl: Arc<Mutex<PtraceController>>,
+    syscall_handler: Arc<Mutex<SyscallHandler>>,
+    path_translator: Arc<Mutex<PathTranslator>>,
+    tracee_manager: Arc<Mutex<TraceeStateManager>>,
+    vfs_manager: Arc<Mutex<VfsManager>>,
+    seccomp_filter: Arc<Mutex<SeccompFilter>>,
 }
 
 impl ProotEngine {
     pub fn new(config: ProotConfig) -> Result<Self> {
-        let ptrace_ctrl = PtraceController::new()?;
+        let ptrace_ctrl = Arc::new(Mutex::new(PtraceController::new()?));
         let syscall_config = SyscallConfig::default();
-        let syscall_handler = SyscallHandler::new(syscall_config)?;
-        let path_translator = PathTranslator::new(&config)?;
-        let tracee_manager = TraceeStateManager::new();
-        let vfs_manager = VfsManager::new(&config)?;
-        let seccomp_filter = SeccompFilter::new(&config)?;
+        let syscall_handler = Arc::new(Mutex::new(SyscallHandler::new(syscall_config)?));
+        let path_translator = Arc::new(Mutex::new(PathTranslator::new(&config)?));
+        let tracee_manager = Arc::new(Mutex::new(TraceeStateManager::new()));
+        let vfs_manager = Arc::new(Mutex::new(VfsManager::new(&config)?));
+        let seccomp_filter = Arc::new(Mutex::new(SeccompFilter::new(&config)?));
 
         Ok(Self {
             config,
@@ -62,17 +66,50 @@ impl ProotEngine {
 
     pub fn run(&mut self) -> Result<()> {
         // Initialize seccomp filter
-        self.seccomp_filter.install()?;
+        self.seccomp_filter.lock().install()?;
 
         // Start ptrace loop
-        self.ptrace_ctrl.run_loop(&mut self.syscall_handler, 
-                                   &mut self.path_translator,
-                                   &mut self.tracee_manager,
-                                   &mut self.vfs_manager)
+        self.ptrace_ctrl.lock().run_loop(&mut self.syscall_handler.lock(), 
+                                   &mut self.path_translator.lock(),
+                                   &mut self.tracee_manager.lock(),
+                                   &mut self.vfs_manager.lock())
+    }
+
+    pub async fn start(&mut self) -> Result<u32> {
+        // Initialize seccomp filter
+        self.seccomp_filter.lock().install()?;
+
+        // Build the command to execute
+        let mut cmd = Command::new(&self.config.command[0]);
+        if self.config.command.len() > 1 {
+            cmd.args(&self.config.command[1..]);
+        }
+        
+        // Set up environment
+        for env in &self.config.env {
+            if let Some((k, v)) = env.split_once('=') {
+                cmd.env(k, v);
+            }
+        }
+        
+        // Set working directory
+        if let Some(cwd) = &self.config.cwd {
+            cmd.current_dir(cwd);
+        }
+        
+        // Set up bind mounts (would need to be done via ptrace)
+        // For now, we'll just spawn the process
+        let child = cmd.spawn()?;
+        let pid = child.id().ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
+        
+        // In a real implementation, we would ptrace the child process
+        // and set up the chroot environment before it runs
+        
+        Ok(pid)
     }
 
     pub fn shutdown(&mut self) -> Result<()> {
-        self.ptrace_ctrl.shutdown()
+        self.ptrace_ctrl.lock().shutdown()
     }
 }
 

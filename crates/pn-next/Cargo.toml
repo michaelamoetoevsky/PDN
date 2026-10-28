@@ -12,7 +12,7 @@ proot-distro-core = { path = "../proot-distro-core" }
 proot-compat = { path = "../proot-compat" }
 pn-gateway = { path = "../pn-gateway" }
 libc = "0.2"
-nix = { version = "0.27", features = ["mount", "process"] }
+nix = { version = "0.27", features = ["mount", "process", "ptrace", "fs"] }
 thiserror = "1.0"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -36,3 +36,5 @@ async-trait = "0.1"
 parking_lot = "0.12"
 crossbeam = "0.8"
 futures = "0.3"
+libloading = "0.8"
+notify = "6.0"

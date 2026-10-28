@@ -1,4 +1,6 @@
 //! Container management for PRoot Distro
+//!
+//! Provides container lifecycle management with proot-core integration.
 
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
@@ -8,12 +10,15 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use crate::paths::ContainerPaths;
 use crate::locking::LockManager;
+use proot_core::{ProotEngine, ProotConfig, BindMount as ProotBindMount};
+use nix::unistd::Pid;
 
 /// Container manager
 pub struct ContainerManager {
     containers: Arc<Mutex<HashMap<String, Container>>>,
     paths: ContainerPaths,
     lock_manager: Arc<LockManager>,
+    proot_engine: Arc<Mutex<Option<ProotEngine>>>,
 }
 
 impl ContainerManager {
@@ -22,7 +27,17 @@ impl ContainerManager {
             containers: Arc::new(Mutex::new(HashMap::new())),
             paths: ContainerPaths::new()?,
             lock_manager: Arc::new(LockManager::new()?),
+            proot_engine: Arc::new(Mutex::new(None)),
         })
+    }
+    
+    fn get_engine(&self) -> Result<Arc<Mutex<ProotEngine>>> {
+        let mut engine_guard = self.proot_engine.lock().unwrap();
+        if engine_guard.is_none() {
+            let config = ProotConfig::default();
+            *engine_guard = Some(ProotEngine::new(config)?);
+        }
+        Ok(Arc::new(Mutex::new(engine_guard.as_ref().unwrap().clone())))
     }
     
     pub fn create(&self, name: &str, config: &ContainerConfig) -> Result<Container> {
@@ -70,6 +85,86 @@ impl ContainerManager {
         }
     }
     
+    pub async fn start(&self, name: &str) -> Result<()> {
+        let mut containers = self.containers.lock().unwrap();
+        let container = containers.get_mut(name)
+            .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
+        
+        if container.status == ContainerStatus::Running {
+            return Err(anyhow::anyhow!("Container '{}' is already running", name));
+        }
+        
+        // Initialize proot engine if needed
+        let engine = self.get_engine()?;
+        {
+            let mut engine_guard = engine.lock().unwrap();
+            
+            // Configure proot from container config
+            engine_guard.config.rootfs = Some(container.rootfs_path.clone());
+            engine_guard.config.bind = container.config.bind_mounts.iter().map(|b| {
+                format!("{}:{}:{}", b.source, b.target, if b.readonly { "ro" } else { "rw" })
+            }).collect();
+            engine_guard.config.cwd = Some(container.config.working_dir.clone().unwrap_or_else(|| "/".to_string()).into());
+            engine_guard.config.env = container.config.env_vars.iter().map(|(k,v)| format!("{}={}", k, v)).collect();
+            engine_guard.config.command = if container.config.command.is_empty() {
+                vec!["/bin/bash".to_string()]
+            } else {
+                container.config.command.clone()
+            };
+            engine_guard.config.seccomp = container.config.security.seccomp_profile.is_some();
+            engine_guard.config.kernel_release = container.config.kernel_release.clone();
+            engine_guard.config.hostname = container.config.hostname.clone();
+        }
+        
+        // Start the container
+        let pid = engine.lock().unwrap().start().await?;
+        
+        container.status = ContainerStatus::Running;
+        container.pid = Some(pid);
+        
+        Ok(())
+    }
+    
+    pub async fn stop(&self, name: &str, timeout: u64) -> Result<()> {
+        let mut containers = self.containers.lock().unwrap();
+        let container = containers.get_mut(name)
+            .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
+        
+        if container.status != ContainerStatus::Running {
+            return Err(anyhow::anyhow!("Container '{}' is not running", name));
+        }
+        
+        if let Some(pid) = container.pid {
+            // Send SIGTERM
+            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            
+            // Wait for process to exit
+            let start = std::time::Instant::now();
+            while start.elapsed().as_secs() < timeout {
+                // Check if process is still alive
+                if unsafe { libc::kill(pid as i32, 0) } != 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            
+            // Force kill if still alive
+            if unsafe { libc::kill(pid as i32, 0) } == 0 {
+                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            }
+        }
+        
+        container.status = ContainerStatus::Stopped;
+        container.pid = None;
+        
+        Ok(())
+    }
+    
+    pub async fn restart(&self, name: &str, timeout: u64) -> Result<()> {
+        self.stop(name, timeout).await?;
+        self.start(name).await
+    }
+    
     pub fn backup(&self, container: &Container, dest: &Path) -> Result<()> {
         // Implementation for backing up container
         Ok(())
@@ -91,6 +186,10 @@ pub struct ContainerConfig {
     pub rootfs_path: Option<PathBuf>,
     pub bind_mounts: Vec<BindMount>,
     pub env_vars: Vec<(String, String)>,
+    pub command: Vec<String>,
+    pub working_dir: Option<String>,
+    pub kernel_release: Option<String>,
+    pub hostname: Option<String>,
     pub resources: ResourceLimits,
     pub network: NetworkConfig,
     pub security: SecurityConfig,
@@ -106,6 +205,10 @@ impl Default for ContainerConfig {
             rootfs_path: None,
             bind_mounts: Vec::new(),
             env_vars: Vec::new(),
+            command: Vec::new(),
+            working_dir: None,
+            kernel_release: None,
+            hostname: None,
             resources: ResourceLimits::default(),
             network: NetworkConfig::default(),
             security: SecurityConfig::default(),

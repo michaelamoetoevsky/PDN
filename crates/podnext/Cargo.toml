@@ -11,7 +11,6 @@ name = "podnext"
 path = "src/main.rs"
 
 [dependencies]
-pn-next = { path = "../pn-next" }
 pn-gateway = { path = "../pn-gateway" }
 proot-distro-core = { path = "../proot-distro-core" }
 proot-core = { path = "../proot-core" }
