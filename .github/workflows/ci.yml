@@ -1,0 +1,402 @@
+# PDN CI/CD Pipeline
+# 5-job pipeline: host build, Android cross-compile, security audit, integration test, release
+
+name: PDN CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: false
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Job 1: Rust Host Build
+  rust-host-build:
+    name: Rust Host Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libclang-dev \
+            pkg-config \
+            libssl-dev \
+            libudev-dev \
+            libseccomp-dev \
+            libcap-dev
+
+      - name: Run cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Run cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build workspace (release)
+        run: cargo build --workspace --release
+
+      - name: Run tests
+        run: cargo test --workspace --release -- --test-threads=4
+
+      - name: Build pn-cli binary
+        run: cargo build --package pn-cli --release
+
+      - name: Upload pn-cli artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pn-cli-${{ runner.os }}-${{ runner.arch }}
+          path: target/release/pn-cli
+          retention-days: 30
+
+  # Job 2: Rust Android Cross-Compile
+  rust-android-cross-compile:
+    name: Rust Android Cross-Compile (aarch64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          ndk-version: r27c
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-android-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-android-cargo-
+
+      - name: Set up cargo config for Android
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml << 'EOF'
+          [target.aarch64-linux-android]
+          linker = "${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang"
+          EOF
+
+      - name: Build for Android aarch64
+        run: |
+          export CC_aarch64_linux_android="${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang"
+          cargo build --workspace --release --target aarch64-linux-android
+
+      - name: Verify Android binaries
+        run: |
+          file target/aarch64-linux-android/release/pn-cli
+          file target/aarch64-linux-android/release/libproot_core.so || true
+          file target/aarch64-linux-android/release/libproot_distro_core.so || true
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pn-android-aarch64
+          path: |
+            target/aarch64-linux-android/release/pn-cli
+            target/aarch64-linux-android/release/lib*.so
+          retention-days: 30
+
+  # Job 3: Security Audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-audit
+          version: latest
+
+      - name: Install cargo-deny
+        uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-deny
+          version: latest
+
+      - name: Run cargo audit
+        run: cargo audit --workspace
+
+      - name: Run cargo deny
+        run: |
+          cargo deny check licenses
+          cargo deny check bans
+          cargo deny check advisories
+
+      - name: Run cargo outdated
+        run: |
+          cargo install cargo-outdated
+          cargo outdated --workspace --exit-code 1 || true
+
+      - name: Check for unsafe code
+        run: |
+          cargo geiger --workspace --output-format json > geiger-report.json || true
+          cat geiger-report.json | jq '.packages[] | select(.unsafe > 0) | {name: .name, unsafe: .unsafe}' || true
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            geiger-report.json
+          retention-days: 30
+
+  # Job 4: PRoot Distro Integration Test
+  proot-distro-integration-test:
+    name: PRoot Distro Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Termux dependencies (simulated)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            proot \
+            proot-distro \
+            qemu-user-static \
+            binfmt-support \
+            curl \
+            tar \
+            gzip \
+            xz-utils \
+            bzip2
+
+      - name: Build workspace
+        run: cargo build --workspace --release
+
+      - name: Test pn-cli basic commands
+        run: |
+          ./target/release/pn-cli --version
+          ./target/release/pn-cli system info
+          ./target/release/pn-cli container list
+          ./target/release/pn-cli image list
+          ./target/release/pn-cli network list
+          ./target/release/pn-cli storage list
+          ./target/release/pn-cli volume list
+
+      - name: Test PRoot compatibility layer
+        run: |
+          # Test that the compatibility layer compiles and basic functions work
+          cargo test --package proot-compat --release
+          cargo test --package proot-core --release
+          cargo test --package proot-distro-core --release
+          cargo test --package pn-gateway --release
+          cargo test --package pn-next --release
+
+      - name: Test gateway fail-safe mechanisms
+        run: |
+          cargo test --package pn-gateway fail_safe --release -- --nocapture
+
+      - name: Test guardrails
+        run: |
+          cargo test --package pn-gateway guardrails --release -- --nocapture
+
+      - name: Test health monitoring
+        run: |
+          cargo test --package pn-gateway health --release -- --nocapture
+
+      - name: Test metrics collection
+        run: |
+          cargo test --package pn-gateway metrics --release -- --nocapture
+
+  # Job 5: Release
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [rust-host-build, rust-android-cross-compile, security-audit, proot-distro-integration-test]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          ndk-version: r27c
+
+      - name: Build release binaries (host)
+        run: cargo build --workspace --release
+
+      - name: Build release binaries (Android aarch64)
+        run: |
+          export CC_aarch64_linux_android="${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang"
+          cargo build --workspace --release --target aarch64-linux-android
+
+      - name: Create release archives
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          
+          # Host release
+          mkdir -p release/pdn-${VERSION}-linux-${{ runner.arch }}
+          cp target/release/pn-cli release/pdn-${VERSION}-linux-${{ runner.arch }}/
+          cp target/release/libproot_core.so release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
+          cp target/release/libproot_distro_core.so release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
+          cp target/release/libpn_gateway.so release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
+          cp target/release/libpn_next.so release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
+          cp README.md release/pdn-${VERSION}-linux-${{ runner.arch }}/
+          cp LICENSE* release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
+          
+          # Android release
+          mkdir -p release/pdn-${VERSION}-android-aarch64
+          cp target/aarch64-linux-android/release/pn-cli release/pdn-${VERSION}-android-aarch64/
+          cp target/aarch64-linux-android/release/lib*.so release/pdn-${VERSION}-android-aarch64/ 2>/dev/null || true
+          cp README.md release/pdn-${VERSION}-android-aarch64/
+          cp LICENSE* release/pdn-${VERSION}-android-aarch64/ 2>/dev/null || true
+          
+          # Create tarballs
+          cd release
+          tar czf pdn-${VERSION}-linux-${{ runner.arch }}.tar.gz pdn-${VERSION}-linux-${{ runner.arch }}/
+          tar czf pdn-${VERSION}-android-aarch64.tar.gz pdn-${VERSION}-android-aarch64/
+          
+          # Generate checksums
+          sha256sum *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: PDN ${{ github.ref_name }}
+          body: |
+            ## PDN (PRoot Distro Next) ${{ github.ref_name }}
+            
+            Next-generation container platform for Termux/Android combining PRoot, PRoot-distro, and proot-compat into a unified Rust codebase.
+            
+            ### Features
+            - **proot-core**: Core PRoot implementation with ptrace, syscall interception, VFS
+            - **proot-distro-core**: Container lifecycle, image management, networking, storage
+            - **proot-compat**: Termux/Android compatibility (platform shim, path translation, seccomp bypass, stub FS, mount helper, cgroup v2)
+            - **pn-gateway**: Unified gateway with fail-safe, guardrails, health monitoring, metrics
+            - **pn-next**: Advanced runtime, scheduler, security, API, workflow, plugin system
+            - **pn-cli**: Full-featured CLI for container/image/network/storage/volume management
+            
+            ### Downloads
+            - Linux x86_64: `pdn-${{ github.ref_name#v }}-linux-x86_64.tar.gz`
+            - Android aarch64: `pdn-${{ github.ref_name#v }}-android-aarch64.tar.gz`
+            
+            ### Verification
+            Check SHA256SUMS.txt for integrity verification.
+          files: |
+            release/*.tar.gz
+            release/SHA256SUMS.txt
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+
+      - name: Publish to crates.io (optional)
+        if: false  # Set to true when ready to publish
+        run: |
+          cargo publish --package proot-core
+          cargo publish --package proot-distro-core
+          cargo publish --package proot-compat
+          cargo publish --package pn-gateway
+          cargo publish --package pn-next
+          cargo publish --package pn-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
