@@ -324,7 +324,7 @@ fn save_container_metadata(
 
 pub async fn list_containers_native(all: bool) -> Result<Vec<proot_distro_core::ContainerInfo>> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
-    let containers = container_mgr.list()?;
+    let containers = container_mgr.list().await?;
     
     if !all {
         // Filter to only running
@@ -356,7 +356,7 @@ pub async fn login_container_native(
         options.user = Some(u);
     }
     
-    distro_core.login(options)?;
+    distro_core.login(options).await?;
     Ok(())
 }
 
@@ -370,7 +370,7 @@ pub async fn run_container_native(
     options.container_name = container_name.to_string();
     options.command = command;
     
-    distro_core.login(options)?;
+    distro_core.login(options).await?;
     Ok(())
 }
 
@@ -381,7 +381,7 @@ pub async fn list_sessions_native() -> Result<Vec<proot_distro_core::SessionInfo
 
 pub async fn kill_container_native(container_name: &str) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
-    container_mgr.kill(container_name)
+    container_mgr.kill(container_name).await
 }
 
 pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
@@ -398,7 +398,7 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
         }
     }
     
-    container_mgr.remove(&name)?;
+    container_mgr.remove(&name).await?;
     println!("Container '{}' removed.", name);
     Ok(())
 }

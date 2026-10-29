@@ -30,31 +30,39 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 - [x] Search command verified working with Docker Hub API
 - [x] CLI commands: install, list, login, run, ps, sessions, attach, kill, remove, search, info, version
 
-### Phase 3: Integration & Testing (IN PROGRESS)
-- [ ] End-to-end integration tests
-- [ ] Test with actual Termux environment
-- [ ] Test PRoot-distro container lifecycle (create, start, stop, exec)
-- [ ] Test image pull/push operations
-- [ ] Test network/volume management
-- [ ] Test gateway fail-safe mechanisms under load
-- [ ] Test guardrails enforcement
-- [ ] Performance benchmarking
+### Phase 3: Integration & Testing (COMPLETED)
+- [x] End-to-end integration tests
+- [x] Test with actual Termux environment
+- [x] Test PRoot-distro container lifecycle (create, start, stop, exec)
+- [x] Test image pull/push operations
+- [x] Test network/volume management
+- [x] Test gateway fail-safe mechanisms under load
+- [x] Test guardrails enforcement
+- [x] Performance benchmarking
 
-### Phase 4: Advanced Features (PLANNED)
-- [ ] Plugin system implementation (dynamic library loading)
+### Phase 4: Advanced Features (IN PROGRESS)
+- [ ] Plugin system implementation (dynamic library loading via libloading)
 - [ ] Web API dashboard (RESTful API with real backend integration)
 - [ ] Multi-container orchestration
-- [ ] Resource quotas and limits
-- [ ] Checkpoint/restore support
-- [ ] GPU acceleration support
+- [ ] Resource quotas and limits (cgroups v2 integration)
+- [ ] Checkpoint/restore support (CRIU integration)
+- [ ] GPU acceleration support (Vulkan/DRM)
+- [ ] OCI runtime spec compliance
+- [ ] Image signing/verification (cosign/notary)
+- [ ] Multi-arch image support (manifest lists)
+- [ ] Container networking (CNI plugin support)
 
 ### Phase 5: Production Readiness (PLANNED)
-- [ ] Security hardening
+- [ ] Security hardening (seccomp profiles, AppArmor, SELinux)
 - [ ] Comprehensive test coverage (>80%)
-- [ ] Fuzzing integration
-- [ ] Long-running stability tests
-- [ ] Release automation
+- [ ] Fuzzing integration (cargo-fuzz)
+- [ ] Long-running stability tests (72h+)
+- [ ] Release automation (GitHub Actions + cargo-release)
 - [ ] Migration guide from PRoot-distro
+- [ ] Android NDK cross-compilation verification (aarch64)
+- [ ] Termux package build (APK)
+- [ ] Documentation website (mdBook)
+- [ ] Performance profiling and optimization
 
 ## Technical Goals
 

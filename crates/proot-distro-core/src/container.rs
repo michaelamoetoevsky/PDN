@@ -4,10 +4,11 @@
 
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use tokio::sync::Mutex;
 use crate::paths::ContainerPaths;
 use crate::locking::LockManager;
 use proot_core::{ProotEngine, ProotConfig, BindMount as ProotBindMount};
@@ -31,17 +32,19 @@ impl ContainerManager {
         })
     }
     
-    fn get_engine(&self) -> Result<Arc<Mutex<ProotEngine>>> {
-        let mut engine_guard = self.proot_engine.lock().unwrap();
+    async fn get_engine(&self) -> Result<Arc<Mutex<ProotEngine>>> {
+        let mut engine_guard = self.proot_engine.lock().await;
         if engine_guard.is_none() {
             let config = ProotConfig::default();
             *engine_guard = Some(ProotEngine::new(config)?);
         }
-        Ok(Arc::new(Mutex::new(engine_guard.as_ref().unwrap().clone())))
+        // Return a new Arc<Mutex<ProotEngine>> wrapping the same engine
+        let engine = engine_guard.as_ref().unwrap();
+        Ok(Arc::new(Mutex::new(engine.clone())))
     }
     
-    pub fn create(&self, name: &str, config: &ContainerConfig) -> Result<Container> {
-        let mut containers = self.containers.lock().unwrap();
+    pub async fn create(&self, name: &str, config: &ContainerConfig) -> Result<Container> {
+        let mut containers = self.containers.lock().await;
         
         if containers.contains_key(name) {
             return Err(anyhow::anyhow!("Container '{}' already exists", name));
@@ -53,29 +56,29 @@ impl ContainerManager {
         Ok(container)
     }
     
-    pub fn get(&self, name: &str) -> Result<Container> {
-        let containers = self.containers.lock().unwrap();
+    pub async fn get(&self, name: &str) -> Result<Container> {
+        let containers = self.containers.lock().await;
         containers.get(name).cloned().ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))
     }
     
-    pub fn remove(&self, name: &str) -> Result<()> {
-        let mut containers = self.containers.lock().unwrap();
+    pub async fn remove(&self, name: &str) -> Result<()> {
+        let mut containers = self.containers.lock().await;
         containers.remove(name).ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
         Ok(())
     }
     
-    pub fn list(&self) -> Result<Vec<ContainerInfo>> {
-        let containers = self.containers.lock().unwrap();
+    pub async fn list(&self) -> Result<Vec<ContainerInfo>> {
+        let containers = self.containers.lock().await;
         Ok(containers.values().map(|c| c.info()).collect())
     }
     
-    pub fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
+    pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         // For now, return empty - sessions are managed by SessionManager
         Ok(Vec::new())
     }
     
-    pub fn kill(&self, name: &str) -> Result<()> {
-        let mut containers = self.containers.lock().unwrap();
+    pub async fn kill(&self, name: &str) -> Result<()> {
+        let mut containers = self.containers.lock().await;
         if let Some(container) = containers.get_mut(name) {
             container.status = ContainerStatus::Stopped;
             container.pid = None;
@@ -86,7 +89,7 @@ impl ContainerManager {
     }
     
     pub async fn start(&self, name: &str) -> Result<()> {
-        let mut containers = self.containers.lock().unwrap();
+        let mut containers = self.containers.lock().await;
         let container = containers.get_mut(name)
             .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
         
@@ -95,9 +98,9 @@ impl ContainerManager {
         }
         
         // Initialize proot engine if needed
-        let engine = self.get_engine()?;
+        let engine = self.get_engine().await?;
         {
-            let mut engine_guard = engine.lock().unwrap();
+            let mut engine_guard = engine.lock().await;
             
             // Configure proot from container config
             engine_guard.config.rootfs = Some(container.rootfs_path.clone());
@@ -117,7 +120,7 @@ impl ContainerManager {
         }
         
         // Start the container
-        let pid = engine.lock().unwrap().start().await?;
+        let pid = engine.lock().await.start().await?;
         
         container.status = ContainerStatus::Running;
         container.pid = Some(pid);
@@ -126,7 +129,7 @@ impl ContainerManager {
     }
     
     pub async fn stop(&self, name: &str, timeout: u64) -> Result<()> {
-        let mut containers = self.containers.lock().unwrap();
+        let mut containers = self.containers.lock().await;
         let container = containers.get_mut(name)
             .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
         

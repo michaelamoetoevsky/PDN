@@ -101,7 +101,7 @@ impl PnGateway {
                     let mut options = proot_distro_core::LoginOptions::default();
                     options.container_name = container_name.clone();
                     options.command = vec!["/bin/bash".to_string()];
-                    distro.login(options)?;
+                    distro.login(options).await?;
                 }
                 Ok(())
             }.await;

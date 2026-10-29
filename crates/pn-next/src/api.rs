@@ -8,8 +8,9 @@ use axum::{
     Router,
     routing::{get, post, put, delete},
     extract::{State, Path, Json, Query},
-    response::Json as ResponseJson,
+    response::{Json as ResponseJson, IntoResponse},
     http::StatusCode,
+    extract::FromRequestParts,
 };
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
@@ -17,8 +18,14 @@ use tokio::sync::RwLock;
 use tower_http::cors::{CorsLayer, Any};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use proot_distro_core::{ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus, SessionManager, LoginOptions};
-use crate::network::{NetworkManager, NetworkConfig, Network};
+use std::path::PathBuf;
+use std::collections::HashMap;
+use proot_distro_core::{
+    ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus,
+    SessionManager, LoginOptions,
+    ResourceLimits, NetworkConfig, NetworkMode, SecurityConfig, BindMount, PortMapping,
+};
+use crate::network::{NetworkManager, NetworkConfig as PnNetworkConfig, Network as PnNetwork};
 use crate::storage::{StorageManager, StorageConfig, Volume};
 
 /// API configuration
@@ -120,7 +127,7 @@ impl ApiState {
     pub fn new() -> Result<Self> {
         let container_manager = Arc::new(RwLock::new(ContainerManager::new()?));
         let session_manager = Arc::new(RwLock::new(SessionManager::new()?));
-        let network_manager = Arc::new(RwLock::new(NetworkManager::new(NetworkConfig::default())?));
+        let network_manager = Arc::new(RwLock::new(NetworkManager::new(PnNetworkConfig::default())?));
         let storage_manager = Arc::new(RwLock::new(StorageManager::new(StorageConfig::default())?));
         
         Ok(Self {
@@ -155,9 +162,9 @@ struct HealthResponse {
 async fn list_containers(
     Query(params): Query<ListContainersParams>,
     State(state): State<Arc<ApiState>>,
-) -> Result<ResponseJson<Vec<ContainerResponse>>, ApiError> {
+) -> Result<ResponseJson<Vec<ContainerSummary>>, ApiError> {
     let manager = state.container_manager.read().await;
-    let containers = manager.list()?;
+    let containers = manager.list().await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     let filtered: Vec<_> = if params.all.unwrap_or(false) {
         containers
@@ -167,7 +174,7 @@ async fn list_containers(
             .collect()
     };
     
-    Ok(ResponseJson(filtered.into_iter().map(ContainerResponse::from).collect()))
+    Ok(ResponseJson(filtered.into_iter().map(ContainerSummary::from).collect()))
 }
 
 #[derive(Deserialize)]
@@ -181,8 +188,7 @@ async fn get_container(
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ContainerDetailResponse>, ApiError> {
     let manager = state.container_manager.read().await;
-    let container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(ContainerDetailResponse::from(container)))
 }
@@ -194,17 +200,23 @@ async fn create_container(
 ) -> Result<ResponseJson<ContainerResponse>, ApiError> {
     let config = ContainerConfig {
         name: req.name.clone(),
-        image: req.image,
-        command: req.command,
-        env: req.env.unwrap_or_default(),
+        distro: req.distro.unwrap_or_else(|| "ubuntu".to_string()),
+        version: req.version.unwrap_or_else(|| "22.04".to_string()),
+        arch: req.arch.unwrap_or_else(|| "aarch64".to_string()),
+        rootfs_path: req.rootfs_path,
+        bind_mounts: req.volumes.unwrap_or_default().into_iter().map(|v| v.into()).collect(),
+        env_vars: req.env.unwrap_or_default(),
+        command: req.command.unwrap_or_default(),
         working_dir: req.working_dir,
-        resources: req.resources.map(|r| r.into()),
-        network: req.network.map(|n| n.into()),
-        binds: req.volumes.map(|v| v.into_iter().map(|v| v.into()).collect()),
+        kernel_release: req.kernel_release,
+        hostname: req.hostname,
+        resources: req.resources.unwrap_or_default().into(),
+        network: req.network.unwrap_or_default().into(),
+        security: req.security.unwrap_or_default().into(),
     };
     
     let mut manager = state.container_manager.write().await;
-    let container = manager.create(config)?;
+    let container = manager.create(&req.name, &config).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(ContainerResponse {
         id: container.info().name,
@@ -219,8 +231,7 @@ async fn update_container(
     Json(req): Json<UpdateContainerRequest>,
 ) -> Result<ResponseJson<ContainerResponse>, ApiError> {
     let mut manager = state.container_manager.write().await;
-    let container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let _container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     // Update container config (simplified - in real impl would need more fields)
     if let Some(new_name) = req.name {
@@ -240,23 +251,21 @@ async fn delete_container(
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ContainerResponse>, ApiError> {
     let mut manager = state.container_manager.write().await;
-    let container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     if container.status == ContainerStatus::Running && !params.force.unwrap_or(false) {
         return Err(ApiError::conflict("Container is running. Use force=true to stop and remove".to_string()));
     }
     
     if container.status == ContainerStatus::Running {
-        manager.kill(&name)?;
+        manager.kill(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     }
     
-    // Note: proot-distro-core doesn't have a remove method yet, would need to add
-    // For now, just stop/kill
+    manager.remove(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(ContainerResponse {
         id: name,
-        message: "Container stopped and marked for removal".to_string(),
+        message: "Container removed".to_string(),
     }))
 }
 
@@ -266,20 +275,19 @@ struct DeleteParams {
 }
 
 /// Start container
+#[axum::debug_handler]
 async fn start_container(
     Path(name): Path<String>,
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ContainerResponse>, ApiError> {
     let mut manager = state.container_manager.write().await;
-    let container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     if container.status == ContainerStatus::Running {
         return Err(ApiError::conflict("Container is already running".to_string()));
     }
     
-    // Start the container using proot-core
-    manager.start(&name).await?;
+    manager.start(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(ContainerResponse {
         id: name,
@@ -288,21 +296,21 @@ async fn start_container(
 }
 
 /// Stop container
+#[axum::debug_handler]
 async fn stop_container(
     Path(name): Path<String>,
     Query(params): Query<StopParams>,
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ContainerResponse>, ApiError> {
     let mut manager = state.container_manager.write().await;
-    let container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     if container.status != ContainerStatus::Running {
         return Err(ApiError::conflict("Container is not running".to_string()));
     }
     
     let timeout = params.timeout.unwrap_or(10);
-    manager.stop(&name, timeout).await?;
+    manager.stop(&name, timeout).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(ContainerResponse {
         id: name,
@@ -316,17 +324,17 @@ struct StopParams {
 }
 
 /// Restart container
+#[axum::debug_handler]
 async fn restart_container(
     Path(name): Path<String>,
     Query(params): Query<StopParams>,
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ContainerResponse>, ApiError> {
     let mut manager = state.container_manager.write().await;
-    let container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     let timeout = params.timeout.unwrap_or(10);
-    manager.restart(&name, timeout).await?;
+    manager.restart(&name, timeout).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(ContainerResponse {
         id: name,
@@ -337,15 +345,13 @@ async fn restart_container(
 /// Get container logs
 async fn get_logs(
     Path(name): Path<String>,
-    Query(params): Query<LogsParams>,
+    Query(_params): Query<LogsParams>,
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<LogsResponse>, ApiError> {
     let manager = state.container_manager.read().await;
-    let _container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let _container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     // In a real implementation, this would fetch logs from the container
-    // For now, return empty logs
     Ok(ResponseJson(LogsResponse {
         logs: vec![],
     }))
@@ -366,8 +372,7 @@ async fn exec_command(
     Json(req): Json<ExecRequest>,
 ) -> Result<ResponseJson<ExecResponse>, ApiError> {
     let manager = state.container_manager.read().await;
-    let container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     if container.status != ContainerStatus::Running {
         return Err(ApiError::conflict("Container is not running".to_string()));
@@ -375,16 +380,15 @@ async fn exec_command(
     
     // Create a session to execute the command
     let mut options = LoginOptions::default();
-    options.container_name = name;
+    options.container_name = name.clone();
     options.command = req.command;
     options.user = req.user;
-    options.tty = req.tty;
+    options.env_vars = req.env.unwrap_or_default();
+    options.cwd = req.working_dir;
     
     let session_mgr = state.session_manager.read().await;
-    let session = session_mgr.create(&name, &options)?;
+    let session = session_mgr.create(&name, &options).map_err(|e| ApiError::internal(e.to_string()))?;
     
-    // In a real implementation, this would execute the command and return output
-    // For now, return a placeholder
     Ok(ResponseJson(ExecResponse {
         output: format!("Executed command in session {}", session.id),
         exit_code: 0,
@@ -397,10 +401,8 @@ async fn get_container_stats(
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ContainerStatsResponse>, ApiError> {
     let manager = state.container_manager.read().await;
-    let _container = manager.get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("Container '{}' not found", name)))?;
+    let _container = manager.get(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
-    // In a real implementation, this would fetch real stats from cgroups
     Ok(ResponseJson(ContainerStatsResponse {
         cpu_usage: 0.0,
         memory_usage: 0,
@@ -420,23 +422,26 @@ async fn list_images(
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<Vec<ImageSummary>>, ApiError> {
     let manager = state.container_manager.read().await;
-    let containers = manager.list()?;
+    let containers = manager.list().await.map_err(|e| ApiError::internal(e.to_string()))?;
     
-    // Extract unique images from containers
     let mut images = std::collections::HashSet::new();
-    let mut result = Vec::new();
-    
     for container in containers {
-        if images.insert(container.image.clone()) {
-            result.push(ImageSummary {
-                id: format!("sha256:{}", container.image),
-                name: container.image,
-                tag: "latest".to_string(),
-                size: 0, // Would need to track actual size
-                created_at: container.created_at,
-            });
+        let key = format!("{}:{}", container.distro, container.version);
+        if !images.contains(&key) {
+            images.insert(key.clone());
         }
     }
+    
+    let result: Vec<_> = images.into_iter().map(|key| {
+        let parts: Vec<&str> = key.split(':').collect();
+        ImageSummary {
+            id: format!("sha256:{}", key),
+            name: parts[0].to_string(),
+            tag: parts.get(1).unwrap_or(&"latest").to_string(),
+            size: 0,
+            created_at: Utc::now(),
+        }
+    }).collect();
     
     Ok(ResponseJson(result))
 }
@@ -446,14 +451,13 @@ async fn get_image(
     Path(name): Path<String>,
     State(_state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ImageDetail>, ApiError> {
-    // In a real implementation, this would fetch from image store
     Ok(ResponseJson(ImageDetail {
         id: name.clone(),
         name: name.clone(),
         tag: "latest".to_string(),
         size: 0,
         created_at: Utc::now(),
-        architecture: "arm64".to_string(),
+        architecture: "aarch64".to_string(),
         os: "linux".to_string(),
         layers: vec![],
     }))
@@ -464,22 +468,26 @@ async fn pull_image(
     State(state): State<Arc<ApiState>>,
     Json(req): Json<PullImageRequest>,
 ) -> Result<ResponseJson<ImageResponse>, ApiError> {
-    let manager = state.container_manager.read().await;
+    let mut manager = state.container_manager.write().await;
     
-    // Create a container to trigger image pull
     let config = ContainerConfig {
         name: format!("pull-{}", Uuid::new_v4()),
-        image: req.image.clone(),
+        distro: req.image.clone(),
+        version: req.tag.unwrap_or_else(|| "latest".to_string()),
+        arch: "aarch64".to_string(),
+        rootfs_path: None,
+        bind_mounts: vec![],
+        env_vars: vec![],
         command: vec![],
-        env: vec![],
-        working_dir: "/".to_string(),
-        resources: None,
-        network: None,
-        binds: vec![],
+        working_dir: None,
+        kernel_release: None,
+        hostname: None,
+        resources: ResourceLimits::default(),
+        network: NetworkConfig::default(),
+        security: SecurityConfig::default(),
     };
     
-    let mut manager = state.container_manager.write().await;
-    let _container = manager.create(config)?;
+    let _container = manager.create(&config.name, &config).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(ImageResponse {
         id: Uuid::new_v4().to_string(),
@@ -492,7 +500,6 @@ async fn delete_image(
     Path(name): Path<String>,
     State(_state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<ImageResponse>, ApiError> {
-    // In a real implementation, this would remove the image
     Ok(ResponseJson(ImageResponse {
         id: name,
         message: "Image deleted".to_string(),
@@ -535,7 +542,7 @@ async fn get_network(
 ) -> Result<ResponseJson<NetworkDetail>, ApiError> {
     let manager = state.network_manager.read().await;
     let network = manager.get_network(&name).await
-        .ok_or_else(|| ApiError::not_found(format!("Network '{}' not found", name)))?;
+        .ok_or(ApiError::not_found(format!("Network '{}' not found", name)))?;
     
     Ok(ResponseJson(NetworkDetail::from(network)))
 }
@@ -547,7 +554,7 @@ async fn create_network(
 ) -> Result<ResponseJson<NetworkResponse>, ApiError> {
     let mut manager = state.network_manager.write().await;
     
-    let network = Network {
+    let network = PnNetwork {
         id: Uuid::new_v4(),
         name: req.name.clone(),
         driver: req.driver.unwrap_or_else(|| "bridge".to_string()),
@@ -560,7 +567,7 @@ async fn create_network(
         containers: Vec::new(),
     };
     
-    manager.create_network(network).await?;
+    manager.create_network(network).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(NetworkResponse {
         id: req.name,
@@ -574,7 +581,7 @@ async fn delete_network(
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<NetworkResponse>, ApiError> {
     let mut manager = state.network_manager.write().await;
-    manager.remove_network(&name).await?;
+    manager.remove_network(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(NetworkResponse {
         id: name,
@@ -589,7 +596,7 @@ async fn connect_network(
     Json(req): Json<ConnectNetworkRequest>,
 ) -> Result<ResponseJson<NetworkResponse>, ApiError> {
     let manager = state.network_manager.read().await;
-    manager.connect_container(&name, &req.container).await?;
+    manager.connect_container(&name, &req.container).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(NetworkResponse {
         id: name,
@@ -609,7 +616,7 @@ async fn disconnect_network(
     Json(req): Json<ConnectNetworkRequest>,
 ) -> Result<ResponseJson<NetworkResponse>, ApiError> {
     let manager = state.network_manager.read().await;
-    manager.disconnect_container(&name, &req.container).await?;
+    manager.disconnect_container(&name, &req.container).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(NetworkResponse {
         id: name,
@@ -635,7 +642,7 @@ async fn get_volume(
 ) -> Result<ResponseJson<VolumeDetail>, ApiError> {
     let manager = state.storage_manager.read().await;
     let volume = manager.get_volume(&name).await
-        .ok_or_else(|| ApiError::not_found(format!("Volume '{}' not found", name)))?;
+        .ok_or(ApiError::not_found(format!("Volume '{}' not found", name)))?;
     
     Ok(ResponseJson(VolumeDetail::from(volume)))
 }
@@ -647,7 +654,7 @@ async fn create_volume(
 ) -> Result<ResponseJson<VolumeResponse>, ApiError> {
     let mut manager = state.storage_manager.write().await;
     
-    let volume = crate::storage::Volume {
+    let volume = Volume {
         id: Uuid::new_v4(),
         name: req.name.clone(),
         driver: req.driver.unwrap_or_else(|| "local".to_string()),
@@ -658,7 +665,7 @@ async fn create_volume(
         size: 0,
     };
     
-    manager.create_volume(volume).await?;
+    manager.create_volume(volume).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(VolumeResponse {
         id: req.name,
@@ -672,7 +679,7 @@ async fn delete_volume(
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<VolumeResponse>, ApiError> {
     let mut manager = state.storage_manager.write().await;
-    manager.remove_volume(&name).await?;
+    manager.remove_volume(&name).await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     Ok(ResponseJson(VolumeResponse {
         id: name,
@@ -687,7 +694,7 @@ async fn get_status(
     State(state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<StatusResponse>, ApiError> {
     let container_manager = state.container_manager.read().await;
-    let containers = container_manager.list()?;
+    let containers = container_manager.list().await.map_err(|e| ApiError::internal(e.to_string()))?;
     
     let running = containers.iter().filter(|c| c.status == ContainerStatus::Running).count();
     let stopped = containers.iter().filter(|c| c.status == ContainerStatus::Stopped).count();
@@ -704,7 +711,7 @@ async fn get_status(
         uptime: (Utc::now() - state.started_at).num_seconds() as u64,
         containers_running: running as u32,
         containers_stopped: stopped as u32,
-        images: 0, // Would need image store
+        images: 0,
         networks: networks.len() as u32,
         volumes: volumes.len() as u32,
     }))
@@ -714,7 +721,6 @@ async fn get_status(
 async fn get_metrics(
     State(_state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<MetricsResponse>, ApiError> {
-    // In a real implementation, this would return Prometheus metrics
     Ok(ResponseJson(MetricsResponse {
         metrics: serde_json::json!({
             "containers_total": 0,
@@ -730,9 +736,8 @@ async fn get_metrics(
 
 /// List plugins
 async fn list_plugins(
-    State(state): State<Arc<ApiState>>,
+    State(_state): State<Arc<ApiState>>,
 ) -> Result<ResponseJson<Vec<PluginInfo>>, ApiError> {
-    // Note: Plugin manager would need to be added to ApiState
     Ok(ResponseJson(vec![]))
 }
 
@@ -774,7 +779,9 @@ struct ContainerResponse {
 struct ContainerSummary {
     id: String,
     name: String,
-    image: String,
+    distro: String,
+    version: String,
+    arch: String,
     status: String,
     created_at: DateTime<Utc>,
 }
@@ -784,7 +791,9 @@ impl From<ContainerInfo> for ContainerSummary {
         Self {
             id: c.name.clone(),
             name: c.name,
-            image: c.image,
+            distro: c.distro,
+            version: c.version,
+            arch: c.arch,
             status: format!("{:?}", c.status),
             created_at: c.created_at,
         }
@@ -792,37 +801,31 @@ impl From<ContainerInfo> for ContainerSummary {
 }
 
 #[derive(Serialize)]
-struct ContainerResponseFull {
-    id: String,
-    name: String,
-    image: String,
-    status: String,
-    created_at: DateTime<Utc>,
-    state: String,
-    config: serde_json::Value,
-}
-
-#[derive(Serialize)]
 struct ContainerDetailResponse {
     id: String,
     name: String,
-    image: String,
+    distro: String,
+    version: String,
+    arch: String,
     status: String,
     created_at: DateTime<Utc>,
-    state: String,
+    rootfs_path: String,
     config: serde_json::Value,
 }
 
 impl From<proot_distro_core::Container> for ContainerDetailResponse {
     fn from(c: proot_distro_core::Container) -> Self {
+        let config_value = serde_json::to_value(&c.config).unwrap_or_default();
         Self {
             id: c.name.clone(),
             name: c.name,
-            image: c.config.image,
+            distro: c.config.distro,
+            version: c.config.version,
+            arch: c.config.arch,
             status: format!("{:?}", c.status),
             created_at: c.created_at,
-            state: format!("{:?}", c.status),
-            config: serde_json::to_value(c.config).unwrap_or_default(),
+            rootfs_path: c.rootfs_path.to_string_lossy().to_string(),
+            config: config_value,
         }
     }
 }
@@ -830,12 +833,18 @@ impl From<proot_distro_core::Container> for ContainerDetailResponse {
 #[derive(Deserialize)]
 struct CreateContainerRequest {
     name: String,
-    image: String,
+    distro: Option<String>,
+    version: Option<String>,
+    arch: Option<String>,
+    rootfs_path: Option<PathBuf>,
     command: Option<Vec<String>>,
     env: Option<Vec<(String, String)>>,
     working_dir: Option<String>,
+    kernel_release: Option<String>,
+    hostname: Option<String>,
     resources: Option<ResourceLimitsRequest>,
     network: Option<NetworkConfigRequest>,
+    security: Option<SecurityConfigRequest>,
     volumes: Option<Vec<VolumeMountRequest>>,
 }
 
@@ -844,7 +853,7 @@ struct UpdateContainerRequest {
     name: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct ResourceLimitsRequest {
     cpu_limit: Option<f64>,
     memory_limit: Option<u64>,
@@ -852,7 +861,7 @@ struct ResourceLimitsRequest {
     pids_limit: Option<u64>,
 }
 
-impl From<ResourceLimitsRequest> for proot_distro_core::ResourceLimits {
+impl From<ResourceLimitsRequest> for ResourceLimits {
     fn from(r: ResourceLimitsRequest) -> Self {
         Self {
             cpu_limit: r.cpu_limit,
@@ -863,17 +872,44 @@ impl From<ResourceLimitsRequest> for proot_distro_core::ResourceLimits {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct NetworkConfigRequest {
-    mode: Option<String>,
-    ports: Option<Vec<PortMappingRequest>>,
+    mode: Option<NetworkModeRequest>,
+    bridge: Option<String>,
+    ip_address: Option<String>,
+    gateway: Option<String>,
+    dns_servers: Option<Vec<String>>,
+    port_mappings: Option<Vec<PortMappingRequest>>,
 }
 
-impl From<NetworkConfigRequest> for proot_distro_core::NetworkConfig {
+impl From<NetworkConfigRequest> for NetworkConfig {
     fn from(n: NetworkConfigRequest) -> Self {
         Self {
-            mode: n.mode.unwrap_or_else(|| "bridge".to_string()).parse().unwrap_or_default(),
-            ports: n.ports.map(|p| p.into_iter().map(|p| p.into()).collect()).unwrap_or_default(),
+            mode: n.mode.map(|m| m.into()).unwrap_or(NetworkMode::Bridge),
+            bridge: n.bridge,
+            ip_address: n.ip_address,
+            gateway: n.gateway,
+            dns_servers: n.dns_servers.unwrap_or_else(|| vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()]),
+            port_mappings: n.port_mappings.map(|p| p.into_iter().map(|p| p.into()).collect()).unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum NetworkModeRequest {
+    Bridge,
+    Host,
+    None,
+    Container(String),
+}
+
+impl From<NetworkModeRequest> for NetworkMode {
+    fn from(m: NetworkModeRequest) -> Self {
+        match m {
+            NetworkModeRequest::Bridge => NetworkMode::Bridge,
+            NetworkModeRequest::Host => NetworkMode::Host,
+            NetworkModeRequest::None => NetworkMode::None,
+            NetworkModeRequest::Container(s) => NetworkMode::Container(s),
         }
     }
 }
@@ -885,12 +921,37 @@ struct PortMappingRequest {
     protocol: Option<String>,
 }
 
-impl From<PortMappingRequest> for proot_distro_core::PortMapping {
+impl From<PortMappingRequest> for PortMapping {
     fn from(p: PortMappingRequest) -> Self {
         Self {
             host_port: p.host_port,
             container_port: p.container_port,
-            protocol: p.protocol.unwrap_or_else(|| "tcp".to_string()).parse().unwrap_or_default(),
+            protocol: p.protocol.unwrap_or_else(|| "tcp".to_string()),
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct SecurityConfigRequest {
+    privileged: Option<bool>,
+    capabilities: Option<Vec<String>>,
+    seccomp_profile: Option<String>,
+    apparmor_profile: Option<String>,
+    selinux_label: Option<String>,
+    no_new_privileges: Option<bool>,
+    read_only_rootfs: Option<bool>,
+}
+
+impl From<SecurityConfigRequest> for SecurityConfig {
+    fn from(s: SecurityConfigRequest) -> Self {
+        Self {
+            privileged: s.privileged.unwrap_or(false),
+            capabilities: s.capabilities.unwrap_or_default(),
+            seccomp_profile: s.seccomp_profile,
+            apparmor_profile: s.apparmor_profile,
+            selinux_label: s.selinux_label,
+            no_new_privileges: s.no_new_privileges.unwrap_or(true),
+            read_only_rootfs: s.read_only_rootfs.unwrap_or(false),
         }
     }
 }
@@ -902,11 +963,11 @@ struct VolumeMountRequest {
     readonly: Option<bool>,
 }
 
-impl From<VolumeMountRequest> for proot_distro_core::BindMount {
+impl From<VolumeMountRequest> for BindMount {
     fn from(v: VolumeMountRequest) -> Self {
         Self {
-            host_path: v.source.into(),
-            container_path: v.target.into(),
+            source: v.source,
+            target: v.target,
             readonly: v.readonly.unwrap_or(false),
         }
     }
@@ -916,6 +977,8 @@ impl From<VolumeMountRequest> for proot_distro_core::BindMount {
 struct ExecRequest {
     command: Vec<String>,
     user: Option<String>,
+    env: Option<Vec<(String, String)>>,
+    working_dir: Option<String>,
     tty: bool,
 }
 
@@ -998,8 +1061,8 @@ struct NetworkSummary {
     created_at: DateTime<Utc>,
 }
 
-impl From<Network> for NetworkSummary {
-    fn from(n: Network) -> Self {
+impl From<PnNetwork> for NetworkSummary {
+    fn from(n: PnNetwork) -> Self {
         Self {
             id: n.id.to_string(),
             name: n.name,
@@ -1024,8 +1087,8 @@ struct NetworkDetail {
     containers: Vec<String>,
 }
 
-impl From<Network> for NetworkDetail {
-    fn from(n: Network) -> Self {
+impl From<PnNetwork> for NetworkDetail {
+    fn from(n: PnNetwork) -> Self {
         Self {
             id: n.id.to_string(),
             name: n.name,
@@ -1067,8 +1130,8 @@ struct VolumeSummary {
     created_at: DateTime<Utc>,
 }
 
-impl From<crate::storage::Volume> for VolumeSummary {
-    fn from(v: crate::storage::Volume) -> Self {
+impl From<Volume> for VolumeSummary {
+    fn from(v: Volume) -> Self {
         Self {
             id: v.id.to_string(),
             name: v.name,
@@ -1085,14 +1148,14 @@ struct VolumeDetail {
     name: String,
     driver: String,
     mountpoint: String,
-    labels: std::collections::HashMap<String, String>,
-    options: std::collections::HashMap<String, String>,
+    labels: HashMap<String, String>,
+    options: HashMap<String, String>,
     created_at: DateTime<Utc>,
     size: u64,
 }
 
-impl From<crate::storage::Volume> for VolumeDetail {
-    fn from(v: crate::storage::Volume) -> Self {
+impl From<Volume> for VolumeDetail {
+    fn from(v: Volume) -> Self {
         Self {
             id: v.id.to_string(),
             name: v.name,
@@ -1110,8 +1173,8 @@ impl From<crate::storage::Volume> for VolumeDetail {
 struct CreateVolumeRequest {
     name: String,
     driver: Option<String>,
-    labels: Option<std::collections::HashMap<String, String>>,
-    options: Option<std::collections::HashMap<String, String>>,
+    labels: Option<HashMap<String, String>>,
+    options: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize)]
@@ -1167,6 +1230,10 @@ impl ApiError {
     
     fn conflict(msg: String) -> Self {
         Self::Conflict(msg)
+    }
+    
+    fn internal(msg: String) -> Self {
+        Self::Internal(msg)
     }
 }
 

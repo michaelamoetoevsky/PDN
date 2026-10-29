@@ -11,7 +11,8 @@ use nix::sys::signal::Signal;
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::collections::hash_map::Entry;
 use anyhow::{Result, anyhow};
 use tracing::{debug, trace, warn, error};
@@ -84,19 +85,19 @@ impl PtraceController {
     }
 
     pub fn add_tracee(&self, pid: Pid, tracee: Tracee) {
-        self.tracees.lock().unwrap().insert(pid, tracee);
+        self.tracees.lock().insert(pid, tracee);
     }
 
     pub fn remove_tracee(&self, pid: Pid) -> Option<Tracee> {
-        self.tracees.lock().unwrap().remove(&pid)
+        self.tracees.lock().remove(&pid)
     }
 
     pub fn get_tracee(&self, pid: Pid) -> Option<Tracee> {
-        self.tracees.lock().unwrap().get(&pid).cloned()
+        self.tracees.lock().get(&pid).cloned()
     }
 
     pub fn get_all_tracees(&self) -> Vec<Tracee> {
-        self.tracees.lock().unwrap().values().cloned().collect()
+        self.tracees.lock().values().cloned().collect()
     }
 
     pub fn run_loop(&self, 
@@ -142,7 +143,7 @@ impl PtraceController {
 
         // Get or create tracee
         let mut tracee = {
-            let mut tracees = self.tracees.lock().unwrap();
+            let mut tracees = self.tracees.lock();
             match tracees.entry(pid) {
                 Entry::Occupied(e) => e.get().clone(),
                 Entry::Vacant(e) => {
@@ -160,7 +161,7 @@ impl PtraceController {
 
         // Update tracee
         {
-            let mut tracees = self.tracees.lock().unwrap();
+            let mut tracees = self.tracees.lock();
             tracees.insert(pid, tracee);
         }
 
@@ -168,7 +169,7 @@ impl PtraceController {
     }
 
     pub fn shutdown(&self) -> Result<()> {
-        let tracees = self.tracees.lock().unwrap();
+        let tracees = self.tracees.lock();
         for (pid, _tracee) in tracees.iter() {
             ptrace::detach(*pid, None)?;
         }

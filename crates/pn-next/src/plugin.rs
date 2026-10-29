@@ -45,7 +45,7 @@ impl Default for PluginConfig {
 /// Plugin manager
 pub struct PluginManager {
     config: PluginConfig,
-    plugins: Arc<RwLock<HashMap<String, Box<dyn Plugin>>>>,
+    plugins: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<Box<dyn Plugin>>>>>>,
     hooks: Arc<RwLock<HashMap<String, Vec<Box<dyn Hook>>>>>,
     loaded_libraries: Arc<RwLock<HashMap<String, Arc<Library>>>>,
     file_watcher: Option<notify::RecommendedWatcher>,
@@ -74,6 +74,7 @@ impl PluginManager {
     }
     
     fn start_file_watcher(&mut self, rx: mpsc::Receiver<notify::Result<Event>>) -> Result<()> {
+        let tx = self.watcher_tx.clone().unwrap();
         let mut watcher = notify::recommended_watcher(move |res| {
             let _ = tx.send(res);
         })?;
@@ -105,7 +106,7 @@ impl PluginManager {
     async fn handle_file_event(
         event: Event,
         config: &PluginConfig,
-        plugins: &Arc<RwLock<HashMap<String, Box<dyn Plugin>>>>,
+        plugins: &Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<Box<dyn Plugin>>>>>>,
         loaded_libraries: &Arc<RwLock<HashMap<String, Arc<Library>>>>,
     ) {
         for path in event.paths {
@@ -131,7 +132,7 @@ impl PluginManager {
     async fn load_plugin_file(
         path: &Path,
         config: &PluginConfig,
-        plugins: &Arc<RwLock<HashMap<String, Box<dyn Plugin>>>>,
+        plugins: &Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<Box<dyn Plugin>>>>>>,
         loaded_libraries: &Arc<RwLock<HashMap<String, Arc<Library>>>>,
     ) -> Result<()> {
         let name = path.file_stem()
@@ -162,12 +163,13 @@ impl PluginManager {
         
         // Initialize plugin
         let mut context = PluginContext::default();
-        plugin.initialize(&mut context).await?;
+        let plugin_arc = Arc::new(tokio::sync::Mutex::new(plugin));
+        plugin_arc.lock().await.initialize(&mut context).await?;
         
         // Store plugin and library
         {
             let mut plugins_guard = plugins.write().await;
-            plugins_guard.insert(name.to_string(), plugin);
+            plugins_guard.insert(name.to_string(), plugin_arc);
         }
         {
             let mut libs_guard = loaded_libraries.write().await;
@@ -198,7 +200,7 @@ impl PluginManager {
         // Shutdown all plugins
         let mut plugins = self.plugins.write().await;
         for (_, plugin) in plugins.drain() {
-            plugin.shutdown().await?;
+            plugin.lock().await.shutdown().await?;
         }
         
         // Unload libraries
@@ -210,15 +212,16 @@ impl PluginManager {
     
     pub async fn register_plugin(&self, plugin: Box<dyn Plugin>) -> Result<()> {
         let name = plugin.name().to_string();
+        let plugin_arc = Arc::new(tokio::sync::Mutex::new(plugin));
         let mut plugins = self.plugins.write().await;
-        plugins.insert(name, plugin);
+        plugins.insert(name, plugin_arc);
         Ok(())
     }
     
     pub async fn unregister_plugin(&self, name: &str) -> Result<()> {
         let mut plugins = self.plugins.write().await;
-        if let Some(mut plugin) = plugins.remove(name) {
-            plugin.shutdown().await?;
+        if let Some(plugin) = plugins.remove(name) {
+            plugin.lock().await.shutdown().await?;
         }
         let mut libs = self.loaded_libraries.write().await;
         libs.remove(name);
@@ -227,7 +230,12 @@ impl PluginManager {
     
     pub async fn get_plugin_info(&self, name: &str) -> Option<PluginInfo> {
         let plugins = self.plugins.read().await;
-        plugins.get(name).map(|p| p.info())
+        if let Some(p) = plugins.get(name) {
+            let plugin = p.lock().await;
+            Some(plugin.info())
+        } else {
+            None
+        }
     }
     
     pub async fn register_hook(&self, hook_name: &str, hook: Box<dyn Hook>) -> Result<()> {
@@ -248,7 +256,11 @@ impl PluginManager {
     
     pub async fn list_plugins(&self) -> Vec<PluginInfo> {
         let plugins = self.plugins.read().await;
-        plugins.values().map(|p| p.info()).collect()
+        let mut result = Vec::new();
+        for p in plugins.values() {
+            result.push(p.lock().await.info());
+        }
+        result
     }
 }
 

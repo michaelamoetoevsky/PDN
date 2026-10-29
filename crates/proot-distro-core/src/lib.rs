@@ -58,20 +58,13 @@ pub struct ProotDistroCore {
 
 impl ProotDistroCore {
     pub fn new() -> Result<Self> {
-        let container_manager = ContainerManager::new()
-            .map_err(|e| anyhow::anyhow!("ContainerManager::new failed: {}", e))?;
-        let image_manager = ImageManager::new()
-            .map_err(|e| anyhow::anyhow!("ImageManager::new failed: {}", e))?;
-        let config_manager = ConfigManager::new()
-            .map_err(|e| anyhow::anyhow!("ConfigManager::new failed: {}", e))?;
-        let session_manager = SessionManager::new()
-            .map_err(|e| anyhow::anyhow!("SessionManager::new failed: {}", e))?;
-        let lock_manager = LockManager::new()
-            .map_err(|e| anyhow::anyhow!("LockManager::new failed: {}", e))?;
-        let sysdata_manager = SysdataManager::new()
-            .map_err(|e| anyhow::anyhow!("SysdataManager::new failed: {}", e))?;
-        let shm_manager = ShmManager::new()
-            .map_err(|e| anyhow::anyhow!("ShmManager::new failed: {}", e))?;
+        let container_manager = ContainerManager::new()?;
+        let image_manager = ImageManager::new()?;
+        let config_manager = ConfigManager::new()?;
+        let session_manager = SessionManager::new()?;
+        let lock_manager = LockManager::new()?;
+        let sysdata_manager = SysdataManager::new()?;
+        let shm_manager = ShmManager::new()?;
         
         Ok(Self {
             container_manager,
@@ -84,38 +77,38 @@ impl ProotDistroCore {
         })
     }
 
-    pub fn install(&mut self, options: InstallOptions) -> Result<()> {
+    pub async fn install(&mut self, options: InstallOptions) -> Result<()> {
         self.image_manager.download_and_verify_source(&options.source)?;
-        self.container_manager.create(&options.name, &options.config)?;
+        self.container_manager.create(&options.name, &options.config).await?;
         self.shm_manager.create(&options.name, 1024 * 1024)?; // 1MB default
         Ok(())
     }
 
-    pub fn login(&mut self, options: LoginOptions) -> Result<()> {
-        let container = self.container_manager.get(&options.container_name)?;
+    pub async fn login(&mut self, options: LoginOptions) -> Result<()> {
+        let container = self.container_manager.get(&options.container_name).await?;
         let session = self.session_manager.create(&options.container_name, &options)?;
         self.lock_manager.acquire(&options.container_name)?;
         // Execute proot with container config
         Ok(())
     }
 
-    pub fn remove(&mut self, name: &str) -> Result<()> {
+    pub async fn remove(&mut self, name: &str) -> Result<()> {
         self.lock_manager.acquire(name)?;
-        self.container_manager.remove(name)?;
+        self.container_manager.remove(name).await?;
         self.shm_manager.remove(name)?;
         Ok(())
     }
 
-    pub fn list(&self) -> Result<Vec<ContainerInfo>> {
-        self.container_manager.list()
+    pub async fn list(&self) -> Result<Vec<ContainerInfo>> {
+        self.container_manager.list().await
     }
 
-    pub fn backup(&self, name: &str, dest: &std::path::Path) -> Result<()> {
-        let container = self.container_manager.get(name)?;
+    pub async fn backup(&self, name: &str, dest: &std::path::Path) -> Result<()> {
+        let container = self.container_manager.get(name).await?;
         self.container_manager.backup(&container, dest)
     }
 
-    pub fn restore(&mut self, name: &str, src: &std::path::Path) -> Result<()> {
+    pub async fn restore(&mut self, name: &str, src: &std::path::Path) -> Result<()> {
         self.container_manager.restore(name, src)
     }
 }
