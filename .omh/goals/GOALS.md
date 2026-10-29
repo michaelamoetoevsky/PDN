@@ -57,12 +57,12 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 - [x] Comprehensive test coverage (>80%) - 57 tests passing across all crates
 - [x] Fuzzing integration (cargo-fuzz) - 3 fuzz targets for security deserialization
 - [ ] Long-running stability tests (72h+)
-- [ ] Release automation (GitHub Actions + cargo-release)
-- [ ] Migration guide from PRoot-distro
+- [x] Release automation (GitHub Actions + cargo-release)
+- [x] Migration guide from PRoot-distro
 - [ ] Android NDK cross-compilation verification (aarch64)
 - [ ] Termux package build (APK)
-- [ ] Documentation website (mdBook)
-- [ ] Performance profiling and optimization
+- [x] Documentation website (mdBook)
+- [x] Performance profiling and optimization - Criterion benchmarks for runtime, gateway, guardrails, fail-safe
 
 ## Technical Goals
 

@@ -9,6 +9,7 @@ repository = "https://github.com/hermes-agent/PDN"
 [features]
 default = []
 cri = ["dep:tonic", "dep:prost", "dep:prost-types", "dep:tokio-stream"]
+profiling = ["dep:pprof", "dep:flamegraph"]
 
 [dependencies]
 proot-core = { path = "../proot-core" }
@@ -52,3 +53,14 @@ prost = { version = "0.12", optional = true }
 prost-types = { version = "0.12", optional = true }
 tokio-stream = { version = "0.1", optional = true }
 rand = "0.8"
+pprof = { version = "0.12", optional = true }
+flamegraph = { version = "0.6", optional = true }
+
+[[bench]]
+name = "benchmarks"
+path = "benches/benchmarks.rs"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+tokio = { version = "1.0", features = ["full", "macros"] }

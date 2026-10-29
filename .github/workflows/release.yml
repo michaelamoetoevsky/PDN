@@ -1,0 +1,235 @@
+name: Release Automation
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Build and test on multiple platforms
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta]
+        include:
+          - rust: stable
+            target: aarch64-linux-android
+          - rust: stable
+            target: x86_64-unknown-linux-gnu
+          - rust: beta
+            target: aarch64-linux-android
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.rust }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            libclang-dev \
+            clang \
+            lld \
+            cmake \
+            ninja-build \
+            protobuf-compiler
+
+      - name: Build workspace
+        run: cargo build --workspace --release --target ${{ matrix.target }}
+        env:
+          CC_aarch64_linux_android: aarch64-linux-android35-clang
+          CXX_aarch64_linux_android: aarch64-linux-android35-clang++
+          AR_aarch64_linux_android: llvm-ar
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android35-clang
+
+      - name: Run tests
+        run: cargo test --workspace --release --target ${{ matrix.target }}
+        env:
+          CC_aarch64_linux_android: aarch64-linux-android35-clang
+          CXX_aarch64_linux_android: aarch64-linux-android35-clang++
+          AR_aarch64_linux_android: llvm-ar
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android35-clang
+
+      - name: Run clippy
+        run: cargo clippy --workspace --release --target ${{ matrix.target }} -- -D warnings
+        env:
+          CC_aarch64_linux_android: aarch64-linux-android35-clang
+          CXX_aarch64_linux_android: aarch64-linux-android35-clang++
+          AR_aarch64_linux_android: llvm-ar
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android35-clang
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build binaries for release
+        if: matrix.target == 'aarch64-linux-android'
+        run: |
+          mkdir -p release-artifacts
+          cp target/aarch64-linux-android/release/podnext release-artifacts/podnext-aarch64-linux-android
+          cp target/aarch64-linux-android/release/pn-gateway release-artifacts/pn-gateway-aarch64-linux-android || true
+        shell: bash
+
+      - name: Upload release artifacts
+        if: matrix.target == 'aarch64-linux-android'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries-${{ matrix.target }}
+          path: release-artifacts/
+          retention-days: 30
+
+  # Security audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo-audit
+        run: cargo audit --workspace
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
+      - name: Run cargo-deny check
+        run: cargo deny check advisories bans licenses sources
+
+  # Generate release notes and create release
+  create-release:
+    name: Create Release
+    needs: [build-and-test, security-audit]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-release
+        run: cargo install cargo-release
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get version from tag or input
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          
+          # Generate changelog from commits since last tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD > CHANGELOG.md
+          else
+            git log --pretty=format:"- %s (%h)" > CHANGELOG.md
+          fi
+          
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          cat CHANGELOG.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.changelog.outputs.version }}
+          name: PDN ${{ steps.changelog.outputs.version }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: |
+            release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android
+            release-artifacts/release-binaries-aarch64-linux-android/pn-gateway-aarch64-linux-android
+          draft: false
+          prerelease: ${{ contains(steps.changelog.outputs.version, 'alpha') || contains(steps.changelog.outputs.version, 'beta') || contains(steps.changelog.outputs.version, 'rc') }}
+
+      - name: Verify release artifacts
+        run: |
+          ls -la release-artifacts/
+          file release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android
+          ./release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android --version || true
+
+  # Publish to crates.io (optional, manual trigger)
+  publish-crates:
+    name: Publish to crates.io
+    needs: create-release
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-release
+        run: cargo install cargo-release
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish crates
+        run: cargo release --workspace --no-publish --execute ${{ github.event.inputs.version }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
