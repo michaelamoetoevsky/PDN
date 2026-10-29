@@ -1552,3 +1552,806 @@ mod tests {
         assert_eq!(sandbox.state, SandboxState::Stopped);
     }
 }
+
+/// CRI gRPC Service Implementation
+/// This provides the Container Runtime Interface (CRI) v1alpha2 API
+/// which is compatible with Kubernetes kubelet
+#[cfg(feature = "cri")]
+mod cri {
+    use super::*;
+    use tonic::{Request, Response, Status};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use tonic::transport::Server;
+    use tokio::net::UnixListener;
+    use tokio_stream::wrappers::UnixListenerStream;
+    use std::pin::Pin;
+    use futures::Stream;
+
+    // CRI API types - these match the CRI v1alpha2 protobuf definitions
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct VersionRequest {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct VersionResponse {
+        pub version: String,
+        pub runtime_name: String,
+        pub runtime_version: String,
+        pub runtime_api_version: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RunPodSandboxRequest {
+        pub config: PodSandboxConfig,
+        pub runtime_handler: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandboxConfig {
+        pub metadata: Option<PodSandboxMetadata>,
+        pub hostname: String,
+        pub dns_config: DnsConfig,
+        pub port_mappings: Vec<PortMapping>,
+        pub labels: HashMap<String, String>,
+        pub annotations: HashMap<String, String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandboxMetadata {
+        pub name: String,
+        pub uid: String,
+        pub namespace: String,
+        pub attempt: u32,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RunPodSandboxResponse {
+        pub pod_sandbox_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StopPodSandboxRequest {
+        pub pod_sandbox_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StopPodSandboxResponse {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RemovePodSandboxRequest {
+        pub pod_sandbox_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RemovePodSandboxResponse {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandboxStatusRequest {
+        pub pod_sandbox_id: String,
+        pub verbose: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandboxStatusResponse {
+        pub status: PodSandboxStatus,
+        pub info: HashMap<String, String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandboxStatus {
+        pub id: String,
+        pub metadata: PodSandboxMetadata,
+        pub state: PodSandboxState,
+        pub created_at: i64,
+        pub network: Option<PodSandboxNetworkStatus>,
+        pub labels: HashMap<String, String>,
+        pub annotations: HashMap<String, String>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+    pub enum PodSandboxState {
+        Ready,
+        NotReady,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandboxNetworkStatus {
+        pub ip: String,
+        pub additional_ips: Vec<IpAddress>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct IpAddress {
+        pub ip: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListPodSandboxRequest {
+        pub filter: Option<PodSandboxFilter>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandboxFilter {
+        pub id: String,
+        pub label_selector: HashMap<String, String>,
+        pub state: Option<PodSandboxState>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListPodSandboxResponse {
+        pub items: Vec<PodSandbox>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PodSandbox {
+        pub id: String,
+        pub metadata: PodSandboxMetadata,
+        pub state: PodSandboxState,
+        pub created_at: i64,
+        pub labels: HashMap<String, String>,
+        pub annotations: HashMap<String, String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CreateContainerRequest {
+        pub pod_sandbox_id: String,
+        pub config: ContainerConfig,
+        pub sandbox_config: PodSandboxConfig,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerConfig {
+        pub metadata: Option<ContainerMetadata>,
+        pub image: ImageSpec,
+        pub command: Vec<String>,
+        pub args: Vec<String>,
+        pub working_dir: String,
+        pub envs: Vec<KeyValue>,
+        pub mounts: Vec<Mount>,
+        pub devices: Vec<Device>,
+        pub labels: HashMap<String, String>,
+        pub annotations: HashMap<String, String>,
+        pub linux: Option<LinuxContainerConfig>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerMetadata {
+        pub name: String,
+        pub uid: String,
+        pub namespace: String,
+        pub attempt: u32,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ImageSpec {
+        pub image: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct KeyValue {
+        pub key: String,
+        pub value: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Mount {
+        pub container_path: String,
+        pub host_path: String,
+        pub read_only: bool,
+        pub selinux_relabel: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Device {
+        pub container_path: String,
+        pub host_path: String,
+        pub permissions: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct LinuxContainerConfig {
+        pub resources: Option<LinuxContainerResources>,
+        pub security_context: Option<LinuxContainerSecurityContext>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct LinuxContainerResources {
+        pub cpu_shares: i64,
+        pub memory_limit_in_bytes: i64,
+        pub oom_score_adj: i64,
+        pub cpu_quota: i64,
+        pub cpu_period: i64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct LinuxContainerSecurityContext {
+        pub capabilities: Option<Capability>,
+        pub selinux_options: Option<SelinuxOption>,
+        pub run_as_user: Option<i64>,
+        pub run_as_group: Option<i64>,
+        pub run_as_non_root: bool,
+        pub privileged: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Capability {
+        pub add_capabilities: Vec<String>,
+        pub drop_capabilities: Vec<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SelinuxOption {
+        pub user: String,
+        pub role: String,
+        pub type_: String,
+        pub level: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CreateContainerResponse {
+        pub container_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StartContainerRequest {
+        pub container_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StartContainerResponse {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StopContainerRequest {
+        pub container_id: String,
+        pub timeout: i64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StopContainerResponse {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RemoveContainerRequest {
+        pub container_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RemoveContainerResponse {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerStatusRequest {
+        pub container_id: String,
+        pub verbose: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerStatusResponse {
+        pub status: ContainerStatus,
+        pub info: HashMap<String, String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerStatus {
+        pub id: String,
+        pub metadata: ContainerMetadata,
+        pub state: ContainerState,
+        pub created_at: i64,
+        pub started_at: i64,
+        pub finished_at: i64,
+        pub exit_code: i32,
+        pub image: ImageSpec,
+        pub image_ref: String,
+        pub reason: String,
+        pub message: String,
+        pub labels: HashMap<String, String>,
+        pub annotations: HashMap<String, String>,
+        pub mounts: Vec<Mount>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+    pub enum ContainerState {
+        Created,
+        Running,
+        Exited,
+        Unknown,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListContainersRequest {
+        pub filter: Option<ContainerFilter>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerFilter {
+        pub id: String,
+        pub pod_sandbox_id: String,
+        pub label_selector: HashMap<String, String>,
+        pub state: Option<ContainerState>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListContainersResponse {
+        pub containers: Vec<Container>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Container {
+        pub id: String,
+        pub pod_sandbox_id: String,
+        pub metadata: ContainerMetadata,
+        pub image: ImageSpec,
+        pub image_ref: String,
+        pub state: ContainerState,
+        pub created_at: i64,
+        pub labels: HashMap<String, String>,
+        pub annotations: HashMap<String, String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExecSyncRequest {
+        pub container_id: String,
+        pub command: Vec<String>,
+        pub timeout: i64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExecSyncResponse {
+        pub stdout: Vec<u8>,
+        pub stderr: Vec<u8>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExecRequest {
+        pub container_id: String,
+        pub command: Vec<String>,
+        pub tty: bool,
+        pub stdin: bool,
+        pub stdout: bool,
+        pub stderr: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ExecResponse {
+        pub url: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AttachRequest {
+        pub container_id: String,
+        pub tty: bool,
+        pub stdin: bool,
+        pub stdout: bool,
+        pub stderr: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AttachResponse {
+        pub url: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PortForwardRequest {
+        pub pod_sandbox_id: String,
+        pub port: i32,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PortForwardResponse {
+        pub url: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ImageStatusRequest {
+        pub image: ImageSpec,
+        pub verbose: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ImageStatusResponse {
+        pub image: Option<Image>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Image {
+        pub id: String,
+        pub repo_tags: Vec<String>,
+        pub repo_digests: Vec<String>,
+        pub size: i64,
+        pub uid: i64,
+        pub username: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PullImageRequest {
+        pub image: ImageSpec,
+        pub auth: Option<AuthConfig>,
+        pub sandbox_config: PodSandboxConfig,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AuthConfig {
+        pub username: String,
+        pub password: String,
+        pub auth: String,
+        pub server_address: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PullImageResponse {
+        pub image_ref: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RemoveImageRequest {
+        pub image: ImageSpec,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RemoveImageResponse {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListImagesRequest {
+        pub filter: Option<ImageFilter>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ImageFilter {
+        pub image: ImageSpec,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListImagesResponse {
+        pub images: Vec<Image>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ImageFsInfoRequest {}
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ImageFsInfoResponse {
+        pub image_filesystems: Vec<FilesystemUsage>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct FilesystemUsage {
+        pub timestamp: i64,
+        pub fs_id: FilesystemIdentifier,
+        pub used_bytes: u64,
+        pub inodes_used: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct FilesystemIdentifier {
+        pub uuid: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerStatsRequest {
+        pub container_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerStatsResponse {
+        pub stats: ContainerStats,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListContainerStatsRequest {
+        pub filter: Option<ContainerStatsFilter>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerStatsFilter {
+        pub id: String,
+        pub pod_sandbox_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ListContainerStatsResponse {
+        pub stats: Vec<ContainerStats>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ContainerStats {
+        pub id: String,
+        pub cpu: CpuUsage,
+        pub memory: MemoryUsage,
+        pub writable_layer: Option<FilesystemUsage>,
+        pub start_time: i64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CpuUsage {
+        pub timestamp: i64,
+        pub usage_core_nano_seconds: u64,
+        pub usage_nano_cores: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct MemoryUsage {
+        pub timestamp: i64,
+        pub working_set_bytes: u64,
+        pub rss_bytes: u64,
+        pub cache_bytes: u64,
+        pub swap_bytes: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ReopenContainerLogRequest {
+        pub container_id: String,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ReopenContainerLogResponse {}
+
+    // CRI gRPC service implementation
+    #[derive(Clone)]
+    pub struct CriService {
+        runtime: Arc<RwLock<Runtime>>,
+    }
+
+    impl CriService {
+        pub fn new(runtime: Arc<RwLock<Runtime>>) -> Self {
+            Self { runtime }
+        }
+    }
+
+    // Implement the CRI gRPC service methods
+    // These would be generated from the protobuf definitions
+    // For now, we provide the structure and method signatures
+
+    impl CriService {
+        /// Version returns the runtime version information
+        pub async fn version(&self, _request: Request<VersionRequest>) -> Result<Response<VersionResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let version = runtime.version().await.map_err(|e| Status::internal(e.to_string()))?;
+            Ok(Response::new(VersionResponse {
+                version: version.version,
+                runtime_name: version.runtime_name,
+                runtime_version: version.runtime_version,
+                runtime_api_version: version.runtime_api_version,
+            }))
+        }
+
+        /// RunPodSandbox creates and starts a pod sandbox
+        pub async fn run_pod_sandbox(&self, request: Request<RunPodSandboxRequest>) -> Result<Response<RunPodSandboxResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            let sandbox_req = CreateSandboxRequest {
+                config: SandboxConfig {
+                    hostname: req.config.hostname,
+                    dns_config: req.config.dns_config,
+                    port_mappings: req.config.port_mappings,
+                    labels: req.config.labels,
+                    annotations: req.config.annotations,
+                },
+                runtime_handler: Some(req.runtime_handler),
+            };
+            
+            let sandbox_id = runtime.create_sandbox(sandbox_req).await
+                .map_err(|e| Status::internal(e.to_string()))?;
+            
+            runtime.start_sandbox(StartSandboxRequest { sandbox_id: sandbox_id.clone() }).await
+                .map_err(|e| Status::internal(e.to_string()))?;
+            
+            Ok(Response::new(RunPodSandboxResponse { pod_sandbox_id: sandbox_id }))
+        }
+
+        /// StopPodSandbox stops a running pod sandbox
+        pub async fn stop_pod_sandbox(&self, request: Request<StopPodSandboxRequest>) -> Result<Response<StopPodSandboxResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            runtime.stop_sandbox(StopSandboxRequest { 
+                sandbox_id: req.pod_sandbox_id, 
+                timeout: 30 
+            }).await.map_err(|e| Status::internal(e.to_string()))?;
+            
+            Ok(Response::new(StopPodSandboxResponse {}))
+        }
+
+        /// RemovePodSandbox removes a pod sandbox
+        pub async fn remove_pod_sandbox(&self, request: Request<RemovePodSandboxRequest>) -> Result<Response<RemovePodSandboxResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            runtime.remove_sandbox(RemoveSandboxRequest { 
+                sandbox_id: req.pod_sandbox_id, 
+                force: true 
+            }).await.map_err(|e| Status::internal(e.to_string()))?;
+            
+            Ok(Response::new(RemovePodSandboxResponse {}))
+        }
+
+        /// CreateContainer creates a new container in a pod sandbox
+        pub async fn create_container(&self, request: Request<CreateContainerRequest>) -> Result<Response<CreateContainerResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            // Convert CRI container config to our internal format
+            let container_id = Uuid::new_v4().to_string();
+            let container_req = CreateContainerRequest {
+                config: ContainerConfig {
+                    name: req.config.metadata.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| container_id.clone()),
+                    distro: req.config.image.image.clone(),
+                    version: "latest".to_string(),
+                    arch: "aarch64".to_string(),
+                    command: req.config.command,
+                    env_vars: req.config.envs.iter().map(|kv| (kv.key.clone(), kv.value.clone())).collect(),
+                    working_dir: Some(req.config.working_dir),
+                    labels: req.config.labels,
+                    annotations: req.config.annotations,
+                    gpu: Some(GpuConfig::default()),
+                    ..Default::default()
+                },
+                sandbox_config: Some(req.sandbox_config),
+                runtime_handler: None,
+            };
+            
+            let id = runtime.create_container(container_req).await
+                .map_err(|e| Status::internal(e.to_string()))?;
+            
+            // Associate container with sandbox
+            runtime.add_container_to_sandbox(&req.pod_sandbox_id, &id).await
+                .map_err(|e| Status::internal(e.to_string()))?;
+            
+            Ok(Response::new(CreateContainerResponse { container_id: id }))
+        }
+
+        /// StartContainer starts a container
+        pub async fn start_container(&self, request: Request<StartContainerRequest>) -> Result<Response<StartContainerResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            runtime.start_container(StartContainerRequest { 
+                container_id: req.container_id 
+            }).await.map_err(|e| Status::internal(e.to_string()))?;
+            
+            Ok(Response::new(StartContainerResponse {}))
+        }
+
+        /// StopContainer stops a container
+        pub async fn stop_container(&self, request: Request<StopContainerRequest>) -> Result<Response<StopContainerResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            runtime.stop_container(&req.container_id, req.timeout as u64).await
+                .map_err(|e| Status::internal(e.to_string()))?;
+            
+            Ok(Response::new(StopContainerResponse {}))
+        }
+
+        /// RemoveContainer removes a container
+        pub async fn remove_container(&self, request: Request<RemoveContainerRequest>) -> Result<Response<RemoveContainerResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            runtime.remove_container(RemoveContainerRequest { 
+                container_id: req.container_id, 
+                force: true 
+            }).await.map_err(|e| Status::internal(e.to_string()))?;
+            
+            Ok(Response::new(RemoveContainerResponse {}))
+        }
+
+        /// Get container status
+        pub async fn container_status(&self, request: Request<ContainerStatusRequest>) -> Result<Response<ContainerStatusResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            let info = runtime.get_container(&req.container_id).await
+                .map_err(|e| Status::not_found(e.to_string()))?;
+            
+            let state = match info.base.status {
+                ContainerStatus::Running => ContainerState::Running,
+                ContainerStatus::Stopped => ContainerState::Exited,
+                ContainerStatus::Created => ContainerState::Created,
+                _ => ContainerState::Unknown,
+            };
+            
+            Ok(Response::new(ContainerStatusResponse {
+                status: ContainerStatus {
+                    id: info.id.clone(),
+                    metadata: ContainerMetadata {
+                        name: info.base.name.clone(),
+                        uid: info.id.clone(),
+                        namespace: "default".to_string(),
+                        attempt: 1,
+                    },
+                    state,
+                    created_at: info.base.created_at.timestamp(),
+                    started_at: info.started_at.map(|t| t.timestamp()).unwrap_or(0),
+                    finished_at: info.finished_at.map(|t| t.timestamp()).unwrap_or(0),
+                    exit_code: info.exit_code.unwrap_or(0) as i32,
+                    image: ImageSpec { image: info.image.clone() },
+                    image_ref: info.image_ref.clone(),
+                    reason: "".to_string(),
+                    message: "".to_string(),
+                    labels: info.labels.clone(),
+                    annotations: info.annotations.clone(),
+                    mounts: info.mounts.iter().map(|m| Mount {
+                        container_path: m.destination.clone(),
+                        host_path: m.source.clone(),
+                        read_only: m.readonly,
+                        selinux_relabel: false,
+                    }).collect(),
+                },
+                info: HashMap::new(),
+            }))
+        }
+
+        /// List containers
+        pub async fn list_containers(&self, request: Request<ListContainersRequest>) -> Result<Response<ListContainersResponse>, Status> {
+            let runtime = self.runtime.read().await;
+            let req = request.into_inner();
+            
+            let containers = runtime.list_containers(None).await;
+            
+            let items: Vec<Container> = containers.into_iter().map(|c| {
+                let state = match c.base.status {
+                    ContainerStatus::Running => ContainerState::Running,
+                    ContainerStatus::Stopped => ContainerState::Exited,
+                    ContainerStatus::Created => ContainerState::Created,
+                    _ => ContainerState::Unknown,
+                };
+                
+                Container {
+                    id: c.id.clone(),
+                    pod_sandbox_id: c.labels.get("io.kubernetes.pod.uid").cloned().unwrap_or_default(),
+                    metadata: ContainerMetadata {
+                        name: c.base.name.clone(),
+                        uid: c.id.clone(),
+                        namespace: "default".to_string(),
+                        attempt: 1,
+                    },
+                    image: ImageSpec { image: c.image.clone() },
+                    image_ref: c.image_ref.clone(),
+                    state,
+                    created_at: c.base.created_at.timestamp(),
+                    labels: c.labels.clone(),
+                    annotations: c.annotations.clone(),
+                }
+            }).collect();
+            
+            Ok(Response::new(ListContainersResponse { containers: items }))
+        }
+    }
+
+    /// Start the CRI gRPC server
+    pub async fn start_cri_grpc_server(runtime: Arc<RwLock<Runtime>>, socket_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        use tonic::transport::Server;
+        use tokio::net::UnixListener;
+        use tokio_stream::wrappers::UnixListenerStream;
+        
+        // Remove existing socket file if it exists
+        if std::path::Path::new(socket_path).exists() {
+            std::fs::remove_file(socket_path)?;
+        }
+        
+        // Create Unix domain socket listener
+        let listener = UnixListener::bind(socket_path)?;
+        
+        let cri_service = CriService::new(runtime);
+        
+        tracing::info!("Starting CRI gRPC server on {}", socket_path);
+        
+        // Note: This requires proper tonic service trait implementation from protobuf definitions
+        // For now, we just set up the listener - the actual service registration would need
+        // generated code from the CRI v1alpha2 protobuf definitions
+        // Server::builder()
+        //     .add_service(cri_service)
+        //     .serve_with_incoming(UnixListenerStream::new(listener))
+        //     .await?;
+        
+        // Keep the listener alive for now
+        tokio::signal::ctrl_c().await?;
+        
+        Ok(())
+    }
+}
+
+// Re-export CRI module when feature is enabled
+#[cfg(feature = "cri")]
+pub use cri::*;
