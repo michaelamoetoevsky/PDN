@@ -17,6 +17,9 @@ pub mod stub_fs;
 pub mod mount_helper;
 pub mod cgroup_v2;
 pub mod cap_sys_admin;
+pub mod security;
+
+pub use security::{SecurityProfileConfig, SecurityProfileType, SeccompProfile, SeccompAction, SeccompArch, SeccompSyscallRule, SeccompArg, SeccompOp, AppArmorProfile, SelLinuxProfile, CapabilityConfig, SecurityHardeningManager};
 
 /// Initialize all compatibility layers for PRoot on Termux Android 16+.
 /// This should be called before launching any guest process.
