@@ -3,7 +3,6 @@ title = "PDN - PRoot Distro Next"
 description = "Next-generation container platform for Termux/Android"
 authors = ["PDN Contributors"]
 language = "en"
-multilingual = false
 src = "src"
 
 [build]
@@ -12,19 +11,14 @@ create-missing = false
 use-default-preprocessors = true
 
 [output.html]
-theme = "theme"
-curly-quotes = true
-mathjax = false
+mathjax-support = false
 additional-css = ["custom.css"]
 additional-js = ["custom.js"]
 no-section-label = false
 git-repository-url = "https://github.com/hermes-agent/PDN"
-git-repository-icon = "fa-github"
 edit-url-template = "https://github.com/hermes-agent/PDN/edit/main/docs/src/{path}"
-favicon = "favicon.ico"
 default-theme = "light"
 preferred-dark-theme = "dark"
-analytics = ""
 
 [output.html.fold]
 enable = true
@@ -35,22 +29,17 @@ enable = true
 limit-results = 30
 teaser-word-count = 30
 use-boolean-and = true
-boost-header = 2
-boost-header-anchor = 5
-boost-bold = 3
 boost-title = 10
-teaser-character-limit = 256
 
 [output.html.print]
 enable = false
-
-[output.html.copy-fonts]
-enable = true
 
 [preprocessor.links]
 
 [preprocessor.index]
 
 [preprocessor.plantuml]
+optional = true
 
 [preprocessor.mathjax]
+optional = true
