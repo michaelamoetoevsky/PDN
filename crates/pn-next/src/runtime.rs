@@ -13,6 +13,7 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use proot_distro_core::{ContainerManager, ContainerConfig, ContainerInfo as ProotContainerInfo, ContainerStatus, SessionManager, SessionInfo, LoginOptions, ResourceLimits as ProotResourceLimits, NetworkConfig as ProotNetworkConfig, SecurityConfig as ProotSecurityConfig};
+use proot_compat::cgroup_v2::{setup_cgroup_v2, cgroup_v2_available};
 use pn_gateway::PnGateway;
 
 /// Runtime configuration
@@ -615,7 +616,90 @@ impl Runtime {
             data: serde_json::json!({}),
         }).await;
         
+        // Apply resource limits after starting
+        self.apply_resource_limits(&container_id).await?;
+        
         Ok(())
+    }
+    
+    /// Apply resource limits to a container using cgroup v2
+    pub async fn apply_resource_limits(&self, container_id: &str) -> Result<()> {
+        let container = self.get_container(container_id).await?;
+        let rootfs = container.base.rootfs_path.clone();
+        
+        // Setup cgroup v2 in the container's rootfs if not already available
+        if !cgroup_v2_available(&rootfs) {
+            setup_cgroup_v2(&rootfs).map_err(|e| anyhow::anyhow!(e))?;
+        }
+        
+        let cgroup_path = rootfs.join("sys/fs/cgroup");
+        let container_cgroup = cgroup_path.join(format!("container_{}", &container_id[..8.min(container_id.len())]));
+        
+        // Create container cgroup directory
+        std::fs::create_dir_all(&container_cgroup)?;
+        
+        // Apply CPU limit
+        if let Some(cpu_limit) = container.resources.cpu_limit {
+            let quota = (cpu_limit * 100000.0) as i64; // cpu_period is typically 100000
+            std::fs::write(container_cgroup.join("cpu.max"), format!("{} 100000", quota))?;
+        }
+        
+        // Apply memory limit
+        if let Some(memory_limit) = container.resources.memory_limit {
+            std::fs::write(container_cgroup.join("memory.max"), memory_limit.to_string())?;
+        }
+        
+        // Apply memory swap limit
+        if let Some(swap_limit) = container.resources.memory_swap_limit {
+            std::fs::write(container_cgroup.join("memory.swap.max"), swap_limit.to_string())?;
+        }
+        
+        // Apply PIDs limit
+        if let Some(pids_limit) = container.resources.pids_limit {
+            std::fs::write(container_cgroup.join("pids.max"), pids_limit.to_string())?;
+        }
+        
+        // Apply CPU shares (weight)
+        if let Some(cpu_shares) = container.resources.cpu_shares {
+            std::fs::write(container_cgroup.join("cpu.weight"), cpu_shares.to_string())?;
+        }
+        
+        tracing::info!("Applied resource limits to container {}: {:?}", container_id, container.resources);
+        Ok(())
+    }
+    
+    /// Remove resource limits (cleanup cgroup)
+    pub async fn remove_resource_limits(&self, container_id: &str) -> Result<()> {
+        let container = self.get_container(container_id).await?;
+        let rootfs = container.base.rootfs_path.clone();
+        
+        let cgroup_path = rootfs.join("sys/fs/cgroup");
+        let container_cgroup = cgroup_path.join(format!("container_{}", &container_id[..8.min(container_id.len())]));
+        
+        if container_cgroup.exists() {
+            std::fs::remove_dir_all(&container_cgroup)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Update resource limits for a running container
+    pub async fn update_resource_limits(&self, container_id: &str, limits: ResourceLimits) -> Result<()> {
+        // Remove old limits
+        self.remove_resource_limits(container_id).await?;
+        
+        // Update container info
+        {
+            let mut containers = self.containers.write().await;
+            if let Some(container) = containers.get_mut(container_id) {
+                container.resources = limits;
+            } else {
+                bail!("Container not found: {}", container_id);
+            }
+        }
+        
+        // Apply new limits
+        self.apply_resource_limits(container_id).await
     }
     
     /// Stop a container
@@ -643,6 +727,9 @@ impl Runtime {
             data: serde_json::json!({"timeout": timeout}),
         }).await;
         
+        // Remove resource limits
+        let _ = self.remove_resource_limits(container_id).await;
+        
         Ok(())
     }
     
@@ -658,6 +745,9 @@ impl Runtime {
         
         // Remove from local store
         self.containers.write().await.remove(&container_id);
+        
+        // Remove resource limits
+        let _ = self.remove_resource_limits(&container_id).await;
         
         // Emit event
         self.emit_event(ContainerEvent {
