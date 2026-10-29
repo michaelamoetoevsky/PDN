@@ -5,14 +5,15 @@
 
 use anyhow::{Result, Context, bail};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::process::Command;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use proot_distro_core::{ContainerManager, ContainerConfig, ContainerInfo as ProotContainerInfo, ContainerStatus, SessionManager, SessionInfo, LoginOptions, ResourceLimits as ProotResourceLimits, NetworkConfig as ProotNetworkConfig, SecurityConfig as ProotSecurityConfig};
+use proot_distro_core::{ContainerManager, ContainerConfig, ContainerInfo as ProotContainerInfo, ContainerStatus, SessionManager, SessionInfo, LoginOptions, ResourceLimits as ProotResourceLimits, NetworkConfig as ProotNetworkConfig, SecurityConfig as ProotSecurityConfig, Container as ProotContainer, GpuConfig, GpuDevice, GpuDeviceType};
 use proot_compat::cgroup_v2::{setup_cgroup_v2, cgroup_v2_available};
 use pn_gateway::PnGateway;
 
@@ -133,6 +134,7 @@ pub enum ContainerEventType {
     Error,
     OomKilled,
     HealthCheckFailed,
+    Custom { event_type: String, data: serde_json::Value },
 }
 
 /// Extended container info with runtime metadata
@@ -147,6 +149,7 @@ pub struct ContainerInfo {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub exit_code: Option<i32>,
+    pub pid: Option<u32>,
     pub resources: ResourceLimits,
     pub network: Option<NetworkInfo>,
     pub mounts: Vec<MountInfo>,
@@ -266,6 +269,93 @@ pub struct StopSandboxRequest {
 pub struct RemoveSandboxRequest {
     pub sandbox_id: String,
     pub force: bool,
+}
+
+/// ========================================================================
+/// Checkpoint/Restore Support (CRIU Integration) - Types
+/// ========================================================================
+
+/// Checkpoint configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointConfig {
+    pub image_path: PathBuf,
+    pub work_path: Option<PathBuf>,
+    pub leave_running: bool,
+    pub tcp_established: bool,
+    pub ext_unix_sk: bool,
+    pub shell_job: bool,
+    pub file_locks: bool,
+    pub pre_dump: bool,
+    pub compress: bool,
+    pub page_server: bool,
+}
+
+impl Default for CheckpointConfig {
+    fn default() -> Self {
+        Self {
+            image_path: PathBuf::from("/var/lib/pn-next/checkpoints"),
+            work_path: None,
+            leave_running: false,
+            tcp_established: true,
+            ext_unix_sk: true,
+            shell_job: true,
+            file_locks: true,
+            pre_dump: false,
+            compress: true,
+            page_server: false,
+        }
+    }
+}
+
+/// Restore configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreConfig {
+    pub image_path: PathBuf,
+    pub work_path: Option<PathBuf>,
+    pub detach: bool,
+    pub tcp_established: bool,
+    pub ext_unix_sk: bool,
+    pub shell_job: bool,
+    pub file_locks: bool,
+    pub page_server: bool,
+    pub auto_dedup: bool,
+}
+
+impl Default for RestoreConfig {
+    fn default() -> Self {
+        Self {
+            image_path: PathBuf::from("/var/lib/pn-next/checkpoints"),
+            work_path: None,
+            detach: false,
+            tcp_established: true,
+            ext_unix_sk: true,
+            shell_job: true,
+            file_locks: true,
+            page_server: false,
+            auto_dedup: true,
+        }
+    }
+}
+
+/// Checkpoint result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointResult {
+    pub container_id: String,
+    pub checkpoint_id: String,
+    pub image_path: PathBuf,
+    pub created_at: DateTime<Utc>,
+    pub size_bytes: u64,
+    pub cpus: u32,
+    pub memory_bytes: u64,
+}
+
+/// Restore result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreResult {
+    pub container_id: String,
+    pub restored_from: String,
+    pub started_at: DateTime<Utc>,
+    pub new_pid: u32,
 }
 
 /// Container start request
@@ -562,6 +652,7 @@ impl Runtime {
             started_at: None,
             finished_at: None,
             exit_code: None,
+            pid: container.pid,
             resources: request.config.resources.clone().into(),
             network: None,
             mounts: request.config.bind_mounts.iter().map(|m| MountInfo {
@@ -760,7 +851,256 @@ impl Runtime {
         Ok(())
     }
 
-    /// Create a new sandbox (pod)
+    /// ========================================================================
+    /// Checkpoint/Restore Support (CRIU Integration)
+    /// ========================================================================
+
+    /// Checkpoint a running container using CRIU
+    pub async fn checkpoint_container(
+        &self,
+        container_id: &str,
+        config: CheckpointConfig,
+    ) -> Result<CheckpointResult> {
+        let container = self.get_container(container_id).await?;
+        
+        if container.base.status != ContainerStatus::Running {
+            bail!("Container {} is not running", container_id);
+        }
+
+        let pid = container.pid.ok_or_else(|| {
+            anyhow::anyhow!("Container {} has no PID", container_id)
+        })?;
+
+        // Ensure checkpoint directory exists
+        tokio::fs::create_dir_all(&config.image_path).await?;
+        if let Some(work_path) = &config.work_path {
+            tokio::fs::create_dir_all(work_path).await?;
+        }
+
+        let checkpoint_id = Uuid::new_v4().to_string();
+        let image_dir = config.image_path.join(&checkpoint_id);
+        tokio::fs::create_dir_all(&image_dir).await?;
+
+        // Build CRIU dump command
+        let mut cmd = Command::new("criu");
+        cmd.arg("dump")
+            .arg("-t").arg(pid.to_string())
+            .arg("--images-dir").arg(&image_dir)
+            .arg("--leave-running") // Don't kill the container during checkpoint
+            .arg("--tcp-established")
+            .arg("--ext-unix-sk")
+            .arg("--shell-job")
+            .arg("--file-locks");
+
+        if config.compress {
+            cmd.arg("--compress");
+        }
+
+        if config.pre_dump {
+            cmd.arg("--pre-dump");
+        }
+
+        if config.page_server {
+            cmd.arg("--page-server");
+        }
+
+        if let Some(work_path) = &config.work_path {
+            cmd.arg("--work-dir").arg(work_path);
+        }
+
+        tracing::info!("Running CRIU checkpoint for container {}: {:?}", container_id, cmd);
+
+        let output = cmd.output().await
+            .context("Failed to execute CRIU - ensure CRIU is installed and you have CAP_CHECKPOINT_RESTORE")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("CRIU checkpoint failed: {}", stderr);
+        }
+
+        // Calculate checkpoint size
+        let size_bytes = self.calculate_dir_size(&image_dir).await?;
+
+        let result = CheckpointResult {
+            container_id: container_id.to_string(),
+            checkpoint_id: checkpoint_id.clone(),
+            image_path: image_dir,
+            created_at: Utc::now(),
+            size_bytes,
+            cpus: num_cpus::get() as u32,
+            memory_bytes: container.resources.memory_limit.unwrap_or(0),
+        };
+
+        // Emit event
+        self.emit_event(ContainerEvent {
+            id: container_id.to_string(),
+            event_type: ContainerEventType::Custom { 
+                event_type: "checkpoint_created".to_string(), 
+                data: serde_json::to_value(&result)? 
+            },
+            timestamp: Utc::now(),
+            data: serde_json::json!({"checkpoint_id": checkpoint_id}),
+        }).await;
+
+        tracing::info!("Checkpoint created for container {}: {}", container_id, checkpoint_id);
+        Ok(result)
+    }
+
+    /// Restore a container from a checkpoint using CRIU
+    pub async fn restore_container(
+        &self,
+        container_id: &str,
+        config: RestoreConfig,
+    ) -> Result<RestoreResult> {
+        let image_dir = config.image_path.join(container_id);
+        
+        if !image_dir.exists() {
+            bail!("Checkpoint image not found: {}", image_dir.display());
+        }
+
+        // Build CRIU restore command
+        let mut cmd = Command::new("criu");
+        cmd.arg("restore")
+            .arg("--images-dir").arg(&image_dir)
+            .arg("--tcp-established")
+            .arg("--ext-unix-sk")
+            .arg("--shell-job")
+            .arg("--file-locks")
+            .arg("--auto-dedup");
+
+        if config.detach {
+            cmd.arg("--detach");
+        }
+
+        if config.page_server {
+            cmd.arg("--page-server");
+        }
+
+        if let Some(work_path) = &config.work_path {
+            cmd.arg("--work-dir").arg(work_path);
+        }
+
+        tracing::info!("Running CRIU restore for container {}: {:?}", container_id, cmd);
+
+        let output = cmd.output().await
+            .context("Failed to execute CRIU restore")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("CRIU restore failed: {}", stderr);
+        }
+
+        // Parse output to get new PID
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let new_pid = stdout.lines()
+            .find(|l| l.starts_with("PID:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+
+        // Update container state
+        {
+            let mut containers = self.containers.write().await;
+            if let Some(container) = containers.get_mut(container_id) {
+                container.base.status = ContainerStatus::Running;
+                container.state = ContainerState::Running;
+                container.pid = Some(new_pid);
+                container.started_at = Some(Utc::now());
+            }
+        }
+
+        let result = RestoreResult {
+            container_id: container_id.to_string(),
+            restored_from: image_dir.to_string_lossy().to_string(),
+            started_at: Utc::now(),
+            new_pid,
+        };
+
+        // Apply resource limits after restore
+        self.apply_resource_limits(container_id).await?;
+
+        // Emit event
+        self.emit_event(ContainerEvent {
+            id: container_id.to_string(),
+            event_type: ContainerEventType::Custom { 
+                event_type: "container_restored".to_string(), 
+                data: serde_json::to_value(&result)? 
+            },
+            timestamp: Utc::now(),
+            data: serde_json::json!({"restored_from": container_id}),
+        }).await;
+
+        tracing::info!("Container {} restored from checkpoint, new PID: {}", container_id, new_pid);
+        Ok(result)
+    }
+
+    /// List available checkpoints
+    pub async fn list_checkpoints(&self, image_path: &Path) -> Result<Vec<CheckpointResult>> {
+        if !image_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut checkpoints = Vec::new();
+        let mut entries = tokio::fs::read_dir(image_path).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            if entry.file_type().await?.is_dir() {
+                let path = entry.path();
+                let checkpoint_id = entry.file_name().to_string_lossy().to_string();
+                
+                // Try to read metadata
+                let size = self.calculate_dir_size(&path).await.unwrap_or(0);
+                
+                checkpoints.push(CheckpointResult {
+                    container_id: String::new(),
+                    checkpoint_id,
+                    image_path: path,
+                    created_at: Utc::now(), // Would read from metadata file
+                    size_bytes: size,
+                    cpus: 0,
+                    memory_bytes: 0,
+                });
+            }
+        }
+
+        Ok(checkpoints)
+    }
+
+    /// Delete a checkpoint
+    pub async fn delete_checkpoint(&self, image_path: &Path, checkpoint_id: &str) -> Result<()> {
+        let path = image_path.join(checkpoint_id);
+        if path.exists() {
+            tokio::fs::remove_dir_all(path).await?;
+        }
+        Ok(())
+    }
+
+    /// Calculate directory size
+    async fn calculate_dir_size(&self, path: &Path) -> Result<u64> {
+        let mut size = 0u64;
+        let mut entries = tokio::fs::read_dir(path).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let metadata = entry.metadata().await?;
+            if metadata.is_file() {
+                size += metadata.len();
+            } else if metadata.is_dir() {
+                size += Box::pin(self.calculate_dir_size(&entry.path())).await?;
+            }
+        }
+        
+        Ok(size)
+    }
+
+    /// Check if CRIU is available
+    pub async fn is_criu_available() -> bool {
+        Command::new("criu")
+            .arg("check")
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
     pub async fn create_sandbox(&self, request: CreateSandboxRequest) -> Result<String> {
         let sandbox_id = Uuid::new_v4().to_string();
         

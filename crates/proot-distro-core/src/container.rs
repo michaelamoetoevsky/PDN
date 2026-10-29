@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use crate::paths::ContainerPaths;
 use crate::locking::LockManager;
 use proot_core::{ProotEngine, ProotConfig, BindMount as ProotBindMount};
+use crate::gpu::GpuConfig;
 use nix::unistd::Pid;
 
 /// Container manager
@@ -198,6 +199,7 @@ pub struct ContainerConfig {
     pub security: SecurityConfig,
     pub labels: HashMap<String, String>,
     pub annotations: HashMap<String, String>,
+    pub gpu: Option<GpuConfig>,
 }
 
 impl Default for ContainerConfig {
@@ -219,6 +221,7 @@ impl Default for ContainerConfig {
             security: SecurityConfig::default(),
             labels: HashMap::new(),
             annotations: HashMap::new(),
+            gpu: Some(GpuConfig::default()),
         }
     }
 }

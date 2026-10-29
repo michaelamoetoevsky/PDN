@@ -24,6 +24,7 @@ use proot_distro_core::{
     ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus,
     SessionManager, LoginOptions,
     ResourceLimits, NetworkConfig, NetworkMode, SecurityConfig, BindMount, PortMapping,
+    GpuConfig,
 };
 use crate::network::{NetworkManager, NetworkConfig as PnNetworkConfig, Network as PnNetwork};
 use crate::storage::{StorageManager, StorageConfig, Volume};
@@ -215,6 +216,7 @@ async fn create_container(
         security: req.security.unwrap_or_default().into(),
         labels: req.labels.unwrap_or_default(),
         annotations: req.annotations.unwrap_or_default(),
+        gpu: req.gpu,
     };
     
     let mut manager = state.container_manager.write().await;
@@ -489,6 +491,7 @@ async fn pull_image(
         security: SecurityConfig::default(),
         labels: HashMap::new(),
         annotations: HashMap::new(),
+        gpu: Some(GpuConfig::default()),
     };
     
     let _container = manager.create(&config.name, &config).await.map_err(|e| ApiError::internal(e.to_string()))?;
@@ -852,6 +855,7 @@ struct CreateContainerRequest {
     volumes: Option<Vec<VolumeMountRequest>>,
     labels: Option<HashMap<String, String>>,
     annotations: Option<HashMap<String, String>>,
+    gpu: Option<GpuConfig>,
 }
 
 #[derive(Deserialize)]

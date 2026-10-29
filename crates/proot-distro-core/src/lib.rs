@@ -20,6 +20,7 @@ pub mod compress;
 pub mod shm;
 pub mod network;
 pub mod storage;
+pub mod gpu;
 
 pub use container::{Container, ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus, SessionInfo, ResourceLimits, NetworkConfig, SecurityConfig, BindMount, NetworkMode, PortMapping};
 pub use image::{Image, ImageManager, ImageSource};
@@ -42,6 +43,7 @@ pub use compress::{Compressor, CompressionFormat};
 pub use shm::ShmManager;
 pub use network::{NetworkManager, NetworkInfo};
 pub use storage::{StorageManager, VolumeConfig, VolumeInfo};
+pub use gpu::{GpuConfig, GpuDevice, GpuDeviceType, detect_gpu_devices, generate_gpu_bind_mounts, apply_gpu_to_rootfs};
 
 use anyhow::Result;
 

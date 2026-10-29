@@ -45,8 +45,8 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 - [x] Service dan runtime (container lifecycle service + runtime API) - DONE
 - [x] Multi-container orchestration (pod/stack support) - DONE
 - [x] Resource quotas and limits (cgroups v2 integration) - DONE
-- [ ] Checkpoint/restore support (CRIU integration)
-- [ ] GPU acceleration support (Vulkan/DRM)
+- [x] Checkpoint/restore support (CRIU integration) - DONE
+- [x] GPU acceleration support (Vulkan/DRM) - DONE
 - [ ] OCI runtime spec compliance
 - [ ] Image signing/verification (cosign/notary)
 - [ ] Multi-arch image support (manifest lists)
