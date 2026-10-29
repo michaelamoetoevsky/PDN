@@ -137,7 +137,7 @@ pub fn init() -> Result<ProotDistroCore> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    
     #[test]
     fn test_init() {
         // Don't set PN_TEST_ROOT - let it use temp_dir() fallback which is writable
@@ -153,5 +153,18 @@ mod tests {
             }
         }
         assert!(core.is_ok());
+    }
+    
+    #[test]
+    fn test_proot_distro_core_new() {
+        let core = ProotDistroCore::new();
+        assert!(core.is_ok());
+    }
+    
+    #[test]
+    fn test_install_options_default() {
+        let options = InstallOptions::default();
+        assert!(options.name.is_empty());
+        assert!(options.config.name.is_empty());
     }
 }

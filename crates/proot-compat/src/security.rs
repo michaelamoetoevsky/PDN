@@ -224,10 +224,19 @@ pub struct SecurityHardeningManager {
 
 impl SecurityHardeningManager {
     pub fn new() -> Result<Self> {
-        let seccomp_dir = PathBuf::from("/etc/pn-next/seccomp");
-        let apparmor_dir = PathBuf::from("/etc/apparmor.d/pn-next");
-        let selinux_dir = PathBuf::from("/etc/selinux/pn-next");
-
+        Self::with_custom_dirs(
+            PathBuf::from("/etc/pn-next/seccomp"),
+            PathBuf::from("/etc/apparmor.d/pn-next"),
+            PathBuf::from("/etc/selinux/pn-next"),
+        )
+    }
+    
+    /// Create a new SecurityHardeningManager with custom directory paths (useful for testing)
+    pub fn with_custom_dirs(
+        seccomp_dir: PathBuf,
+        apparmor_dir: PathBuf,
+        selinux_dir: PathBuf,
+    ) -> Result<Self> {
         fs::create_dir_all(&seccomp_dir)?;
         fs::create_dir_all(&apparmor_dir)?;
         fs::create_dir_all(&selinux_dir)?;
@@ -786,6 +795,39 @@ mod tests {
         let config = SecurityProfileConfig::default();
         assert!(config.seccomp.is_some());
         assert_eq!(config.profile_type, SecurityProfileType::Default);
+        assert!(config.enabled);
+        assert_eq!(config.name, "default");
+        assert!(config.no_new_privileges);
+        assert!(!config.read_only_rootfs);
+        assert!(!config.user_namespace);
+    }
+    
+    #[test]
+    fn test_security_profile_custom() {
+        let config = SecurityProfileConfig {
+            name: "custom".to_string(),
+            profile_type: SecurityProfileType::Restricted,
+            enabled: false,
+            ..Default::default()
+        };
+        assert_eq!(config.name, "custom");
+        assert_eq!(config.profile_type, SecurityProfileType::Restricted);
+        assert!(!config.enabled);
+    }
+    
+    #[test]
+    fn test_security_profile_type_serialization() {
+        let types = vec![
+            SecurityProfileType::Default,
+            SecurityProfileType::Unconfined,
+            SecurityProfileType::Restricted,
+            SecurityProfileType::Custom("test".to_string()),
+        ];
+        for t in types {
+            let json = serde_json::to_string(&t).unwrap();
+            let parsed: SecurityProfileType = serde_json::from_str(&json).unwrap();
+            assert_eq!(t, parsed);
+        }
     }
     
     #[test]
@@ -793,18 +835,39 @@ mod tests {
         let profile = SeccompProfile::default();
         assert_eq!(profile.default_action, SeccompAction::Errno);
         assert!(!profile.syscalls.is_empty());
+        assert_eq!(profile.architectures.len(), 4);
     }
     
     #[test]
     fn test_seccomp_profile_restricted() {
         let profile = SecurityHardeningManager::generate_restricted_seccomp_profile();
         assert_eq!(profile.default_action, SeccompAction::Kill);
+        assert_eq!(profile.architectures.len(), 2);
     }
     
     #[test]
     fn test_seccomp_profile_unconfined() {
         let profile = SecurityHardeningManager::generate_unconfined_seccomp_profile();
         assert_eq!(profile.default_action, SeccompAction::Allow);
+        assert!(profile.syscalls.is_empty());
+    }
+    
+    #[test]
+    fn test_seccomp_action_serialization() {
+        let actions = vec![
+            SeccompAction::Kill,
+            SeccompAction::KillProcess,
+            SeccompAction::Trap,
+            SeccompAction::Errno,
+            SeccompAction::Trace,
+            SeccompAction::Allow,
+            SeccompAction::Log,
+        ];
+        for a in actions {
+            let json = serde_json::to_string(&a).unwrap();
+            let parsed: SeccompAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(a, parsed);
+        }
     }
     
     #[test]
@@ -812,5 +875,72 @@ mod tests {
         let caps = CapabilityConfig::default();
         assert!(!caps.drop.is_empty());
         assert!(caps.add.is_empty());
+        assert!(caps.drop.contains(&"CAP_SYS_ADMIN".to_string()));
+        assert!(caps.drop.contains(&"CAP_SYS_MODULE".to_string()));
+    }
+    
+    #[test]
+    fn test_capability_config_custom() {
+        let caps = CapabilityConfig {
+            add: vec!["CAP_NET_ADMIN".to_string()],
+            drop: vec![],
+            ..Default::default()
+        };
+        assert_eq!(caps.add, vec!["CAP_NET_ADMIN".to_string()]);
+        assert!(caps.drop.is_empty());
+    }
+    
+    #[test]
+    fn test_seccomp_syscall_rule_serialization() {
+        let rule = SeccompSyscallRule {
+            names: vec!["read".to_string(), "write".to_string()],
+            action: SeccompAction::Allow,
+            args: Some(vec![SeccompArg {
+                index: 0,
+                value: 1,
+                value_two: None,
+                op: SeccompOp::Equal,
+            }]),
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let parsed: SeccompSyscallRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(rule.names, parsed.names);
+        assert_eq!(rule.action, parsed.action);
+    }
+    
+    #[test]
+    fn test_security_hardening_manager_creation() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = SecurityHardeningManager::with_custom_dirs(
+            temp_dir.path().join("seccomp"),
+            temp_dir.path().join("apparmor"),
+            temp_dir.path().join("selinux"),
+        );
+        assert!(manager.is_ok());
+    }
+    
+    #[test]
+    fn test_register_and_get_profile() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut manager = SecurityHardeningManager::with_custom_dirs(
+            temp_dir.path().join("seccomp"),
+            temp_dir.path().join("apparmor"),
+            temp_dir.path().join("selinux"),
+        ).unwrap();
+        let config = SecurityProfileConfig::default();
+        manager.register_profile("test".to_string(), config.clone());
+        let retrieved = manager.get_profile("test").unwrap();
+        assert_eq!(retrieved.name, config.name);
+    }
+    
+    #[test]
+    fn test_get_nonexistent_profile() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = SecurityHardeningManager::with_custom_dirs(
+            temp_dir.path().join("seccomp"),
+            temp_dir.path().join("apparmor"),
+            temp_dir.path().join("selinux"),
+        ).unwrap();
+        assert!(manager.get_profile("nonexistent").is_none());
     }
 }

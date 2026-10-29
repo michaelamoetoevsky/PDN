@@ -99,6 +99,17 @@ pub struct InstallOptions {
     pub distro_type: DistroType,
 }
 
+impl Default for InstallOptions {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            source: ImageSource::Remote(String::new()),
+            config: ContainerContainerConfig::default(),
+            distro_type: DistroType::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BindMount {
     pub source: String,

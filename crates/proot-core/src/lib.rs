@@ -122,10 +122,38 @@ pub fn init() -> Result<ProotEngine> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    
     #[test]
     fn test_init() {
         let engine = init();
         assert!(engine.is_ok());
+    }
+    
+    #[test]
+    fn test_proot_engine_new() {
+        let config = ProotConfig::default();
+        let engine = ProotEngine::new(config);
+        assert!(engine.is_ok());
+    }
+    
+    #[test]
+    fn test_proot_config_default() {
+        let config = ProotConfig::default();
+        assert!(config.command.is_empty());
+        assert!(config.bind.is_empty());
+        assert!(config.env.is_empty());
+    }
+    
+    #[test]
+    fn test_proot_config_custom() {
+        let config = ProotConfig {
+            command: vec!["/bin/bash".to_string()],
+            bind: vec!["/host:/guest".to_string()],
+            env: vec!["TEST=value".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(config.command, vec!["/bin/bash".to_string()]);
+        assert_eq!(config.bind, vec!["/host:/guest".to_string()]);
+        assert_eq!(config.env, vec!["TEST=value".to_string()]);
     }
 }
