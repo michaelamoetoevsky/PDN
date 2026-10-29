@@ -213,6 +213,8 @@ async fn create_container(
         resources: req.resources.unwrap_or_default().into(),
         network: req.network.unwrap_or_default().into(),
         security: req.security.unwrap_or_default().into(),
+        labels: req.labels.unwrap_or_default(),
+        annotations: req.annotations.unwrap_or_default(),
     };
     
     let mut manager = state.container_manager.write().await;
@@ -485,6 +487,8 @@ async fn pull_image(
         resources: ResourceLimits::default(),
         network: NetworkConfig::default(),
         security: SecurityConfig::default(),
+        labels: HashMap::new(),
+        annotations: HashMap::new(),
     };
     
     let _container = manager.create(&config.name, &config).await.map_err(|e| ApiError::internal(e.to_string()))?;
@@ -846,6 +850,8 @@ struct CreateContainerRequest {
     network: Option<NetworkConfigRequest>,
     security: Option<SecurityConfigRequest>,
     volumes: Option<Vec<VolumeMountRequest>>,
+    labels: Option<HashMap<String, String>>,
+    annotations: Option<HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]

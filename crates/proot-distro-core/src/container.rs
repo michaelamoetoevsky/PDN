@@ -196,6 +196,8 @@ pub struct ContainerConfig {
     pub resources: ResourceLimits,
     pub network: NetworkConfig,
     pub security: SecurityConfig,
+    pub labels: HashMap<String, String>,
+    pub annotations: HashMap<String, String>,
 }
 
 impl Default for ContainerConfig {
@@ -215,6 +217,8 @@ impl Default for ContainerConfig {
             resources: ResourceLimits::default(),
             network: NetworkConfig::default(),
             security: SecurityConfig::default(),
+            labels: HashMap::new(),
+            annotations: HashMap::new(),
         }
     }
 }
