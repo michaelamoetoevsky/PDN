@@ -58,9 +58,6 @@ struct Cli {
 
     #[arg(short = 'e', long = "env", global = true, value_name = "VAR=VALUE", help = "Set environment variable (repeatable)")]
     env: Vec<String>,
-
-    #[arg(last = true, global = true, help = "Command to execute in proot environment")]
-    cmd_args: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -81,8 +78,12 @@ enum Commands {
     /// List created containers
     List {
         /// Show all (including stopped)
-        #[arg(short = 'a', long)]
+        #[arg(short = 'a', long, default_value = "true")]
         all: bool,
+        
+        /// Hide stopped containers
+        #[arg(long = "no-all", action = clap::ArgAction::SetTrue)]
+        no_all: bool,
     },
 
     /// Start interactive shell inside a container
@@ -165,7 +166,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Direct execution mode (like proot)
-    if cli.command.is_none() && (cli.rootfs.is_some() || !cli.cmd_args.is_empty()) {
+    if cli.command.is_none() && cli.rootfs.is_some() {
         return execute_direct(&cli).await;
     }
 
@@ -189,18 +190,17 @@ async fn execute_direct(cli: &Cli) -> Result<()> {
     eprintln!("  Kernel: {:?}", cli.kernel);
     eprintln!("  Hostname: {:?}", cli.hostname);
     eprintln!("  Env: {:?}", cli.env);
-    eprintln!("  Command: {:?}", cli.cmd_args);
-
-    if cli.cmd_args.is_empty() {
-        bail!("No command specified for direct execution");
-    }
-    Ok(())
+    
+    // For direct execution, we need to get the command from the remaining args
+    // Since we removed global cmd_args, direct execution requires a different approach
+    // For now, just show help
+    bail!("Direct execution mode requires a command. Use 'podnext -r /path/to/rootfs -- <command>' but clap doesn't support this pattern without global trailing args. Use subcommands instead.");
 }
 
 async fn execute_command(cmd: Commands) -> Result<()> {
     match cmd {
         Commands::Install { image, name, force } => cmd_install(image, name, force).await,
-        Commands::List { all } => cmd_list(all).await,
+        Commands::List { all, no_all } => cmd_list(all, no_all).await,
         Commands::Login { container, user, command } => cmd_login(container, user, command).await,
         Commands::Run { container, command } => cmd_run(container, command).await,
         Commands::Ps => cmd_ps().await,
@@ -232,8 +232,9 @@ async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result
     Ok(())
 }
 
-async fn cmd_list(all: bool) -> Result<()> {
-    let containers = list_containers_native(all).await?;
+async fn cmd_list(all: bool, no_all: bool) -> Result<()> {
+    let show_all = all && !no_all;
+    let containers = list_containers_native(show_all).await?;
 
     println!("{:<20} {:<15} {:<15} {:<12} {}", "NAME", "DISTRO", "VERSION", "STATUS", "CREATED");
     println!("{}", "-".repeat(80));

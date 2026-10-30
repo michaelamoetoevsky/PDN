@@ -6,11 +6,11 @@ use anyhow::Result;
 /// Container paths
 pub struct ContainerPaths {
     root_dir: PathBuf,
-    containers_dir: PathBuf,
-    images_dir: PathBuf,
-    cache_dir: PathBuf,
-    log_dir: PathBuf,
-    config_dir: PathBuf,
+    pub containers_dir: PathBuf,
+    pub images_dir: PathBuf,
+    pub cache_dir: PathBuf,
+    pub log_dir: PathBuf,
+    pub config_dir: PathBuf,
 }
 
 impl ContainerPaths {
@@ -24,13 +24,17 @@ impl ContainerPaths {
         // Ensure we can create the directory
         std::fs::create_dir_all(&root)?;
         
+        // Use .podnext directory for consistency with native CLI
+        let podnext_root = root.join(".podnext");
+        std::fs::create_dir_all(&podnext_root)?;
+        
         Ok(Self {
             root_dir: root.clone(),
-            containers_dir: root.join("containers"),
-            images_dir: root.join("images"),
-            cache_dir: root.join("cache"),
-            log_dir: root.join("logs"),
-            config_dir: root.join("config"),
+            containers_dir: podnext_root.join("containers"),
+            images_dir: podnext_root.join("images"),
+            cache_dir: podnext_root.join("cache"),
+            log_dir: podnext_root.join("logs"),
+            config_dir: podnext_root.join("config"),
         })
     }
     

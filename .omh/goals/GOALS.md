@@ -64,6 +64,31 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 - [x] Documentation website (mdBook) - 12 chapters built
 - [x] Performance profiling and optimization - Criterion benchmarks for runtime, gateway, guardrails, fail-safe
 
+### Phase 6: Service Orchestration Platform (PLANNED - v2.0)
+- [ ] Service Supervisor (runit/s6-style supervisor for container services)
+- [ ] Service Manager (declarative service definitions, dependency DAG)
+- [ ] D-Bus Broker (inter-container IPC, service discovery)
+- [ ] Socket Activation (systemd-style on-demand container start)
+- [ ] Daemon Runtime (independent lifecycle, survives container restarts)
+- [ ] Termux:Boot Integration (auto-start services at boot)
+- [ ] Wake Lock Management (keep services alive during doze)
+- [ ] Structured Logging (journald-style, rotation, querying)
+- [ ] Socket Activation for Containers (on-demand start)
+- [ ] Watchdog Integration (auto-restart failed containers)
+- [ ] Declarative Service Definitions (TOML service files)
+- [ ] Dependency Resolution & Ordering (DAG-based start/stop)
+- [ ] Resource Quotas via Supervisor (independent of container limits)
+- [ ] Watchdog/Policy Engine (restart policies, health checks)
+- [ ] Structured Logging Backend (journald-style)
+
+### Phase 7: Platform Maturity (v2.1+)
+- [ ] Kubernetes CRI Plugin (containerd integration)
+- [ ] Web UI Dashboard (real-time monitoring, management)
+- [ ] Multi-node Clustering (distributed scheduling)
+- [ ] GitOps Integration (Flux/ArgoCD style)
+- [ ] Backup/Restore API (container snapshots)
+- [ ] Multi-arch Build Service (cross-compile in container)
+
 ## Technical Goals
 
 ### Architecture Goals
@@ -99,6 +124,8 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 | M4: Android cross-compile verified | 2026-11-12 | ⏳ PENDING |
 | M5: Termux package build | 2026-11-19 | ⏳ PENDING |
 | M6: v1.0.0 release | 2026-11-26 | ⏳ PENDING |
+| M7: Service Supervisor (v2.0) | 2027-Q1 | 📋 PLANNED |
+| M8: Kubernetes CRI / Web UI (v2.1) | 2027-Q2 | 📋 PLANNED |
 
 ## Risk Register
 
@@ -109,6 +136,9 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 | Termux environment variations | Medium | High | Extensive CI matrix testing |
 | Cross-compilation issues | Medium | Medium | NDK r27c pinned, CI verification |
 | Security vulnerabilities | High | Low | cargo-audit, cargo-deny in CI |
+| Service supervisor complexity | High | Medium | Modular design, optional supervisor, phased rollout |
+| D-Bus on Android limitations | Medium | High | Use dbus-broker, fallback to direct mode |
+| Wake lock / battery drain | Medium | High | Aggressive idle timeout, user-configurable |
 
 ## Success Criteria for v1.0.0
 - [ ] All 6 crates build on host and Android aarch64
@@ -119,3 +149,15 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 - [ ] Gateway fail-safe mechanisms tested under failure conditions
 - [ ] Documentation complete
 - [ ] Release artifacts published to GitHub
+
+## Success Criteria for v2.0 (Service Orchestration Platform)
+- [ ] Service Supervisor manages 10+ concurrent container services
+- [ ] Declarative service definitions (TOML) work end-to-end
+- [ ] D-Bus IPC between containers functional
+- [ ] Socket activation starts containers on-demand
+- [ ] Services auto-start at Termux boot via Termux:Boot
+- [ ] Wake locks keep critical services alive
+- [ ] Structured logging with rotation works
+- [ ] Watchdog restarts failed services per policy
+- [ ] Resource quotas enforced by supervisor
+- [ ] All v1.0.0 criteria still pass

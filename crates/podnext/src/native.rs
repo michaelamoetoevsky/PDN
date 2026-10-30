@@ -77,6 +77,7 @@ pub struct ManifestList {
 #[derive(serde::Deserialize, Debug)]
 pub struct ManifestDescriptor {
     pub digest: String,
+    #[serde(rename = "mediaType")]
     pub media_type: String,
     pub platform: Option<Platform>,
 }
@@ -116,14 +117,14 @@ pub async fn install_image_native(
             .join("rootfs")
     });
 
-    // Create rootfs directory
-    fs::create_dir_all(&rootfs)?;
-
-    // Check if container already exists
+    // Check if container already exists (before creating directory)
     if rootfs.exists() && !force {
         bail!("Container '{}' already exists at {}. Use --force to overwrite.", 
               container_name, rootfs.display());
     }
+
+    // Create rootfs directory
+    fs::create_dir_all(&rootfs)?;
 
     // Step 1: Get auth token from Docker Hub
     println!("Fetching auth token...");
@@ -163,7 +164,13 @@ fn parse_image_ref(image_ref: &str) -> Result<(String, String)> {
 
 async fn get_docker_hub_token(repo: &str) -> Result<String> {
     let client = Client::new();
-    let url = format!("https://auth.docker.io/token?service=registry.docker.io&scope=repository:{}:pull", repo);
+    // Use library/ prefix for official images in token scope
+    let scope_repo = if repo.contains('/') {
+        repo.to_string()
+    } else {
+        format!("library/{}", repo)
+    };
+    let url = format!("https://auth.docker.io/token?service=registry.docker.io&scope=repository:{}:pull", scope_repo);
     
     let response = client.get(&url).send().await?;
     let token_resp: DockerHubTokenResponse = response.json().await?;
@@ -172,7 +179,13 @@ async fn get_docker_hub_token(repo: &str) -> Result<String> {
 
 async fn get_manifest(name: &str, tag: &str, token: &str) -> Result<ImageManifest> {
     let client = Client::new();
-    let url = format!("https://registry.hub.docker.com/v2/{}/manifests/{}", name, tag);
+    // Add library/ prefix for official images (no slash in name)
+    let manifest_name = if name.contains('/') {
+        name.to_string()
+    } else {
+        format!("library/{}", name)
+    };
+    let url = format!("https://registry.hub.docker.com/v2/{}/manifests/{}", manifest_name, tag);
     
     let response = client
         .get(&url)
@@ -197,7 +210,8 @@ async fn get_manifest(name: &str, tag: &str, token: &str) -> Result<ImageManifes
     
     let body = response.bytes().await?;
 
-    if content_type.contains("manifest.list") || content_type.contains("manifest.list.v2") {
+    // Handle both Docker manifest list and OCI image index
+    if content_type.contains("manifest.list") || content_type.contains("manifest.list.v2") || content_type.contains("oci.image.index") {
         // Multi-platform manifest - find linux/arm64
         let manifest_list: ManifestList = serde_json::from_slice(&body)?;
         let arm64_manifest = manifest_list.manifests.iter()
@@ -215,7 +229,13 @@ async fn get_manifest(name: &str, tag: &str, token: &str) -> Result<ImageManifes
 
 async fn get_manifest_by_digest(name: &str, digest: &str, token: &str) -> Result<ImageManifest> {
     let client = Client::new();
-    let url = format!("https://registry.hub.docker.com/v2/{}/manifests/{}", name, digest);
+    // Add library/ prefix for official images (no slash in name)
+    let manifest_name = if name.contains('/') {
+        name.to_string()
+    } else {
+        format!("library/{}", name)
+    };
+    let url = format!("https://registry.hub.docker.com/v2/{}/manifests/{}", manifest_name, digest);
     
     let response = client
         .get(&url)
@@ -276,7 +296,13 @@ async fn download_and_extract_layers(
 
 async fn download_layer(name: &str, digest: &str, token: &str) -> Result<Vec<u8>> {
     let client = Client::new();
-    let url = format!("https://registry.hub.docker.com/v2/{}/blobs/{}", name, digest);
+    // Add library/ prefix for official images (no slash in name)
+    let manifest_name = if name.contains('/') {
+        name.to_string()
+    } else {
+        format!("library/{}", name)
+    };
+    let url = format!("https://registry.hub.docker.com/v2/{}/blobs/{}", manifest_name, digest);
     
     let response = client
         .get(&url)
@@ -364,13 +390,12 @@ pub async fn run_container_native(
     container_name: &str,
     command: Vec<String>,
 ) -> Result<()> {
-    let mut distro_core = proot_distro_core::ProotDistroCore::new()?;
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
     
-    let mut options = proot_distro_core::LoginOptions::default();
-    options.container_name = container_name.to_string();
-    options.command = command;
-    
-    distro_core.login(options).await?;
+    let exit_code = container_mgr.execute(container_name, command).await?;
+    if exit_code != 0 {
+        bail!("Command exited with code {}", exit_code);
+    }
     Ok(())
 }
 

@@ -107,6 +107,52 @@ impl ProotEngine {
         
         Ok(pid)
     }
+    
+    /// Execute a command in the foreground and wait for completion, returning exit code
+    pub async fn execute(&mut self) -> Result<i32> {
+        // Initialize seccomp filter
+        self.seccomp_filter.lock().install()?;
+
+        // Build the command to execute
+        let mut cmd = Command::new(&self.config.command[0]);
+        if self.config.command.len() > 1 {
+            cmd.args(&self.config.command[1..]);
+        }
+        
+        // Debug: print command
+        eprintln!("[DEBUG] Executing command: {:?}", self.config.command);
+        eprintln!("[DEBUG] CWD: {:?}", self.config.cwd);
+        eprintln!("[DEBUG] Env: {:?}", self.config.env);
+        
+        // Set up environment
+        for env in &self.config.env {
+            if let Some((k, v)) = env.split_once('=') {
+                cmd.env(k, v);
+            }
+        }
+        
+        // Set working directory
+        if let Some(cwd) = &self.config.cwd {
+            cmd.current_dir(cwd);
+        }
+        
+        // For now, we'll just spawn the process and wait
+        let mut child = cmd
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .stdin(std::process::Stdio::inherit())
+            .spawn()?;
+        let pid = child.id().ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
+        eprintln!("[DEBUG] Spawned PID: {}", pid);
+        
+        // Wait for the process to complete and get exit code
+        let exit_status = child.wait().await?;
+        eprintln!("[DEBUG] Exit status: {:?}", exit_status);
+        let exit_code = exit_status.code().unwrap_or(-1);
+        eprintln!("[DEBUG] Exit code: {}", exit_code);
+        
+        Ok(exit_code)
+    }
 
     pub fn shutdown(&mut self) -> Result<()> {
         self.ptrace_ctrl.lock().shutdown()
