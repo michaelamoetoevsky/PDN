@@ -84,10 +84,10 @@ jobs:
       - name: Build podnext binary
         run: cargo build --package podnext --release
 
-      - name: Upload pn-cli artifact
+      - name: Upload podnext artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pn-cli-${{ runner.os }}-${{ runner.arch }}
+          name: podnext-${{ runner.os }}-${{ runner.arch }}
           path: target/release/podnext
           retention-days: 30
 
@@ -394,7 +394,7 @@ jobs:
           
           # Host release
           mkdir -p release/pdn-${VERSION}-linux-${{ runner.arch }}
-          cp target/release/pn-cli release/pdn-${VERSION}-linux-${{ runner.arch }}/
+          cp target/release/podnext release/pdn-${VERSION}-linux-${{ runner.arch }}/
           cp target/release/libproot_core.so release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
           cp target/release/libproot_distro_core.so release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
           cp target/release/libpn_gateway.so release/pdn-${VERSION}-linux-${{ runner.arch }}/ 2>/dev/null || true
@@ -404,7 +404,7 @@ jobs:
           
           # Android release
           mkdir -p release/pdn-${VERSION}-android-aarch64
-          cp target/aarch64-linux-android/release/pn-cli release/pdn-${VERSION}-android-aarch64/
+          cp target/aarch64-linux-android/release/podnext release/pdn-${VERSION}-android-aarch64/
           cp target/aarch64-linux-android/release/lib*.so release/pdn-${VERSION}-android-aarch64/ 2>/dev/null || true
           cp README.md release/pdn-${VERSION}-android-aarch64/
           cp LICENSE* release/pdn-${VERSION}-android-aarch64/ 2>/dev/null || true
