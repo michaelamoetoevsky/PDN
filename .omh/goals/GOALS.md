@@ -123,7 +123,7 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 | M3: Integration tests pass | 2026-11-05 | ✅ DONE |
 | M4: Android cross-compile verified | 2026-11-12 | ✅ DONE |
 | M5: Termux package build | 2026-11-19 | ⏳ PENDING |
-| M6: v1.0.0 release | 2026-11-26 | ⏳ PENDING |
+| M6: v1.0.0 release | 2026-11-26 | 🔄 IN PROGRESS (GitHub Release triggered) |
 | M7: Service Supervisor (v2.0) | 2027-Q1 | 📋 PLANNED |
 | M8: Kubernetes CRI / Web UI (v2.1) | 2027-Q2 | 📋 PLANNED |
 
@@ -148,7 +148,7 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 - [x] CLI can manage full container lifecycle
 - [x] Gateway fail-safe mechanisms tested under failure conditions
 - [x] Documentation complete
-- [ ] Release artifacts published to GitHub
+- [🔄] Release artifacts published to GitHub (workflow triggered, awaiting completion)
 
 ## Success Criteria for v2.0 (Service Orchestration Platform)
 - [ ] Service Supervisor manages 10+ concurrent container services
