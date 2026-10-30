@@ -15,8 +15,8 @@ mathjax-support = false
 additional-css = ["custom.css"]
 additional-js = ["custom.js"]
 no-section-label = false
-git-repository-url = "https://github.com/hermes-agent/PDN"
-edit-url-template = "https://github.com/hermes-agent/PDN/edit/main/docs/src/{path}"
+git-repository-url = "https://github.com/michaelamoetoevsky/PDN"
+edit-url-template = "https://github.com/michaelamoetoevsky/PDN/edit/main/docs/src/{path}"
 default-theme = "light"
 preferred-dark-theme = "dark"
 

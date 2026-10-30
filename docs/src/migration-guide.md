@@ -343,6 +343,6 @@ podnext install debian:bookworm
 
 ## Getting Help
 
-- [GitHub Issues](https://github.com/hermes-agent/PDN/issues) - Report migration issues
-- [Discussions](https://github.com/hermes-agent/PDN/discussions) - Ask questions
+- [GitHub Issues](https://github.com/michaelamoetoevsky/PDN/issues) - Report migration issues
+- [Discussions](https://github.com/michaelamoetoevsky/PDN/discussions) - Ask questions
 - [CLI Help](cli-reference.md) - `podnext help <command>`

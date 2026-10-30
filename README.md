@@ -1,28 +1,57 @@
 # PRoot Distro Next (PDN) - Next Generation Container Management
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/license-GPL--2.0-or-later-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/michaelamoetoevsky/PDN/actions)
 
 ## Overview
 
-PRoot Distro Next (PDN) is a next-generation container management system built on top of PRoot, providing a modern, Rust-based architecture for managing containers on Termux Android 16+ and other Linux environments.
+PRoot Distro Next (PDN) is a next-generation container management system built on top of **PRoot** and **PRoot-distro**, providing a modern, Rust-based architecture for managing containers on Termux Android 16+ and other Linux environments.
+
+PDN unifies the PRoot ecosystem into a single cohesive codebase:
+- **PRoot** (https://github.com/proot-me/proot) - The foundation: ptrace-based chroot alternative
+- **PRoot-distro** (https://github.com/termux/proot-distro) - Termux's distro management wrapper
+- **proot-compat** - Termux/Android compatibility layer (platform shim, path translation, seccomp bypass, stub FS, mount helper, cgroup v2)
 
 ### Key Features
 
 - **Rust Implementation**: Memory-safe, performant, and maintainable
-- **Modular Architecture**: Clean separation of concerns across crates
-- **PRoot Integration**: Seamless integration with PRoot for chroot-like functionality
-- **Container Management**: Full container lifecycle management
-- **Advanced Networking**: Bridge networks, port mapping, DNS
-- **Storage Management**: Volumes, bind mounts, multiple drivers
-- **Security First**: Seccomp, capabilities, AppArmor, SELinux, Landlock
+- **Modular Architecture**: Clean separation of concerns across 6 crates
+- **PRoot Integration**: Seamless integration with PRoot for chroot-like functionality without root
+- **Container Management**: Full container lifecycle management (create, start, stop, exec, logs)
+- **Advanced Networking**: Bridge networks, port mapping, DNS, CNI plugin support
+- **Storage Management**: Volumes, bind mounts, multiple drivers, backup/restore
+- **Security First**: Seccomp profiles, capability dropping, AppArmor/SELinux/Landlock frameworks
 - **Workflow Engine**: Declarative workflows with retries, conditions, parallel execution
-- **Plugin System**: Extensible plugin architecture
-- **REST API**: Full REST API for container management
-- **Metrics & Monitoring**: Built-in metrics with Prometheus support
-- **Health Checks**: Comprehensive health checking
-- **Fail-Safe & Guardrails**: Circuit breakers, retries, guardrails
+- **Plugin System**: Extensible plugin architecture with dynamic loading
+- **REST API**: Full REST API for container management with OpenAPI docs
+- **Metrics & Monitoring**: Built-in metrics with Prometheus exporter support
+- **Health Checks**: Comprehensive health checking (process, disk, memory, CPU, network)
+- **Fail-Safe & Guardrails**: Circuit breakers, retries, fallback actions, container limits
+- **Checkpoint/Restore**: CRIU integration for container checkpoint and restore
+- **GPU Acceleration**: Vulkan/DRM GPU device pass-through
+- **Multi-Arch Support**: OCI image manifest list handling
+- **OCI Runtime Spec Compliance**: CRI gRPC with tonic
+
+### Advanced CLI Features (podnext)
+
+- **Native Docker Hub Integration**: Direct OCI image search/pull without shelling out
+- **Multi-Format Output**: Table, JSON, YAML output formats
+- **Tab Completion**: Shell completion for bash, zsh, fish
+- **Parallel Operations**: Concurrent container operations where possible
+- **Progress Indicators**: Real-time progress for image downloads and operations
+- **Config Profiles**: Multiple configuration profiles for different environments
+- **Remote Management**: Manage containers on remote hosts via SSH/TLS
+- **Resource Templates**: Predefined resource limit templates (dev, prod, test)
+
+### Mobility & Portability
+
+- **Standalone Binary**: Single static binary with all dependencies (musl/glibc)
+- **Android Cross-Compilation**: Native aarch64-linux-android target support
+- **Termux Package Ready**: Designed for termux-packages repository integration
+- **Offline Operation**: Full functionality without network after image install
+- **Config Migration**: Automated migration from PRoot-distro configs
+- **Rootless Execution**: No root privileges required (uses PRoot's ptrace)
 
 ## Architecture
 
@@ -67,11 +96,11 @@ PRoot Distro Next (PDN) is a next-generation container management system built o
 | Crate | Description |
 |-------|-------------|
 | `proot-core` | Core PRoot implementation (ptrace, syscall, path, VFS) |
-| `proot-distro-core` | Container management (images, containers, networks) |
+| `proot-distro-core` | Container management (images, containers, networks, storage, volumes) |
 | `proot-compat` | Termux/Android compatibility layer |
 | `pn-gateway` | Gateway layer with fail-safe, guardrails, health, metrics |
-| `pn-next` | Advanced architecture (runtime, scheduler, network, storage, security, API, workflow, plugin) |
-| `pn-cli` | Command-line interface |
+| `pn-next` | Advanced architecture (runtime, scheduler, network, storage, security, API, workflow, plugin, checkpoint/restore, GPU, CRI) |
+| `podnext` | Command-line interface (binary name: `podnext`) |
 
 ## Getting Started
 
@@ -103,51 +132,45 @@ cargo test --package pn-next
 ### Installation
 
 ```bash
-# Install binary
-cargo install --path crates/pn-cli
+# Install binary (recommended)
+cargo install --path crates/podnext
 
-# Or copy binary
-cp target/release/pn ~/.local/bin/
+# Or copy binary directly
+cp target/release/podnext ~/.local/bin/
 ```
 
 ## Usage
 
-### Basic Commands
+### Basic Commands (podnext)
 
 ```bash
-# Initialize PN Next
-pn init
+# Search for images
+podnext search ubuntu
 
-# Start daemon
-pn start
+# Install a container
+podnext install ubuntu:22.04
 
-# Stop daemon
-pn stop
+# Run a command in container
+podnext run ubuntu -- apt update && apt upgrade -y
 
-# Container management
-pn container create my-container --image ubuntu:22.04
-pn container start my-container
-pn container stop my-container
-pn container logs my-container --follow
-pn container exec my-container -- bash
+# Start interactive shell
+podnext login ubuntu
 
-# Image management
-pn image pull ubuntu:22.04
-pn image list
-pn image remove ubuntu:22.04
+# List containers
+podnext list
 
-# Network management
-pn network create my-network --driver bridge --subnet 10.0.0.0/24
-pn network connect my-network my-container
+# List running sessions
+podnext ps
 
-# Volume management
-pn storage create my-volume
-pn storage mount my-volume my-container /data
+# Stop container
+podnext kill ubuntu
 
-# Status and monitoring
-pn status
-pn logs my-container --follow
-pn exec my-container -- bash -c "echo hello"
+# Remove container
+podnext remove ubuntu
+
+# System info
+podnext info
+podnext version
 ```
 
 ### REST API
@@ -155,7 +178,7 @@ pn exec my-container -- bash -c "echo hello"
 Start the API server:
 
 ```bash
-pn start --api
+podnext start --api
 ```
 
 Then access the API at `http://localhost:8080/api/v1/`:
@@ -223,30 +246,35 @@ curl -X POST http://localhost:8080/api/v1/containers/my-container/start
 ### CLI Reference
 
 ```bash
-pn [GLOBAL_OPTIONS] <COMMAND>
+podnext [GLOBAL_OPTIONS] <COMMAND>
 
 Commands:
-  init                    Initialize PN Next
-  start                   Start PN Next daemon
-  stop                    Stop PN Next daemon
-  container               Container management
-  image                   Image management
-  network                 Network management
-  storage                 Storage management
-  status                  Show status
-  logs                    Show container logs
-  exec                    Execute command in container
+  search                  Search Docker Hub for images
+  install                 Install distribution from OCI image
+  list                    List created containers
+  run                     Run command in container
+  login                   Start interactive shell in container
+  ps                      List active sessions
+  sessions                List all sessions
+  kill                    Stop container
+  remove                  Delete a container
+  info                    Show system information
+  version                 Print version
+  start                   Start API server
+  help                    Print help
 
 Global Options:
   -c, --config <FILE>     Configuration file path
   -v, --verbose           Increase verbosity
   -h, --help              Print help
   -V, --version           Print version
+  --output <FORMAT>       Output format (table, json, yaml)
+  --profile <NAME>        Configuration profile to use
 ```
 
 ### Configuration
 
-Configuration file: `~/.pn-next/config.toml`
+Configuration file: `~/.config/pn-next/config.toml`
 
 ```toml
 [runtime]
@@ -295,8 +323,9 @@ PDN/
 │   ├── proot-compat/         # Compatibility layer
 │   ├── pn-gateway/           # Gateway layer
 │   ├── pn-next/              # Advanced architecture
-│   └── pn-cli/               # CLI interface
+│   └── podnext/              # CLI interface
 ├── docs/                      # Documentation
+├── fuzz/                      # Fuzzing targets (cargo-fuzz)
 ├── tests/                     # Integration tests
 └── .github/workflows/         # CI/CD
 ```

@@ -6,7 +6,7 @@
 
 ```bash
 # Download the latest release for Android aarch64
-curl -L https://github.com/hermes-agent/PDN/releases/latest/download/podnext-aarch64-linux-android -o $PREFIX/bin/podnext
+curl -L https://github.com/michaelamoetoevsky/PDN/releases/latest/download/podnext-aarch64-linux-android -o $PREFIX/bin/podnext
 chmod +x $PREFIX/bin/podnext
 
 # Verify installation
@@ -20,7 +20,7 @@ podnext --version
 pkg install rust git pkg-config libclang openssl
 
 # Clone and build
-git clone https://github.com/hermes-agent/PDN.git
+git clone https://github.com/michaelamoetoevsky/PDN.git
 cd PDN
 cargo install --path crates/podnext
 

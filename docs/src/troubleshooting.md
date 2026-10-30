@@ -416,9 +416,9 @@ tar czf debug-logs.tar.gz debug-logs/
 
 ### Community Resources
 
-- GitHub Issues: https://github.com/hermes-agent/PDN/issues
-- GitHub Discussions: https://github.com/hermes-agent/PDN/discussions
-- Documentation: https://hermes-agent.github.io/PDN/
+- GitHub Issues: https://github.com/michaelamoetoevsky/PDN/issues
+- GitHub Discussions: https://github.com/michaelamoetoevsky/PDN/discussions
+- Documentation: https://michaelamoetoevsky.github.io/PDN/
 
 ## See Also
 

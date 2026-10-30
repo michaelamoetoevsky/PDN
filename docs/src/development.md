@@ -17,7 +17,7 @@ rustup target add aarch64-linux-android
 ### Clone and Build
 
 ```bash
-git clone https://github.com/hermes-agent/PDN.git
+git clone https://github.com/michaelamoetoevsky/PDN.git
 cd PDN
 
 # Build all crates (host)
