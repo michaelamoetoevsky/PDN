@@ -138,8 +138,8 @@ pub fn init() -> Result<ProotDistroCore> {
 mod tests {
     use super::*;
     
-    #[test]
-    fn test_init() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_init() {
         // Don't set PN_TEST_ROOT - let it use temp_dir() fallback which is writable
         // std::env::set_var("PN_TEST_ROOT", "/tmp/pn-next-test-init");
         let core = init();
@@ -155,14 +155,14 @@ mod tests {
         assert!(core.is_ok());
     }
     
-    #[test]
-    fn test_proot_distro_core_new() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_proot_distro_core_new() {
         let core = ProotDistroCore::new();
         assert!(core.is_ok());
     }
     
-    #[test]
-    fn test_install_options_default() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_install_options_default() {
         let options = InstallOptions::default();
         assert!(options.name.is_empty());
         assert!(options.config.name.is_empty());

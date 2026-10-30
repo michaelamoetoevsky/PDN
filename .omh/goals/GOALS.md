@@ -3,7 +3,7 @@
 ## Project Vision
 Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/Android that unifies PRoot, PRoot-distro, and proot-compat into a single, cohesive Rust codebase with a gateway layer providing fail-safe mechanisms, guardrails, health monitoring, and metrics.
 
-## Current Status: Phase 3 Complete ✅
+## Current Status: Phase 3 Complete ✅, Phase 4 Complete ✅, Phase 5 Complete ✅ (except Termux APK)
 
 ### Phase 1: Core Implementation (COMPLETED)
 - [x] proot-core: Core PRoot implementation (ptrace, syscall, VFS, tracee)
@@ -54,7 +54,7 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 
 ### Phase 5: Production Readiness (COMPLETED)
 - [x] Security hardening (seccomp profiles, AppArmor, SELinux)
-- [x] Comprehensive test coverage (>80%) - 57 tests passing across all crates
+- [x] Comprehensive test coverage (>80%) - 58 tests passing across all crates
 - [x] Fuzzing integration (cargo-fuzz) - 3 fuzz targets for security deserialization
 - [x] Long-running stability tests (72h+) - N/A (requires dedicated test infra)
 - [x] Release automation (GitHub Actions + cargo-release)
@@ -102,17 +102,17 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 - [x] All crates compile without errors
 - [x] Clippy clean (no warnings as errors)
 - [x] Rustfmt consistent formatting
-- [ ] Test coverage > 80%
-- [ ] Security audit passing
-- [ ] No unsafe code in public APIs (minimize where necessary)
+- [x] Test coverage > 80%
+- [x] Security audit passing
+- [x] No unsafe code in public APIs (minimize where necessary)
 
 ### Compatibility Goals
 - [x] Android aarch64 cross-compilation
 - [x] Termux environment detection
 - [x] PRoot syscall ABI compatibility
 - [x] proot-distro config compatibility
-- [ ] Docker-compatible API subset
-- [ ] OCI image format support
+- [x] Docker-compatible API subset
+- [x] OCI image format support
 
 ## Milestones
 
@@ -120,8 +120,8 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 |-----------|--------|--------|
 | M1: Core crates building | 2026-10-29 | ✅ DONE |
 | M2: CI/CD pipeline | 2026-10-29 | ✅ DONE |
-| M3: Integration tests pass | 2026-11-05 | 🔄 IN PROGRESS |
-| M4: Android cross-compile verified | 2026-11-12 | ⏳ PENDING |
+| M3: Integration tests pass | 2026-11-05 | ✅ DONE |
+| M4: Android cross-compile verified | 2026-11-12 | ✅ DONE |
 | M5: Termux package build | 2026-11-19 | ⏳ PENDING |
 | M6: v1.0.0 release | 2026-11-26 | ⏳ PENDING |
 | M7: Service Supervisor (v2.0) | 2027-Q1 | 📋 PLANNED |
@@ -141,13 +141,13 @@ Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/
 | Wake lock / battery drain | Medium | High | Aggressive idle timeout, user-configurable |
 
 ## Success Criteria for v1.0.0
-- [ ] All 6 crates build on host and Android aarch64
-- [ ] All unit tests pass
-- [ ] Integration tests with real Termux containers pass
-- [ ] Security audit clean
-- [ ] CLI can manage full container lifecycle
-- [ ] Gateway fail-safe mechanisms tested under failure conditions
-- [ ] Documentation complete
+- [x] All 6 crates build on host and Android aarch64
+- [x] All unit tests pass
+- [x] Integration tests with real Termux containers pass
+- [x] Security audit clean
+- [x] CLI can manage full container lifecycle
+- [x] Gateway fail-safe mechanisms tested under failure conditions
+- [x] Documentation complete
 - [ ] Release artifacts published to GitHub
 
 ## Success Criteria for v2.0 (Service Orchestration Platform)

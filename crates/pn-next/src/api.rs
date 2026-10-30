@@ -1282,7 +1282,7 @@ impl axum::response::IntoResponse for ApiError {
 mod tests {
     use super::*;
     
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_api_server_creation() {
         let config = ApiConfig::default();
         let server = ApiServer::new(config);

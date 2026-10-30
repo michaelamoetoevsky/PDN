@@ -197,7 +197,7 @@ impl Default for PnNextState {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_pn_next_creation() {
         let config = PnNextConfig::default();
         let pn_next = PnNext::new(config).await;

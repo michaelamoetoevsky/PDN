@@ -1458,14 +1458,14 @@ impl Clone for Runtime {
 mod tests {
     use super::*;
     
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_runtime_creation() {
         let config = RuntimeConfig::default();
         let runtime = Runtime::new(config);
         assert!(runtime.is_ok());
     }
     
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_container() {
         let config = RuntimeConfig::default();
         let runtime = Runtime::new(config).unwrap();
@@ -1491,7 +1491,7 @@ mod tests {
         assert_eq!(info.base.status, ContainerStatus::Stopped);
     }
     
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_sandbox() {
         let config = RuntimeConfig::default();
         let runtime = Runtime::new(config).unwrap();
@@ -1521,7 +1521,7 @@ mod tests {
         assert_eq!(info.config.hostname, "test-pod");
     }
     
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_sandbox_lifecycle() {
         let config = RuntimeConfig::default();
         let runtime = Runtime::new(config).unwrap();
