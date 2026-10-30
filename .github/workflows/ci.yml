@@ -88,7 +88,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pn-cli-${{ runner.os }}-${{ runner.arch }}
-          path: target/release/pn-cli
+          path: target/release/podnext
           retention-days: 30
 
   # Job 2: Rust Android Cross-Compile
@@ -140,7 +140,7 @@ jobs:
 
       - name: Verify Android binaries
         run: |
-          file target/aarch64-linux-android/release/pn-cli
+          file target/aarch64-linux-android/release/podnext
           file target/aarch64-linux-android/release/libproot_core.so || true
           file target/aarch64-linux-android/release/libproot_distro_core.so || true
 
@@ -149,7 +149,7 @@ jobs:
         with:
           name: pn-android-aarch64
           path: |
-            target/aarch64-linux-android/release/pn-cli
+            target/aarch64-linux-android/release/podnext
             target/aarch64-linux-android/release/lib*.so
           retention-days: 30
 
