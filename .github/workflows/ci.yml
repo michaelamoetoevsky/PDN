@@ -309,15 +309,15 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace --release
 
-      - name: Test pn-cli basic commands
+      - name: Test podnext basic commands
         run: |
-          ./target/release/pn-cli --version
-          ./target/release/pn-cli system info
-          ./target/release/pn-cli container list
-          ./target/release/pn-cli image list
-          ./target/release/pn-cli network list
-          ./target/release/pn-cli storage list
-          ./target/release/pn-cli volume list
+          ./target/release/podnext --version
+          ./target/release/podnext system info
+          ./target/release/podnext container list
+          ./target/release/podnext image list
+          ./target/release/podnext network list
+          ./target/release/podnext storage list
+          ./target/release/podnext volume list
 
       - name: Test PRoot compatibility layer
         run: |
@@ -434,7 +434,7 @@ jobs:
             - **proot-compat**: Termux/Android compatibility (platform shim, path translation, seccomp bypass, stub FS, mount helper, cgroup v2)
             - **pn-gateway**: Unified gateway with fail-safe, guardrails, health monitoring, metrics
             - **pn-next**: Advanced runtime, scheduler, security, API, workflow, plugin system
-            - **pn-cli**: Full-featured CLI for container/image/network/storage/volume management
+            - **podnext**: Full-featured CLI for container/image/network/storage/volume management
             
             ### Downloads
             - Linux x86_64: `pdn-${{ github.ref_name#v }}-linux-x86_64.tar.gz`
@@ -452,10 +452,10 @@ jobs:
         if: false  # Set to true when ready to publish
         run: |
           cargo publish --package proot-core
-          cargo publish --package proot-distro-core
-          cargo publish --package proot-compat
-          cargo publish --package pn-gateway
-          cargo publish --package pn-next
-          cargo publish --package pn-cli
+                  cargo publish --package proot-distro-core
+                  cargo publish --package proot-compat
+                  cargo publish --package pn-gateway
+                  cargo publish --package pn-next
+                  cargo publish --package podnext
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
