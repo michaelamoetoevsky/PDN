@@ -389,6 +389,7 @@ jobs:
           cargo build --workspace --release --target aarch64-linux-android
 
       - name: Create release archives
+        id: create-archives
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           
@@ -417,6 +418,7 @@ jobs:
           # Generate checksums
           sha256sum *.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -437,8 +439,8 @@ jobs:
             - **podnext**: Full-featured CLI for container/image/network/storage/volume management
             
             ### Downloads
-            - Linux x86_64: `pdn-${{ github.ref_name#v }}-linux-x86_64.tar.gz`
-            - Android aarch64: `pdn-${{ github.ref_name#v }}-android-aarch64.tar.gz`
+            - Linux x86_64: `pdn-${{ steps.create-archives.outputs.version }}-linux-x86_64.tar.gz`
+            - Android aarch64: `pdn-${{ steps.create-archives.outputs.version }}-android-aarch64.tar.gz`
             
             ### Verification
             Check SHA256SUMS.txt for integrity verification.
