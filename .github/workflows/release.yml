@@ -176,9 +176,8 @@ jobs:
           # Generate changelog - simple version
           git log --pretty=format:"- %s (%h)" -n 50 > CHANGELOG.md
           
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          cat CHANGELOG.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Output changelog and version
+          echo "changelog=$(cat CHANGELOG.md | sed 's/"/\\"/g' | sed ':a;N;s/\n/\\n/g;ta')" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
