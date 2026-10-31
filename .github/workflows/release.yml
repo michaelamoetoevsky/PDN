@@ -49,15 +49,18 @@ jobs:
       - name: Find Android NDK Path
         run: |
           # Find the actual NDK path
-          NDK_PATH=$(find /opt -name "ndk" -type d 2>/dev/null | grep r27c | head -1)
-          if [ -z "$NDK_PATH" ]; then
-            NDK_PATH=$(find /opt/hostedtoolcache -name "android-ndk" -type d 2>/dev/null | grep r27c | head -1)
+          # nttld/setup-ndk installs at /opt/hostedtoolcache/ndk
+          NDK_PATH="/opt/hostedtoolcache/ndk"
+          if [ ! -d "$NDK_PATH" ]; then
+            # Fallback: search common locations
+            NDK_PATH=$(find /opt -name "ndk" -type d 2>/dev/null | head -1)
           fi
-          if [ -z "$NDK_PATH" ]; then
-            NDK_PATH=$(find /usr/local/lib/android -name "ndk" -type d 2>/dev/null | grep r27c | head -1)
+          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+            # Fallback: search hostedtoolcache
+            NDK_PATH=$(find /opt/hostedtoolcache -name "ndk" -type d 2>/dev/null | head -1)
           fi
-          if [ -z "$NDK_PATH" ]; then
-            # Check common locations
+          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+            # Fallback: search common locations
             for p in /opt/ndk/r27c /opt/android/ndk/r27c /usr/local/android-ndk/r27c; do
               if [ -d "$p" ]; then
                 NDK_PATH=$p
@@ -65,10 +68,10 @@ jobs:
               fi
             done
           fi
-          if [ -z "$NDK_PATH" ]; then
-            echo "ERROR: Could not find NDK r27c"
+          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+            echo "ERROR: Could not find NDK"
             find /opt -name "ndk" -type d 2>/dev/null
-            find /opt/hostedtoolcache -name "android-ndk" -type d 2>/dev/null
+            find /opt/hostedtoolcache -name "ndk" -type d 2>/dev/null
             exit 1
           fi
           echo "Found NDK at: $NDK_PATH"
