@@ -174,9 +174,9 @@ jobs:
           fi
           
           # Generate changelog from commits since last tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
           if [ -n "$PREV_TAG" ]; then
-            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD > CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD > CHANGELOG.md 2>/dev/null || git log --pretty=format:"- %s (%h)" > CHANGELOG.md
           else
             git log --pretty=format:"- %s (%h)" > CHANGELOG.md
           fi
