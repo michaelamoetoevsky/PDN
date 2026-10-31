@@ -49,9 +49,9 @@ jobs:
       - name: Find Android NDK Path
         run: |
           # Find the actual NDK path
-          # nttld/setup-ndk installs at /opt/hostedtoolcache/ndk
+          # nttld/setup-ndk installs at /opt/hostedtoolcache/ndk/r27c
           echo "Searching for NDK..."
-          NDK_PATH="/opt/hostedtoolcache/ndk"
+          NDK_PATH="/opt/hostedtoolcache/ndk/r27c"
           
           # Wait for NDK to appear (with retries)
           for i in {1..30}; do
@@ -66,12 +66,38 @@ jobs:
           # If not found at default location, search
           if [ ! -d "$NDK_PATH" ]; then
             echo "NDK not at default location, searching..."
+            # Check if NDK is at /opt/hostedtoolcache/ndk with version subdirectory
+            if [ -d "/opt/hostedtoolcache/ndk" ]; then
+              for subdir in $(ls -1 /opt/hostedtoolcache/ndk/ 2>/dev/null | sort -V); do
+                if [ -d "/opt/hostedtoolcache/ndk/$subdir" ]; then
+                  NDK_PATH="/opt/hostedtoolcache/ndk/$subdir"
+                  echo "Found versioned NDK at: $NDK_PATH"
+                  break
+                fi
+              done
+            fi
+          fi
+          
+          # If not found at default location, search
+          if [ ! -d "$NDK_PATH" ]; then
+            echo "NDK not at default location, searching..."
             NDK_PATH=$(find /opt -name "ndk" -type d 2>/dev/null | head -1)
           fi
-          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+          if [ ! -d "$NDK_PATH" ]; then
             NDK_PATH=$(find /opt/hostedtoolcache -name "ndk" -type d 2>/dev/null | head -1)
           fi
-          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+          # Check for versioned subdirectories
+          if [ -d "$NDK_PATH" ]; then
+            for subdir in $(ls -1 "$NDK_PATH"/ 2>/dev/null | sort -V); do
+              if [ -d "$NDK_PATH/$subdir" ] && [ -d "$NDK_PATH/$subdir/toolchains" ]; then
+                NDK_PATH="$NDK_PATH/$subdir"
+                echo "Found versioned NDK at: $NDK_PATH"
+                break
+              fi
+            done
+          fi
+          if [ ! -d "$NDK_PATH" ]; then
+            # Check common locations
             for p in /opt/ndk/r27c /opt/android/ndk/r27c /usr/local/android-ndk/r27c; do
               if [ -d "$p" ]; then
                 NDK_PATH=$p
@@ -79,7 +105,7 @@ jobs:
               fi
             done
           fi
-          if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
+          if [ ! -d "$NDK_PATH" ]; then
             echo "ERROR: Could not find NDK"
             echo "Searching /opt..."
             find /opt -name "ndk" -type d 2>/dev/null
