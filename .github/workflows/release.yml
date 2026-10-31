@@ -148,6 +148,26 @@ jobs:
             ninja-build \
             protobuf-compiler
 
+      - name: Install Android OpenSSL
+        run: |
+          # Install OpenSSL for Android targets
+          mkdir -p /tmp/openssl-android
+          cd /tmp/openssl-android
+          # Download and build OpenSSL for Android
+          # Using prebuilt from NDK if available, otherwise build
+          if [ -d "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/openssl" ]; then
+            echo "OpenSSL headers found in NDK sysroot"
+          else
+            echo "Building OpenSSL for Android..."
+            # Use NDK's prebuilt OpenSSL if available
+            export OPENSSL_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr"
+            export OPENSSL_INCLUDE_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+            export OPENSSL_LIB_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$TARGET"
+          fi
+        env:
+          TARGET: ${{ matrix.target }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+
       - name: Build workspace
         run: cargo build --workspace --release --target ${{ matrix.target }}
         env:
