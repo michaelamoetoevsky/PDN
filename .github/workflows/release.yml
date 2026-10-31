@@ -42,9 +42,14 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Android NDK
-        uses: android-actions/setup-android@v3
+        uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27c
+
+      - name: Set Android NDK Home
+        run: |
+          echo "ANDROID_NDK_HOME=/opt/ndk/r27c" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=/opt/ndk/r27c" >> $GITHUB_ENV
 
       - name: Cache cargo registry
         uses: actions/cache@v4
