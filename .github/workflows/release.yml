@@ -102,7 +102,6 @@ jobs:
         run: |
           mkdir -p release-artifacts
           cp target/aarch64-linux-android/release/podnext release-artifacts/podnext-aarch64-linux-android
-          cp target/aarch64-linux-android/release/pn-gateway release-artifacts/pn-gateway-aarch64-linux-android || true
           # Copy installer scripts
           cp install.sh release-artifacts/
           cp install-short.sh release-artifacts/
@@ -196,7 +195,6 @@ jobs:
           body: ${{ steps.changelog.outputs.changelog }}
           files: |
             release-artifacts/podnext-aarch64-linux-android
-            release-artifacts/pn-gateway-aarch64-linux-android
             release-artifacts/install.sh
             release-artifacts/install-short.sh
           draft: false
