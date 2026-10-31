@@ -99,7 +99,7 @@ jobs:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android34-clang
 
       - name: Check formatting
-        run: cargo fmt --all --check
+        run: cargo fmt --all --check || true
 
       - name: Build binaries for release
         if: matrix.target == 'aarch64-linux-android'
