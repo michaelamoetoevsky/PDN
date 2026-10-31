@@ -1,0 +1,59 @@
+# MariaDB Database Service Configuration
+# Example service for running MariaDB database with PDN service supervisor
+
+name = "mariadb"
+description = "MariaDB 11.x database server"
+version = "11.2.0"
+service_type = "daemon"
+
+[process]
+command = ["/usr/bin/mariadbd", "--user=mysql", "--datadir=/var/lib/mysql"]
+user = "mysql"
+working_dir = "/var/lib/mysql"
+
+[restart]
+condition = "always"
+max_restarts = 5
+delay_secs = 10
+
+[health]
+enabled = true
+interval_secs = 30
+timeout_secs = 10
+command = ["mysqladmin", "ping", "-h", "localhost", "--silent"]
+
+[resources]
+cpu_limit = 2.0
+memory_limit = "2GB"
+memory_swap_limit = "4GB"
+pids_limit = 200
+
+[logging]
+level = "info"
+max_size = "50MB"
+max_files = 3
+
+[environment]
+MARIADB_ROOT_PASSWORD = "changeme"
+MARIADB_DATABASE = "appdb"
+MARIADB_USER = "appuser"
+MARIADB_PASSWORD = "changeme"
+MYSQL_CHARSET = "utf8mb4"
+MYSQL_COLLATION = "utf8mb4_unicode_ci"
+
+# Port mappings
+[[ports]]
+host_port = 3306
+container_port = 3306
+protocol = "tcp"
+
+# Volume mounts for persistence
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/mariadb/data"
+container_path = "/var/lib/mysql"
+read_only = false
+
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/mariadb/conf"
+container_path = "/etc/mysql/conf.d"
+read_only = true

@@ -1,0 +1,56 @@
+# Redis Cache Service Configuration
+# Example service for running Redis cache server with PDN service supervisor
+
+name = "redis"
+description = "Redis 7.x in-memory data structure store"
+version = "7.2.0"
+service_type = "daemon"
+
+[process]
+command = ["/usr/bin/redis-server", "/etc/redis/redis.conf"]
+user = "redis"
+working_dir = "/var/lib/redis"
+
+[restart]
+condition = "always"
+max_restarts = 10
+delay_secs = 5
+
+[health]
+enabled = true
+interval_secs = 15
+timeout_secs = 5
+command = ["redis-cli", "ping"]
+
+[resources]
+cpu_limit = 0.5
+memory_limit = "512MB"
+memory_swap_limit = "1GB"
+pids_limit = 50
+
+[logging]
+level = "notice"
+max_size = "10MB"
+max_files = 3
+
+[environment]
+REDIS_VERSION = "7.2"
+REDIS_MAXMEMORY = "256mb"
+REDIS_MAXMEMORY_POLICY = "allkeys-lru"
+
+# Port mappings
+[[ports]]
+host_port = 6379
+container_port = 6379
+protocol = "tcp"
+
+# Volume mounts for persistence
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/redis/data"
+container_path = "/var/lib/redis"
+read_only = false
+
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/redis/conf"
+container_path = "/etc/redis"
+read_only = true

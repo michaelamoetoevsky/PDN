@@ -1,0 +1,61 @@
+# Nginx Web Server Service Configuration
+# Example service for running nginx web server with PDN service supervisor
+
+name = "nginx"
+description = "Nginx web server with PHP-FPM support"
+version = "1.24.0"
+service_type = "daemon"
+
+[process]
+command = ["/usr/sbin/nginx", "-g", "daemon off;"]
+user = "root"
+working_dir = "/var/www/html"
+
+[restart]
+condition = "always"
+max_restarts = 10
+delay_secs = 5
+
+[health]
+enabled = true
+interval_secs = 30
+timeout_secs = 10
+command = ["nginx", "-t"]
+http_check = { url = "http://localhost:80", expected_status = 200 }
+
+[resources]
+cpu_limit = 1.0
+memory_limit = "512MB"
+memory_swap_limit = "1GB"
+pids_limit = 100
+
+[logging]
+level = "info"
+max_size = "10MB"
+max_files = 5
+
+[environment]
+NGINX_VERSION = "1.24"
+PHP_VERSION = "8.2"
+
+# Port mappings (host:container)
+[[ports]]
+host_port = 8080
+container_port = 80
+protocol = "tcp"
+
+[[ports]]
+host_port = 8443
+container_port = 443
+protocol = "tcp"
+
+# Volume mounts
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/nginx/www"
+container_path = "/var/www/html"
+read_only = false
+
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/nginx/conf"
+container_path = "/etc/nginx"
+read_only = true
