@@ -28,11 +28,7 @@ jobs:
     strategy:
       matrix:
         rust: [stable]
-        include:
-          - rust: stable
-            target: aarch64-linux-android
-          - rust: stable
-            target: x86_64-unknown-linux-gnu
+        target: [aarch64-linux-android]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -128,8 +124,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust (security)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
@@ -155,8 +153,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust
+      - name: Install Rust (release)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
 
       - name: Install cargo-release
         run: cargo install cargo-release
@@ -232,8 +232,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust
+      - name: Install Rust (publish)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
 
       - name: Install cargo-release
         run: cargo install cargo-release
