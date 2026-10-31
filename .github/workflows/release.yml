@@ -157,6 +157,13 @@ jobs:
           # Using prebuilt from NDK if available, otherwise build
           if [ -d "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/openssl" ]; then
             echo "OpenSSL headers found in NDK sysroot"
+            OPENSSL_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr"
+            OPENSSL_INCLUDE_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include"
+            OPENSSL_LIB_DIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$TARGET"
+            echo "OPENSSL_DIR=$OPENSSL_DIR" >> $GITHUB_ENV
+            echo "OPENSSL_INCLUDE_DIR=$OPENSSL_INCLUDE_DIR" >> $GITHUB_ENV
+            echo "OPENSSL_LIB_DIR=$OPENSSL_LIB_DIR" >> $GITHUB_ENV
+            echo "OpenSSL headers found in NDK sysroot"
           else
             echo "Building OpenSSL for Android..."
             # Use NDK's prebuilt OpenSSL if available
