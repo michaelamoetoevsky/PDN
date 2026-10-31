@@ -50,17 +50,28 @@ jobs:
         run: |
           # Find the actual NDK path
           # nttld/setup-ndk installs at /opt/hostedtoolcache/ndk
+          echo "Searching for NDK..."
           NDK_PATH="/opt/hostedtoolcache/ndk"
+          
+          # Wait for NDK to appear (with retries)
+          for i in {1..30}; do
+            if [ -d "$NDK_PATH" ]; then
+              echo "Found NDK at: $NDK_PATH (attempt $i)"
+              break
+            fi
+            echo "Waiting for NDK at $NDK_PATH (attempt $i/30)..."
+            sleep 2
+          done
+          
+          # If not found at default location, search
           if [ ! -d "$NDK_PATH" ]; then
-            # Fallback: search common locations
+            echo "NDK not at default location, searching..."
             NDK_PATH=$(find /opt -name "ndk" -type d 2>/dev/null | head -1)
           fi
           if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
-            # Fallback: search hostedtoolcache
             NDK_PATH=$(find /opt/hostedtoolcache -name "ndk" -type d 2>/dev/null | head -1)
           fi
           if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
-            # Fallback: search common locations
             for p in /opt/ndk/r27c /opt/android/ndk/r27c /usr/local/android-ndk/r27c; do
               if [ -d "$p" ]; then
                 NDK_PATH=$p
@@ -70,7 +81,9 @@ jobs:
           fi
           if [ -z "$NDK_PATH" ] || [ ! -d "$NDK_PATH" ]; then
             echo "ERROR: Could not find NDK"
+            echo "Searching /opt..."
             find /opt -name "ndk" -type d 2>/dev/null
+            echo "Searching /opt/hostedtoolcache..."
             find /opt/hostedtoolcache -name "ndk" -type d 2>/dev/null
             exit 1
           fi
