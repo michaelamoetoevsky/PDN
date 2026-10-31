@@ -110,6 +110,9 @@ jobs:
           # Copy installer scripts
           cp install.sh release-artifacts/
           cp install-short.sh release-artifacts/
+          # Also copy to root for easy access
+          cp target/aarch64-linux-android/release/podnext podnext-aarch64-linux-android
+          cp target/aarch64-linux-android/release/pn-gateway pn-gateway-aarch64-linux-android || true
         shell: bash
 
       - name: Upload release artifacts
@@ -117,7 +120,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-binaries-${{ matrix.target }}
-          path: release-artifacts/
+          path: |
+            release-artifacts/
+            podnext-aarch64-linux-android
+            pn-gateway-aarch64-linux-android
           retention-days: 30
 
   # Security audit
@@ -171,6 +177,7 @@ jobs:
       - name: List downloaded artifacts
         run: |
           find release-artifacts -type f | sort
+          ls -la *.sh podnext* pn-gateway* 2>/dev/null || true
 
       - name: Generate changelog
         id: changelog
@@ -198,6 +205,8 @@ jobs:
           files: |
             release-artifacts/podnext-aarch64-linux-android
             release-artifacts/pn-gateway-aarch64-linux-android
+            podnext-aarch64-linux-android
+            pn-gateway-aarch64-linux-android
             install.sh
             install-short.sh
           draft: false
@@ -206,12 +215,16 @@ jobs:
       - name: Verify release artifacts
         run: |
           ls -la release-artifacts/ || true
-          if [ -f "release-artifacts/podnext-aarch64-linux-android" ]; then
-            file release-artifacts/podnext-aarch64-linux-android
-            ./release-artifacts/podnext-aarch64-linux-android --version || true
+          ls -la *.sh podnext* pn-gateway* 2>/dev/null || true
+          if [ -f "release-artifacts/podnext-aarch64-linux-android" ] || [ -f "podnext-aarch64-linux-android" ]; then
+            FILE="release-artifacts/podnext-aarch64-linux-android"
+            [ -f "$FILE" ] || FILE="podnext-aarch64-linux-android"
+            file "$FILE"
+            ./"$FILE" --version || true
           else
             echo "Warning: podnext binary not found at expected path"
             find release-artifacts -type f -name "podnext*" 2>/dev/null || true
+            find . -maxdepth 1 -name "podnext*" 2>/dev/null || true
           fi
           # Verify installer scripts
           if [ -f "install.sh" ]; then
