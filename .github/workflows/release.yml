@@ -42,10 +42,9 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Android NDK
-        uses: android-actions/setup-android@v3
+        uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27c
-          cache-key: ndk-${{ runner.os }}-r27c
 
       - name: Cache cargo registry
         uses: actions/cache@v4
