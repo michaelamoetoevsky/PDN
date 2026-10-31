@@ -1,0 +1,54 @@
+# Prometheus Monitoring Service Configuration
+# Example service for running Prometheus monitoring with PDN service supervisor
+
+name = "prometheus"
+description = "Prometheus 2.47 monitoring and alerting toolkit"
+version = "2.47.0"
+service_type = "daemon"
+
+[process]
+command = ["/bin/prometheus", "--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--web.listen-address=0.0.0.0:9090"]
+user = "prometheus"
+working_dir = "/prometheus"
+
+[restart]
+condition = "always"
+max_restarts = 5
+delay_secs = 10
+
+[health]
+enabled = true
+interval_secs = 30
+timeout_secs = 10
+http_check = { url = "http://localhost:9090/-/healthy", expected_status = 200 }
+
+[resources]
+cpu_limit = 1.0
+memory_limit = "2GB"
+memory_swap_limit = "4GB"
+pids_limit = 100
+
+[logging]
+level = "info"
+max_size = "50MB"
+max_files = 3
+
+[environment]
+PROMETHEUS_VERSION = "2.47"
+
+# Port mappings
+[[ports]]
+host_port = 9090
+container_port = 9090
+protocol = "tcp"
+
+# Volume mounts for persistence
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/prometheus/data"
+container_path = "/prometheus"
+read_only = false
+
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/prometheus/conf"
+container_path = "/etc/prometheus"
+read_only = true

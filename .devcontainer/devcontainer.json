@@ -1,0 +1,34 @@
+{
+	"name": "PDN Development Container",
+	"image": "mcr.microsoft.com/devcontainers/rust:1-latest",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/devcontainers/features/cargo:1": {}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"tamasfe.even-better-toml",
+				"vadimcn.vscode-lldb",
+				"serayuzgur.crates",
+				"bierner.markdown-mermaid"
+			],
+			"settings": {
+				"rust-analyzer.checkOnSave": true,
+				"rust-analyzer.check.command": "clippy",
+				"editor.formatOnSave": true,
+				"editor.codeActionsOnSave": {
+					"source.fixAll": "explicit"
+				}
+			}
+		}
+	},
+	"forwardPorts": [8080, 3306, 6379, 8081],
+	"postCreateCommand": "cd /workspaces/PDN && cargo build --workspace --release 2>&1 | tail -20",
+	"remoteUser": "vscode",
+	"mounts": [
+		"source=vscode-rust-cache,target=/usr/local/cargo/registry,type=volume",
+		"source=vscode-cargo-target,target=/workspaces/PDN/target,type=volume"
+	]
+}

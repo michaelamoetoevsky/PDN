@@ -1,0 +1,57 @@
+# Grafana Visualization Service Configuration
+# Example service for running Grafana dashboards with PDN service supervisor
+
+name = "grafana"
+description = "Grafana 10.1 visualization and analytics platform"
+version = "10.1.0"
+service_type = "daemon"
+
+[process]
+command = ["/usr/sbin/grafana-server", "--homepath=/usr/share/grafana", "--config=/etc/grafana/grafana.ini"]
+user = "grafana"
+working_dir = "/var/lib/grafana"
+
+[restart]
+condition = "always"
+max_restarts = 5
+delay_secs = 15
+
+[health]
+enabled = true
+interval_secs = 30
+timeout_secs = 10
+http_check = { url = "http://localhost:3000/api/health", expected_status = 200 }
+
+[resources]
+cpu_limit = 0.5
+memory_limit = "512MB"
+memory_swap_limit = "1GB"
+pids_limit = 100
+
+[logging]
+level = "info"
+max_size = "20MB"
+max_files = 3
+
+[environment]
+GF_SECURITY_ADMIN_USER = "admin"
+GF_SECURITY_ADMIN_PASSWORD = "changeme"
+GF_INSTALL_PLUGINS = "grafana-piechart-panel,grafana-worldmap-panel"
+GF_SERVER_ROOT_URL = "%(protocol)s://%(domain)s:%(http_port)s/"
+
+# Port mappings
+[[ports]]
+host_port = 3000
+container_port = 3000
+protocol = "tcp"
+
+# Volume mounts for persistence
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/grafana/data"
+container_path = "/var/lib/grafana"
+read_only = false
+
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/grafana/conf"
+container_path = "/etc/grafana"
+read_only = true

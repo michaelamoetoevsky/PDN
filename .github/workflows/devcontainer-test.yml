@@ -1,0 +1,32 @@
+name: DevContainer Test
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - '.devcontainer/**'
+  pull_request:
+    paths:
+      - '.devcontainer/**'
+  workflow_dispatch:
+
+jobs:
+  devcontainer-test:
+    name: Test DevContainer Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build DevContainer
+        uses: devcontainers/ci@v0.3
+        with:
+          imageName: ghcr.io/michaelamoetoevsky/pdn-devcontainer
+          push: never
+          subfolder: .devcontainer
+
+      - name: Test DevContainer
+        run: |
+          docker run --rm ghcr.io/michaelamoetoevsky/pdn-devcontainer:dev \
+            bash -c "cargo --version && rustc --version && cargo build --workspace 2>&1 | tail -10"

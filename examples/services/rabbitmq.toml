@@ -1,0 +1,61 @@
+# RabbitMQ Message Queue Service Configuration
+# Example service for running RabbitMQ message broker with PDN service supervisor
+
+name = "rabbitmq"
+description = "RabbitMQ 3.12 message broker"
+version = "3.12.0"
+service_type = "daemon"
+
+[process]
+command = ["/usr/sbin/rabbitmq-server"]
+user = "rabbitmq"
+working_dir = "/var/lib/rabbitmq"
+
+[restart]
+condition = "always"
+max_restarts = 5
+delay_secs = 30
+
+[health]
+enabled = true
+interval_secs = 30
+timeout_secs = 10
+command = ["rabbitmq-diagnostics", "check_port_connectivity"]
+
+[resources]
+cpu_limit = 1.0
+memory_limit = "1GB"
+memory_swap_limit = "2GB"
+pids_limit = 200
+
+[logging]
+level = "info"
+max_size = "20MB"
+max_files = 3
+
+[environment]
+RABBITMQ_DEFAULT_USER = "guest"
+RABBITMQ_DEFAULT_PASS = "changeme"
+RABBITMQ_DEFAULT_VHOST = "/"
+
+# Port mappings
+[[ports]]
+host_port = 5672
+container_port = 5672
+protocol = "tcp"
+
+[[ports]]
+host_port = 15672
+container_port = 15672
+protocol = "tcp"
+
+# Volume mounts for persistence
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/rabbitmq/data"
+container_path = "/var/lib/rabbitmq"
+read_only = false
+
+[[volumes]]
+host_path = "/data/data/com.termux/files/home/rabbitmq/log"
+container_path = "/var/log/rabbitmq"
+read_only = false

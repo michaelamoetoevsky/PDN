@@ -1,0 +1,159 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Weekly on Monday at 9 AM UTC
+  workflow_dispatch:
+    inputs:
+      dependency-type:
+        description: 'Type of dependencies to update'
+        required: false
+        type: choice
+        options:
+          - all
+          - rust
+          - github-actions
+          - security-only
+
+jobs:
+  rust-dependencies:
+    name: Update Rust Dependencies
+    runs-on: ubuntu-latest
+    if: github.event.inputs.dependency-type == 'all' || github.event.inputs.dependency-type == 'rust' || github.event.inputs.dependency-type == ''
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check for outdated dependencies
+        run: |
+          cargo install cargo-outdated
+          cargo outdated --workspace --exit-code 1 || true
+
+      - name: Update dependencies
+        run: |
+          cargo update --workspace
+
+      - name: Run tests
+        run: cargo test --workspace --release
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings || true
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore(deps): update Rust dependencies"
+          title: "chore(deps): update Rust dependencies"
+          body: |
+            Automated Rust dependency updates.
+            
+            This PR updates Rust dependencies to their latest compatible versions.
+            Please review the changes and ensure all tests pass.
+          branch: chore/update-rust-dependencies
+          base: main
+          labels: dependencies,rust,cargo
+          draft: false
+
+  github-actions-dependencies:
+    name: Update GitHub Actions Dependencies
+    runs-on: ubuntu-latest
+    if: github.event.inputs.dependency-type == 'all' || github.event.inputs.dependency-type == 'github-actions'
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update GitHub Actions
+        uses: peter-evans/update-github-actions@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore(deps): update GitHub Actions"
+          title: "chore(deps): update GitHub Actions"
+          body: |
+            Automated GitHub Actions dependency updates.
+          branch: chore/update-github-actions
+          labels: dependencies,github-actions
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        run: cargo audit --workspace --json > audit-report.json || true
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
+      - name: Run cargo deny
+        run: cargo deny check advisories bans licenses sources || true
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: audit-report.json
+          retention-days: 30
+
+      - name: Comment on PR with security results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('audit-report.json', 'utf8');
+            const vulnerabilities = report.split('\n').filter(line => line.trim()).map(JSON.parse);
+            const critical = vulnerabilities.filter(v => v.vulnerability?.severity === 'critical').length;
+            const high = vulnerabilities.filter(v => v.vulnerability?.severity === 'high').length;
+            const medium = vulnerabilities.filter(v => v.vulnerability?.severity === 'medium').length;
+            const low = vulnerabilities.filter(v => v.vulnerability?.severity === 'low').length;
+            
+            let body = `## Security Audit Results\n\n`;
+            body += `| Severity | Count |\n|----------|-------|\n`;
+            body += `| Critical | ${critical} |\n`;
+            body += `| High | ${high} |\n`;
+            body += `| Medium | ${medium} |\n`;
+            body += `| Low | ${low} |\n\n`;
+            
+            if (critical > 0 || high > 0) {
+              body += `⚠️ **Security vulnerabilities found!** Please review and update affected dependencies.`;
+            } else {
+              body += `✅ No critical or high severity vulnerabilities found.`;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
