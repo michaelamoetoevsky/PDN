@@ -28,7 +28,7 @@ jobs:
     strategy:
       matrix:
         rust: [stable]
-        target: [aarch64-linux-android]
+        target: [aarch64-linux-android, x86_64-linux-android]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,6 +77,10 @@ jobs:
           CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++
           AR_aarch64_linux_android: llvm-ar
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang
+          CC_x86_64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang
+          CXX_x86_64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang++
+          AR_x86_64_linux_android: llvm-ar
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang
 
       - name: Run tests
         run: cargo test --workspace --release --target ${{ matrix.target }}
@@ -85,6 +89,10 @@ jobs:
           CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++
           AR_aarch64_linux_android: llvm-ar
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang
+          CC_x86_64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang
+          CXX_x86_64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang++
+          AR_x86_64_linux_android: llvm-ar
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang
 
       - name: Run clippy
         run: cargo clippy --workspace --release --target ${{ matrix.target }} || true
@@ -93,25 +101,29 @@ jobs:
           CXX_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang++
           AR_aarch64_linux_android: llvm-ar
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang
+          CC_x86_64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang
+          CXX_x86_64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang++
+          AR_x86_64_linux_android: llvm-ar
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang
 
       - name: Check formatting
         run: cargo fmt --all --check || true
 
       - name: Build binaries for release
-        if: matrix.target == 'aarch64-linux-android'
+        if: matrix.target == 'aarch64-linux-android' || matrix.target == 'x86_64-linux-android'
         run: |
           mkdir -p release-artifacts
-          cp target/aarch64-linux-android/release/podnext release-artifacts/podnext-aarch64-linux-android
+          cp target/${{ matrix.target }}/release/podnext release-artifacts/podnext-${{ matrix.target }}
           # Copy installer scripts
           cp install.sh release-artifacts/
           cp install-short.sh release-artifacts/
         shell: bash
 
       - name: Upload release artifacts
-        if: matrix.target == 'aarch64-linux-android'
+        if: matrix.target == 'aarch64-linux-android' || matrix.target == 'x86_64-linux-android'
         uses: actions/upload-artifact@v4
         with:
-          name: release-binaries
+          name: release-binaries-${{ matrix.target }}
           path: release-artifacts/
           retention-days: 30
 
@@ -126,7 +138,7 @@ jobs:
       - name: Install Rust (security)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
@@ -155,16 +167,28 @@ jobs:
       - name: Install Rust (release)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Install cargo-release
         run: cargo install cargo-release
 
-      - name: Download release artifacts
+      - name: Download release artifacts (aarch64)
         uses: actions/download-artifact@v4
         with:
-          name: release-binaries
-          path: release-artifacts
+          name: release-binaries-aarch64-linux-android
+          path: release-artifacts-aarch64
+
+      - name: Download release artifacts (x86_64)
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binaries-x86_64-linux-android
+          path: release-artifacts-x86_64
+
+      - name: Combine artifacts
+        run: |
+          mkdir -p release-artifacts
+          cp release-artifacts-aarch64/* release-artifacts/ 2>/dev/null || true
+          cp release-artifacts-x86_64/* release-artifacts/ 2>/dev/null || true
 
       - name: List downloaded artifacts
         run: |
@@ -195,6 +219,7 @@ jobs:
           body: ${{ steps.changelog.outputs.changelog }}
           files: |
             release-artifacts/podnext-aarch64-linux-android
+            release-artifacts/podnext-x86_64-linux-android
             release-artifacts/install.sh
             release-artifacts/install-short.sh
           draft: false
@@ -207,7 +232,14 @@ jobs:
             file release-artifacts/podnext-aarch64-linux-android
             ./release-artifacts/podnext-aarch64-linux-android --version || true
           else
-            echo "ERROR: podnext binary not found!"
+            echo "ERROR: podnext aarch64 binary not found!"
+            exit 1
+          fi
+          if [ -f "release-artifacts/podnext-x86_64-linux-android" ]; then
+            file release-artifacts/podnext-x86_64-linux-android
+            ./release-artifacts/podnext-x86_64-linux-android --version || true
+          else
+            echo "ERROR: podnext x86_64 binary not found!"
             exit 1
           fi
           # Verify installer scripts
@@ -233,7 +265,7 @@ jobs:
       - name: Install Rust (publish)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android, x86_64-linux-android
 
       - name: Install cargo-release
         run: cargo install cargo-release
