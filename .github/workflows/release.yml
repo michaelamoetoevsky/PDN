@@ -115,6 +115,8 @@ jobs:
           fi
           echo "Found NDK at: $NDK_PATH"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          # Add NDK toolchain bin to PATH for llvm-ar, clang, etc.
+          echo "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Verify NDK Path
         run: |
