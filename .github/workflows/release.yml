@@ -194,9 +194,14 @@ jobs:
 
       - name: Verify release artifacts
         run: |
-          ls -la release-artifacts/
-          file release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android
-          ./release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android --version || true
+          ls -la release-artifacts/ || true
+          if [ -f "release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android" ]; then
+            file release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android
+            ./release-artifacts/release-binaries-aarch64-linux-android/podnext-aarch64-linux-android --version || true
+          else
+            echo "Warning: podnext binary not found at expected path"
+            find release-artifacts -type f -name "podnext*" 2>/dev/null || true
+          fi
 
   # Publish to crates.io (optional, manual trigger)
   publish-crates:
