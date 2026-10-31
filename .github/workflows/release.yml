@@ -110,20 +110,14 @@ jobs:
           # Copy installer scripts
           cp install.sh release-artifacts/
           cp install-short.sh release-artifacts/
-          # Also copy to root for easy access
-          cp target/aarch64-linux-android/release/podnext podnext-aarch64-linux-android
-          cp target/aarch64-linux-android/release/pn-gateway pn-gateway-aarch64-linux-android || true
         shell: bash
 
       - name: Upload release artifacts
         if: matrix.target == 'aarch64-linux-android'
         uses: actions/upload-artifact@v4
         with:
-          name: release-binaries-${{ matrix.target }}
-          path: |
-            release-artifacts/
-            podnext-aarch64-linux-android
-            pn-gateway-aarch64-linux-android
+          name: release-binaries
+          path: release-artifacts/
           retention-days: 30
 
   # Security audit
@@ -170,14 +164,12 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
+          name: release-binaries
           path: release-artifacts
-          pattern: release-binaries-*
-          merge-multiple: true
 
       - name: List downloaded artifacts
         run: |
           find release-artifacts -type f | sort
-          ls -la *.sh podnext* pn-gateway* 2>/dev/null || true
 
       - name: Generate changelog
         id: changelog
@@ -205,33 +197,27 @@ jobs:
           files: |
             release-artifacts/podnext-aarch64-linux-android
             release-artifacts/pn-gateway-aarch64-linux-android
-            podnext-aarch64-linux-android
-            pn-gateway-aarch64-linux-android
-            install.sh
-            install-short.sh
+            release-artifacts/install.sh
+            release-artifacts/install-short.sh
           draft: false
           prerelease: ${{ contains(steps.changelog.outputs.version, 'alpha') || contains(steps.changelog.outputs.version, 'beta') || contains(steps.changelog.outputs.version, 'rc') }}
 
       - name: Verify release artifacts
         run: |
-          ls -la release-artifacts/ || true
-          ls -la *.sh podnext* pn-gateway* 2>/dev/null || true
-          if [ -f "release-artifacts/podnext-aarch64-linux-android" ] || [ -f "podnext-aarch64-linux-android" ]; then
-            FILE="release-artifacts/podnext-aarch64-linux-android"
-            [ -f "$FILE" ] || FILE="podnext-aarch64-linux-android"
-            file "$FILE"
-            ./"$FILE" --version || true
+          ls -la release-artifacts/
+          if [ -f "release-artifacts/podnext-aarch64-linux-android" ]; then
+            file release-artifacts/podnext-aarch64-linux-android
+            ./release-artifacts/podnext-aarch64-linux-android --version || true
           else
-            echo "Warning: podnext binary not found at expected path"
-            find release-artifacts -type f -name "podnext*" 2>/dev/null || true
-            find . -maxdepth 1 -name "podnext*" 2>/dev/null || true
+            echo "ERROR: podnext binary not found!"
+            exit 1
           fi
           # Verify installer scripts
-          if [ -f "install.sh" ]; then
-            echo "Installer script found: $(wc -l < install.sh) lines"
+          if [ -f "release-artifacts/install.sh" ]; then
+            echo "Installer script found: $(wc -l < release-artifacts/install.sh) lines"
           fi
-          if [ -f "install-short.sh" ]; then
-            echo "Short installer found: $(wc -l < install-short.sh) lines"
+          if [ -f "release-artifacts/install-short.sh" ]; then
+            echo "Short installer found: $(wc -l < release-artifacts/install-short.sh) lines"
           fi
 
   # Publish to crates.io (optional, manual trigger)
