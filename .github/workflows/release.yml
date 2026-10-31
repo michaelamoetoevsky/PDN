@@ -173,13 +173,8 @@ jobs:
             VERSION="${{ github.ref_name }}"
           fi
           
-          # Generate changelog from commits since last tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -n "$PREV_TAG" ]; then
-            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD > CHANGELOG.md 2>/dev/null || git log --pretty=format:"- %s (%h)" > CHANGELOG.md
-          else
-            git log --pretty=format:"- %s (%h)" > CHANGELOG.md
-          fi
+          # Generate changelog - simple version
+          git log --pretty=format:"- %s (%h)" -n 50 > CHANGELOG.md
           
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           cat CHANGELOG.md >> $GITHUB_OUTPUT
