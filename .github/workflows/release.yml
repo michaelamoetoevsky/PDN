@@ -27,14 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, beta]
+        rust: [stable]
         include:
           - rust: stable
             target: aarch64-linux-android
           - rust: stable
             target: x86_64-unknown-linux-gnu
-          - rust: beta
-            target: aarch64-linux-android
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
