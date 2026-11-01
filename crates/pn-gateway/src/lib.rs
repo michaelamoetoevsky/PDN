@@ -4,19 +4,22 @@
 //! PRoot-distro container management, and proot-compat compatibility layer.
 //! It provides fail-safe mechanisms and guardrails for robust operation.
 
-pub mod gateway;
+pub mod config;
 pub mod fail_safe;
+pub mod gateway;
 pub mod guardrails;
 pub mod health;
 pub mod metrics;
-pub mod config;
 
-pub use gateway::PnGateway;
+pub use config::{
+    CircuitBreakerState, FailSafeAction, FailSafeConfig, GatewayConfig, GatewayConfigBuilder,
+    GatewayState, GuardrailConfig, GuardrailRule, HealthConfig, MetricsConfig, MetricsExporter,
+};
 pub use fail_safe::FailSafeManager;
+pub use gateway::PnGateway;
 pub use guardrails::GuardrailManager;
 pub use health::HealthMonitor;
 pub use metrics::MetricsCollector;
-pub use config::{GatewayConfig, GatewayConfigBuilder, GatewayState, FailSafeConfig, FailSafeAction, GuardrailConfig, GuardrailRule, HealthConfig, MetricsConfig, MetricsExporter, CircuitBreakerState};
 
 #[cfg(test)]
 mod tests {

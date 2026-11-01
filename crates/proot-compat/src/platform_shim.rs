@@ -15,7 +15,10 @@ pub fn set_linux_personality() -> Result<(), String> {
         let mut buf: utsname = std::mem::zeroed();
 
         if uname(&mut buf) != 0 {
-            return Err(format!("uname() failed: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "uname() failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
 
         let sysname = CStr::from_ptr(buf.sysname.as_ptr()).to_string_lossy();
@@ -35,8 +38,12 @@ pub fn get_platform_info() -> (String, String) {
     unsafe {
         let mut buf: utsname = std::mem::zeroed();
         if uname(&mut buf) == 0 {
-            let sysname = CStr::from_ptr(buf.sysname.as_ptr()).to_string_lossy().to_string();
-            let machine = CStr::from_ptr(buf.machine.as_ptr()).to_string_lossy().to_string();
+            let sysname = CStr::from_ptr(buf.sysname.as_ptr())
+                .to_string_lossy()
+                .to_string();
+            let machine = CStr::from_ptr(buf.machine.as_ptr())
+                .to_string_lossy()
+                .to_string();
             (sysname, machine)
         } else {
             ("unknown".to_string(), "unknown".to_string())

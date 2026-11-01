@@ -1,14 +1,14 @@
 //! Utility functions
 
 use anyhow::Result;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 /// Parse container:path format
 pub fn parse_container_path(path: &str) -> Result<(Option<String>, String)> {
     if let Some(idx) = path.find(':') {
         let container = &path[..idx];
-        let path = &path[idx+1..];
+        let path = &path[idx + 1..];
         Ok((Some(container.to_string()), path.to_string()))
     } else {
         Ok((None, path.to_string()))
@@ -49,12 +49,18 @@ pub fn format_size(bytes: u64) -> String {
 /// Parse size string (e.g., "2G", "512M", "1024K")
 pub fn parse_size(s: &str) -> Result<u64> {
     let s = s.trim().to_lowercase();
-    let (num, unit) = if s.ends_with('k') { (&s[..s.len()-1], 1024) }
-    else if s.ends_with('m') { (&s[..s.len()-1], 1024*1024) }
-    else if s.ends_with('g') { (&s[..s.len()-1], 1024*1024*1024) }
-    else if s.ends_with('t') { (&s[..s.len()-1], 1024*1024*1024*1024) }
-    else { (s.as_str(), 1) };
-    
+    let (num, unit) = if s.ends_with('k') {
+        (&s[..s.len() - 1], 1024)
+    } else if s.ends_with('m') {
+        (&s[..s.len() - 1], 1024 * 1024)
+    } else if s.ends_with('g') {
+        (&s[..s.len() - 1], 1024 * 1024 * 1024)
+    } else if s.ends_with('t') {
+        (&s[..s.len() - 1], 1024 * 1024 * 1024 * 1024)
+    } else {
+        (s.as_str(), 1)
+    };
+
     let num: u64 = num.parse()?;
     Ok(num * unit)
 }

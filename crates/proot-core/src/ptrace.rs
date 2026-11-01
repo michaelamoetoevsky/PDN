@@ -1,28 +1,32 @@
 //! Ptrace controller for PRoot
 
-use libc::{ptrace, PTRACE_TRACEME, PTRACE_PEEKTEXT, PTRACE_PEEKDATA, PTRACE_PEEKUSER,
-           PTRACE_POKETEXT, PTRACE_POKEDATA, PTRACE_POKEUSER, PTRACE_CONT, PTRACE_KILL,
-           PTRACE_SINGLESTEP, PTRACE_GETREGS, PTRACE_SETREGS, PTRACE_ATTACH, PTRACE_DETACH,
-           PTRACE_SYSCALL, PTRACE_SETOPTIONS, PTRACE_GETEVENTMSG, PTRACE_GETSIGINFO, PTRACE_SETSIGINFO,
-           PTRACE_GETREGSET, PTRACE_SETREGSET};
-use libc::{c_int, c_long, c_void, pid_t, user_regs_struct, iovec, siginfo_t};
+use anyhow::{anyhow, Result};
+use libc::{c_int, c_long, c_void, iovec, pid_t, siginfo_t, user_regs_struct};
+use libc::{
+    ptrace, PTRACE_ATTACH, PTRACE_CONT, PTRACE_DETACH, PTRACE_GETEVENTMSG, PTRACE_GETREGS,
+    PTRACE_GETREGSET, PTRACE_GETSIGINFO, PTRACE_KILL, PTRACE_PEEKDATA, PTRACE_PEEKTEXT,
+    PTRACE_PEEKUSER, PTRACE_POKEDATA, PTRACE_POKETEXT, PTRACE_POKEUSER, PTRACE_SETOPTIONS,
+    PTRACE_SETREGS, PTRACE_SETREGSET, PTRACE_SETSIGINFO, PTRACE_SINGLESTEP, PTRACE_SYSCALL,
+    PTRACE_TRACEME,
+};
 use nix::sys::ptrace::{self, Options};
 use nix::sys::signal::Signal;
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::Pid;
-use std::collections::HashMap;
 use parking_lot::Mutex;
-use std::sync::Arc;
 use std::collections::hash_map::Entry;
-use anyhow::{Result, anyhow};
-use tracing::{debug, trace, warn, error};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{debug, error, trace, warn};
 
 use crate::arch::{Arch, Arch::Arm64};
-use crate::syscall::SyscallHandler;
 use crate::path::PathTranslator;
+use crate::syscall::SyscallHandler;
+use crate::tracee::{
+    MountInfo, PathInfo, RawSyscall, Registers, SyscallInfo, Tracee, TraceeState, VfsContext,
+};
 use crate::tracee_state::TraceeStateManager;
 use crate::vfs::VfsManager;
-use crate::tracee::{Tracee, TraceeState, SyscallInfo, PathInfo, Registers, VfsContext, RawSyscall, MountInfo};
 
 /// Ptrace event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,16 +47,14 @@ pub enum PtraceEvent {
 impl PtraceEvent {
     pub fn from_wait_status(status: WaitStatus) -> Option<Self> {
         match status {
-            WaitStatus::PtraceEvent(pid, event, _) => {
-                match event as i32 {
-                    1 => Some(PtraceEvent::Clone),
-                    2 => Some(PtraceEvent::Fork),
-                    3 => Some(PtraceEvent::Vfork),
-                    4 => Some(PtraceEvent::Exec),
-                    7 => Some(PtraceEvent::Seccomp),
-                    _ => Some(PtraceEvent::Unknown(event as i32)),
-                }
-            }
+            WaitStatus::PtraceEvent(pid, event, _) => match event as i32 {
+                1 => Some(PtraceEvent::Clone),
+                2 => Some(PtraceEvent::Fork),
+                3 => Some(PtraceEvent::Vfork),
+                4 => Some(PtraceEvent::Exec),
+                7 => Some(PtraceEvent::Seccomp),
+                _ => Some(PtraceEvent::Unknown(event as i32)),
+            },
             WaitStatus::PtraceSyscall(pid) => Some(PtraceEvent::SyscallEntry),
             WaitStatus::Signaled(pid, signal, _) => Some(PtraceEvent::Signal(signal)),
             WaitStatus::Exited(pid, code) => Some(PtraceEvent::Exit),
@@ -74,13 +76,13 @@ impl PtraceController {
         Ok(Self {
             tracees: Arc::new(Mutex::new(HashMap::new())),
             tracee_counter: Arc::new(Mutex::new(0)),
-            options: Options::PTRACE_O_TRACESYSGOOD | 
-                     Options::PTRACE_O_TRACECLONE |
-                     Options::PTRACE_O_TRACEFORK |
-                     Options::PTRACE_O_TRACEVFORK |
-                     Options::PTRACE_O_TRACEEXEC |
-                     Options::PTRACE_O_TRACESECCOMP |
-                     Options::PTRACE_O_EXITKILL,
+            options: Options::PTRACE_O_TRACESYSGOOD
+                | Options::PTRACE_O_TRACECLONE
+                | Options::PTRACE_O_TRACEFORK
+                | Options::PTRACE_O_TRACEVFORK
+                | Options::PTRACE_O_TRACEEXEC
+                | Options::PTRACE_O_TRACESECCOMP
+                | Options::PTRACE_O_EXITKILL,
         })
     }
 
@@ -100,16 +102,24 @@ impl PtraceController {
         self.tracees.lock().values().cloned().collect()
     }
 
-    pub fn run_loop(&self, 
-                    syscall_handler: &mut SyscallHandler,
-                    path_translator: &mut PathTranslator,
-                    tracee_manager: &mut TraceeStateManager,
-                    vfs_manager: &mut VfsManager) -> Result<()> {
+    pub fn run_loop(
+        &self,
+        syscall_handler: &mut SyscallHandler,
+        path_translator: &mut PathTranslator,
+        tracee_manager: &mut TraceeStateManager,
+        vfs_manager: &mut VfsManager,
+    ) -> Result<()> {
         loop {
             // Wait for any tracee event
             match nix::sys::wait::waitpid(None, None) {
                 Ok(status) => {
-                    self.handle_event(status, syscall_handler, path_translator, tracee_manager, vfs_manager)?;
+                    self.handle_event(
+                        status,
+                        syscall_handler,
+                        path_translator,
+                        tracee_manager,
+                        vfs_manager,
+                    )?;
                 }
                 Err(nix::Error::ECHILD) => {
                     // No more tracees
@@ -123,12 +133,14 @@ impl PtraceController {
         Ok(())
     }
 
-    fn handle_event(&self,
-                    status: nix::sys::wait::WaitStatus,
-                    syscall_handler: &mut SyscallHandler,
-                    path_translator: &mut PathTranslator,
-                    tracee_manager: &mut TraceeStateManager,
-                    vfs_manager: &mut VfsManager) -> Result<()> {
+    fn handle_event(
+        &self,
+        status: nix::sys::wait::WaitStatus,
+        syscall_handler: &mut SyscallHandler,
+        path_translator: &mut PathTranslator,
+        tracee_manager: &mut TraceeStateManager,
+        vfs_manager: &mut VfsManager,
+    ) -> Result<()> {
         let pid = match status {
             nix::sys::wait::WaitStatus::PtraceEvent(pid, _, _) => pid,
             nix::sys::wait::WaitStatus::PtraceSyscall(pid) => pid,
@@ -156,7 +168,13 @@ impl PtraceController {
 
         // Handle the event using tracee's method
         if let Some(event) = PtraceEvent::from_wait_status(status) {
-            tracee.handle_event(event, syscall_handler, path_translator, tracee_manager, vfs_manager)?;
+            tracee.handle_event(
+                event,
+                syscall_handler,
+                path_translator,
+                tracee_manager,
+                vfs_manager,
+            )?;
         }
 
         // Update tracee

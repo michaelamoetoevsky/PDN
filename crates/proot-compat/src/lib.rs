@@ -10,16 +10,20 @@
 // - Cgroup v2 support
 // - CAP_SYS_ADMIN detection and fallback handling
 
-pub mod platform_shim;
-pub mod path_translation;
-pub mod seccomp_bypass;
-pub mod stub_fs;
-pub mod mount_helper;
-pub mod cgroup_v2;
 pub mod cap_sys_admin;
+pub mod cgroup_v2;
+pub mod mount_helper;
+pub mod path_translation;
+pub mod platform_shim;
+pub mod seccomp_bypass;
 pub mod security;
+pub mod stub_fs;
 
-pub use security::{SecurityProfileConfig, SecurityProfileType, SeccompProfile, SeccompAction, SeccompArch, SeccompSyscallRule, SeccompArg, SeccompOp, AppArmorProfile, SelLinuxProfile, CapabilityConfig, SecurityHardeningManager};
+pub use security::{
+    AppArmorProfile, CapabilityConfig, SeccompAction, SeccompArch, SeccompArg, SeccompOp,
+    SeccompProfile, SeccompSyscallRule, SecurityHardeningManager, SecurityProfileConfig,
+    SecurityProfileType, SelLinuxProfile,
+};
 
 /// Initialize all compatibility layers for PRoot on Termux Android 16+.
 /// This should be called before launching any guest process.
@@ -27,7 +31,7 @@ pub fn init_compat() -> anyhow::Result<()> {
     // Initialize global CAP_SYS_ADMIN manager with fallback mode by default
     // Use init_global_manager_with_testing(true) for integration tests that need actual mount capability
     crate::cap_sys_admin::init_global_manager(false);
-    
+
     platform_shim::set_linux_personality().map_err(|e| anyhow::anyhow!(e))?;
     seccomp_bypass::configure_seccomp_filter().map_err(|e| anyhow::anyhow!(e))?;
     Ok(())

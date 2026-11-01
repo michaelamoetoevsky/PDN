@@ -1,7 +1,7 @@
 //! Message system for PRoot Distro
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
-use serde::{Serialize, Deserialize};
 
 /// Message level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ impl Message {
             metadata: std::collections::HashMap::new(),
         }
     }
-    
+
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
         self.metadata.insert(key, value);
         self
@@ -69,8 +69,9 @@ impl MessageHandler for DefaultMessageHandler {
             MessageLevel::Error => "\x1b[31mERROR\x1b[0m",
             MessageLevel::Critical => "\x1b[31;1mCRITICAL\x1b[0m",
         };
-        
-        eprintln!("{} [{}] {}: {}", 
+
+        eprintln!(
+            "{} [{}] {}: {}",
             message.timestamp.format("%Y-%m-%d %H:%M:%S%.3f"),
             level_str,
             message.source,

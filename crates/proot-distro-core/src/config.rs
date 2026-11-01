@@ -1,11 +1,11 @@
 //! Configuration for PRoot Distro
 
-use std::path::PathBuf;
-use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
-use anyhow::Result;
-use crate::image::ImageSource;
 use crate::container::{ContainerConfig as ContainerContainerConfig, ContainerConfig};
+use crate::image::ImageSource;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Distro type enumeration
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,7 +211,9 @@ pub struct StorageConfig {
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        let root = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/user")).join(".pn-next");
+        let root = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/home/user"))
+            .join(".pn-next");
         Self {
             driver: "local".to_string(),
             root_dir: root.clone(),
@@ -262,7 +264,9 @@ pub struct PathsConfig {
 
 impl Default for PathsConfig {
     fn default() -> Self {
-        let root = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/user")).join(".pn-next");
+        let root = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/home/user"))
+            .join(".pn-next");
         Self {
             root_dir: root.clone(),
             containers_dir: root.join("containers"),

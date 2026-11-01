@@ -1,14 +1,14 @@
 //! Scheduler for PN Next
 
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::collections::BinaryHeap;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
+use std::collections::BinaryHeap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 /// Scheduler configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,8 +84,11 @@ impl Task {
 // Reverse ordering for BinaryHeap (max-heap)
 impl Ord for Task {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.priority.cmp(&other.priority)
-            .then_with(|| self.created_at.timestamp().cmp(&other.created_at.timestamp()))
+        self.priority.cmp(&other.priority).then_with(|| {
+            self.created_at
+                .timestamp()
+                .cmp(&other.created_at.timestamp())
+        })
     }
 }
 
@@ -123,16 +126,16 @@ impl Scheduler {
             running: Arc::new(tokio::sync::Mutex::new(false)),
         })
     }
-    
+
     pub async fn start(&self) -> anyhow::Result<()> {
         *self.running.lock().await = true;
-        
+
         // Start worker tasks
         for i in 0..self.config.max_concurrent_tasks {
             let receiver = self.task_receiver.clone();
             let running_tasks = self.running_tasks.clone();
             let running = self.running.clone();
-            
+
             tokio::spawn(async move {
                 let mut receiver = receiver.lock().await;
                 while *running.lock().await {
@@ -143,24 +146,24 @@ impl Scheduler {
                 }
             });
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn stop(&self) -> Result<()> {
         *self.running.lock().await = false;
         Ok(())
     }
-    
+
     pub async fn submit(&self, task: Task) -> Result<()> {
         self.task_sender.send(task).await?;
         Ok(())
     }
-    
+
     pub async fn get_task(&self, id: &uuid::Uuid) -> Option<Task> {
         self.running_tasks.read().await.get(id).cloned()
     }
-    
+
     pub async fn cancel_task(&self, id: &uuid::Uuid) -> Result<()> {
         let mut tasks = self.running_tasks.write().await;
         if let Some(task) = tasks.get_mut(&id) {
@@ -168,11 +171,11 @@ impl Scheduler {
         }
         Ok(())
     }
-    
+
     pub async fn get_queue_size(&self) -> usize {
         self.task_queue.lock().await.len()
     }
-    
+
     pub async fn get_running_count(&self) -> usize {
         self.running_tasks.read().await.len()
     }
@@ -181,7 +184,7 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_scheduler_creation() {
         let config = SchedulerConfig::default();

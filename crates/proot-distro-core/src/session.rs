@@ -1,12 +1,12 @@
 //! Session management for PRoot Distro
 
-use std::path::PathBuf;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use anyhow::Result;
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 /// Session manager
 pub struct SessionManager {
@@ -19,8 +19,12 @@ impl SessionManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
         })
     }
-    
-    pub fn create(&self, container_name: &str, options: &crate::login::LoginOptions) -> Result<Session> {
+
+    pub fn create(
+        &self,
+        container_name: &str,
+        options: &crate::login::LoginOptions,
+    ) -> Result<Session> {
         let id = Uuid::new_v4().to_string();
         let session = Session {
             id: id.clone(),
@@ -35,32 +39,40 @@ impl SessionManager {
             status: SessionStatus::Created,
             pid: None,
         };
-        
+
         let mut sessions = self.sessions.lock().unwrap();
         sessions.insert(id.clone(), session.clone());
-        
+
         Ok(session)
     }
-    
+
     pub fn get(&self, id: &str) -> Option<Session> {
         self.sessions.lock().unwrap().get(id).cloned()
     }
-    
+
     pub fn list(&self) -> Vec<Session> {
         self.sessions.lock().unwrap().values().cloned().collect()
     }
-    
+
     pub fn list_all(&self) -> Vec<crate::container::SessionInfo> {
         let sessions = self.sessions.lock().unwrap();
-        sessions.values().map(|s| crate::container::SessionInfo {
-            container_name: s.container_name.clone(),
-            user: s.user.clone(),
-            pid: s.pid,
-            status: format!("{:?}", s.status),
-            started_at: s.started_at.unwrap_or(s.created_at),
-        }).collect()
+        sessions
+            .values()
+            .map(|s| crate::container::SessionInfo {
+                container_name: s.container_name.clone(),
+                user: s.user.clone(),
+                pid: s.pid,
+                status: format!("{:?}", s.status),
+                started_at: s.started_at.unwrap_or(s.created_at),
+            })
+            .collect()
     }
-    
+
+    pub fn list_all_full(&self) -> Vec<Session> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.values().cloned().collect()
+    }
+
     pub fn end(&self, id: &str) -> Result<()> {
         let mut sessions = self.sessions.lock().unwrap();
         if let Some(session) = sessions.get_mut(id) {

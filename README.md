@@ -100,7 +100,22 @@ PDN unifies the PRoot ecosystem into a single cohesive codebase:
 | `proot-compat` | Termux/Android compatibility layer |
 | `pn-gateway` | Gateway layer with fail-safe, guardrails, health, metrics |
 | `pn-next` | Advanced architecture (runtime, scheduler, network, storage, security, API, workflow, plugin, checkpoint/restore, GPU, CRI) |
-| `podnext` | Command-line interface (binary name: `podnext`) |
+| `podnext` | Command-line interface and daemon runtime (binaries: `podnext`, `podnext-daemon`) |
+
+## Current Verification Status (v0.1.7 — 2026-11-01)
+
+| Check / Metric | Verified State | Notes |
+|---|---|---|
+| **Workspace Version** | `0.1.7` | Centralized in root `Cargo.toml` across all 6 crates |
+| **Release Binaries** | `podnext`, `podnext-daemon` | ELF 64-bit aarch64 (Android 24, NDK r30), `0.1.7` |
+| **Workspace Tests** | `93 passed, 0 failed, 1 ignored` | `cargo test --workspace` |
+| **CRI Tests** | `49 passed, 0 failed` | `cargo test --package pn-next --features cri` |
+| **Code Formatting** | Clean | `cargo fmt --all -- --check` exit `0` |
+| **Whitespace / Diff** | Clean | `git diff --check` exit `0` |
+| **Daemon IPC** | Smoke verified | Unix socket `ping` -> `pong`, `list` -> `[]` |
+| **Termux Packaging** | Aligned | `termux-package/recipe/build.sh` version `0.1.7` |
+
+*Note on Implementation Scope*: CLI entrypoints and daemon supervisor are operational for baseline container/daemon workflows. Certain advanced subcommands (e.g. `image push/tag/inspect`, `network`, `volume`) and higher-tier orchestration features (clustering, GitOps sync) currently exist as compilation-verified or stub modules; see `PHASES_1_4_DOCUMENTATION.md` for the empirical breakdown.
 
 ## Getting Started
 
@@ -114,7 +129,7 @@ PDN unifies the PRoot ecosystem into a single cohesive codebase:
 
 ```bash
 # Clone the repository
-git clone https://github.com/hermes-agent/PDN
+git clone https://github.com/michaelamoetoevsky/PDN
 cd PDN
 
 # Build all crates

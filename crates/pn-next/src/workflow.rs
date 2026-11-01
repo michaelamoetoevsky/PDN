@@ -1,12 +1,12 @@
 //! Workflow engine for PN Next
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
 
 /// Workflow configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,26 +61,34 @@ impl WorkflowEngine {
             running: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
     }
-    
+
     pub async fn start(&self) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn stop(&self) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn register_workflow(&self, workflow: Workflow) -> Result<()> {
         let mut workflows = self.workflows.write().await;
         workflows.insert(workflow.name.clone(), workflow);
         Ok(())
     }
-    
-    pub async fn execute_workflow(&self, name: &str, inputs: HashMap<String, serde_json::Value>) -> Result<WorkflowExecution> {
-        let workflow = self.workflows.read().await.get(name)
+
+    pub async fn execute_workflow(
+        &self,
+        name: &str,
+        inputs: HashMap<String, serde_json::Value>,
+    ) -> Result<WorkflowExecution> {
+        let workflow = self
+            .workflows
+            .read()
+            .await
+            .get(name)
             .ok_or_else(|| anyhow::anyhow!("Workflow not found: {}", name))?
             .clone();
-        
+
         let execution = WorkflowExecution {
             id: Uuid::new_v4(),
             workflow_name: name.to_string(),
@@ -92,27 +100,30 @@ impl WorkflowEngine {
             completed_at: None,
             error: None,
         };
-        
+
         let execution_id = execution.id.to_string();
-        self.running.write().await.insert(execution_id.clone(), execution.clone());
-        
+        self.running
+            .write()
+            .await
+            .insert(execution_id.clone(), execution.clone());
+
         // Execute workflow steps
         // In a real implementation, this would execute the workflow steps
-        
+
         Ok(execution)
     }
-    
+
     pub async fn get_execution(&self, id: &str) -> Option<WorkflowExecution> {
         self.running.read().await.get(id).cloned()
     }
-    
+
     pub async fn cancel_execution(&self, id: &str) -> Result<()> {
         if let Some(execution) = self.running.write().await.get_mut(id) {
             execution.status = WorkflowStatus::Cancelled;
         }
         Ok(())
     }
-    
+
     pub async fn list_workflows(&self) -> Vec<Workflow> {
         self.workflows.read().await.values().cloned().collect()
     }

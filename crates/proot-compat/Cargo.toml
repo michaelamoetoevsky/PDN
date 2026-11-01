@@ -1,10 +1,10 @@
 [package]
 name = "proot-compat"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "PRoot compatibility layer for Termux Android 16+"
-license = "GPL-2.0-or-later"
-repository = "https://github.com/hermes-agent/PDN"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 proot-core = { path = "../proot-core" }

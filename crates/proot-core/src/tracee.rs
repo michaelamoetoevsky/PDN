@@ -1,15 +1,15 @@
 //! Tracee management for PRoot
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
-use anyhow::Result;
-use nix::unistd::Pid;
 use crate::arch::Arch;
-use crate::syscall::SyscallHandler;
 use crate::path::PathTranslator;
+use crate::syscall::SyscallHandler;
 use crate::tracee_state::TraceeStateManager;
 use crate::vfs::VfsManager;
+use anyhow::Result;
+use nix::unistd::Pid;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 /// Unique tracee identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,27 +67,36 @@ impl Tracee {
             ptrace_options: 0,
         }
     }
-    
-    pub fn handle_syscall_entry(&mut self, handler: &mut crate::syscall::SyscallHandler,
-                                translator: &mut crate::path::PathTranslator,
-                                tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
-                                vfs_mgr: &mut crate::vfs::VfsManager) -> Result<()> {
+
+    pub fn handle_syscall_entry(
+        &mut self,
+        handler: &mut crate::syscall::SyscallHandler,
+        translator: &mut crate::path::PathTranslator,
+        tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
+        vfs_mgr: &mut crate::vfs::VfsManager,
+    ) -> Result<()> {
         let syscall = self.read_syscall()?;
         self.syscall_info = Some(SyscallInfo {
             number: syscall.number,
             args: syscall.args,
             retval: 0,
         });
-        
-        translator.translate_syscall_args(&mut self.syscall_info.as_mut().unwrap().args, &self.path_info)?;
-        
+
+        translator.translate_syscall_args(
+            &mut self.syscall_info.as_mut().unwrap().args,
+            &self.path_info,
+        )?;
+
         Ok(())
     }
-    
-    pub fn handle_syscall_exit(&mut self, handler: &mut crate::syscall::SyscallHandler,
-                               translator: &mut crate::path::PathTranslator,
-                               tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
-                               vfs_mgr: &mut crate::vfs::VfsManager) -> Result<()> {
+
+    pub fn handle_syscall_exit(
+        &mut self,
+        handler: &mut crate::syscall::SyscallHandler,
+        translator: &mut crate::path::PathTranslator,
+        tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
+        vfs_mgr: &mut crate::vfs::VfsManager,
+    ) -> Result<()> {
         let retval = self.read_retval()?;
         if let Some(syscall_info) = &mut self.syscall_info {
             syscall_info.retval = retval;
@@ -95,33 +104,50 @@ impl Tracee {
         self.syscall_info = None;
         Ok(())
     }
-    
+
     fn read_syscall(&self) -> Result<RawSyscall> {
         // Architecture-specific syscall reading
-        Ok(RawSyscall { number: 0, args: [0; 6] })
+        Ok(RawSyscall {
+            number: 0,
+            args: [0; 6],
+        })
     }
-    
+
     fn read_retval(&self) -> Result<isize> {
         Ok(0)
     }
 
-    pub fn handle_event(&mut self,
-                        event: crate::ptrace::PtraceEvent,
-                        syscall_handler: &mut SyscallHandler,
-                        path_translator: &mut PathTranslator,
-                        tracee_manager: &mut TraceeStateManager,
-                        vfs_manager: &mut VfsManager) -> Result<()> {
+    pub fn handle_event(
+        &mut self,
+        event: crate::ptrace::PtraceEvent,
+        syscall_handler: &mut SyscallHandler,
+        path_translator: &mut PathTranslator,
+        tracee_manager: &mut TraceeStateManager,
+        vfs_manager: &mut VfsManager,
+    ) -> Result<()> {
         match event {
             crate::ptrace::PtraceEvent::SyscallEntry => {
-                self.handle_syscall_entry(syscall_handler, path_translator, tracee_manager, vfs_manager)?;
+                self.handle_syscall_entry(
+                    syscall_handler,
+                    path_translator,
+                    tracee_manager,
+                    vfs_manager,
+                )?;
             }
             crate::ptrace::PtraceEvent::SyscallExit => {
-                self.handle_syscall_exit(syscall_handler, path_translator, tracee_manager, vfs_manager)?;
+                self.handle_syscall_exit(
+                    syscall_handler,
+                    path_translator,
+                    tracee_manager,
+                    vfs_manager,
+                )?;
             }
             crate::ptrace::PtraceEvent::Signal(sig) => {
                 self.handle_signal(sig)?;
             }
-            crate::ptrace::PtraceEvent::Clone | crate::ptrace::PtraceEvent::Fork | crate::ptrace::PtraceEvent::Vfork => {
+            crate::ptrace::PtraceEvent::Clone
+            | crate::ptrace::PtraceEvent::Fork
+            | crate::ptrace::PtraceEvent::Vfork => {
                 self.handle_clone()?;
             }
             crate::ptrace::PtraceEvent::Exec => {
@@ -225,9 +251,11 @@ pub struct FdTable {
 
 impl FdTable {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
-    
+
     pub fn allocate(&mut self, entry: FdEntry) -> i32 {
         for (i, entry_opt) in self.entries.iter_mut().enumerate() {
             if entry_opt.is_none() {
@@ -238,15 +266,15 @@ impl FdTable {
         self.entries.push(Some(entry));
         (self.entries.len() - 1) as i32
     }
-    
+
     pub fn get(&self, fd: i32) -> Option<&FdEntry> {
         self.entries.get(fd as usize).and_then(|e| e.as_ref())
     }
-    
+
     pub fn get_mut(&mut self, fd: i32) -> Option<&mut FdEntry> {
         self.entries.get_mut(fd as usize).and_then(|e| e.as_mut())
     }
-    
+
     pub fn close(&mut self, fd: i32) -> Option<FdEntry> {
         if let Some(entry) = self.entries.get_mut(fd as usize) {
             entry.take()

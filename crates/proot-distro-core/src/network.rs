@@ -1,8 +1,8 @@
 //! Network module - Stub for future implementation
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -58,16 +58,20 @@ impl NetworkManager {
     }
 
     pub fn list(&self) -> Result<Vec<NetworkInfo>> {
-        let infos: Vec<NetworkInfo> = self.networks.iter().map(|(_, config)| NetworkInfo {
-            name: config.name.clone(),
-            driver: config.driver.clone(),
-            subnet: config.subnet.clone(),
-            gateway: config.gateway.clone(),
-            dns_servers: config.dns_servers.clone(),
-            enable_ipv6: config.enable_ipv6,
-            mtu: config.mtu,
-            containers: Vec::new(),
-        }).collect();
+        let infos: Vec<NetworkInfo> = self
+            .networks
+            .iter()
+            .map(|(_, config)| NetworkInfo {
+                name: config.name.clone(),
+                driver: config.driver.clone(),
+                subnet: config.subnet.clone(),
+                gateway: config.gateway.clone(),
+                dns_servers: config.dns_servers.clone(),
+                enable_ipv6: config.enable_ipv6,
+                mtu: config.mtu,
+                containers: Vec::new(),
+            })
+            .collect();
         Ok(infos)
     }
 

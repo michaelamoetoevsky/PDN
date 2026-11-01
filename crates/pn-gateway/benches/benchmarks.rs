@@ -1,7 +1,9 @@
 //! Performance benchmarks for pn-gateway
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use pn_gateway::{GuardrailsEngine, GuardrailsConfig, ResourceRequest, FailSafeManager, FailSafeConfig};
+use pn_gateway::{
+    FailSafeConfig, FailSafeManager, GuardrailsConfig, GuardrailsEngine, ResourceRequest,
+};
 use std::time::Duration;
 
 fn bench_guardrails_evaluation(c: &mut Criterion) {
@@ -38,26 +40,30 @@ fn bench_guardrails_batch_evaluation(c: &mut Criterion) {
 
     for batch_size in [1, 10, 50, 100].iter() {
         group.throughput(Throughput::Elements(*batch_size));
-        group.bench_with_input(BenchmarkId::new("batch_evaluate", batch_size), batch_size, |b, &size| {
-            b.to_async(&rt).iter(|| async {
-                let mut handles = Vec::new();
-                for i in 0..size {
-                    let guardrails = guardrails.clone();
-                    handles.push(tokio::spawn(async move {
-                        let request = ResourceRequest {
-                            container_id: format!("container-{}", i),
-                            memory_bytes: 512 * 1024 * 1024, // 512MB
-                            cpu_cores: 0.5,
-                            pids: 25,
-                        };
-                        guardrails.evaluate(request).await
-                    }));
-                }
-                for handle in handles {
-                    let _ = handle.await;
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("batch_evaluate", batch_size),
+            batch_size,
+            |b, &size| {
+                b.to_async(&rt).iter(|| async {
+                    let mut handles = Vec::new();
+                    for i in 0..size {
+                        let guardrails = guardrails.clone();
+                        handles.push(tokio::spawn(async move {
+                            let request = ResourceRequest {
+                                container_id: format!("container-{}", i),
+                                memory_bytes: 512 * 1024 * 1024, // 512MB
+                                cpu_cores: 0.5,
+                                pids: 25,
+                            };
+                            guardrails.evaluate(request).await
+                        }));
+                    }
+                    for handle in handles {
+                        let _ = handle.await;
+                    }
+                });
+            },
+        );
     }
 
     group.finish();
@@ -73,18 +79,22 @@ fn bench_fail_safe_circuit_breaker(c: &mut Criterion) {
 
     group.bench_function("execute_success", |b| {
         b.to_async(&rt).iter(|| async {
-            let result = fail_safe.execute(black_box("test-op-success"), || async {
-                Ok::<_, anyhow::Error>("success".to_string())
-            }).await;
+            let result = fail_safe
+                .execute(black_box("test-op-success"), || async {
+                    Ok::<_, anyhow::Error>("success".to_string())
+                })
+                .await;
             black_box(result);
         });
     });
 
     group.bench_function("execute_failure", |b| {
         b.to_async(&rt).iter(|| async {
-            let result = fail_safe.execute(black_box("test-op-failure"), || async {
-                Err::<String, _>(anyhow::anyhow!("simulated failure"))
-            }).await;
+            let result = fail_safe
+                .execute(black_box("test-op-failure"), || async {
+                    Err::<String, _>(anyhow::anyhow!("simulated failure"))
+                })
+                .await;
             black_box(result);
         });
     });
@@ -103,7 +113,8 @@ fn bench_fail_safe_retry_policy(c: &mut Criterion) {
             retryable_errors: vec!["timeout".to_string(), "unavailable".to_string()],
         },
         ..Default::default()
-    }).unwrap();
+    })
+    .unwrap();
 
     let mut group = c.benchmark_group("fail_safe_retry_policy");
     group.measurement_time(Duration::from_secs(10));
@@ -112,14 +123,16 @@ fn bench_fail_safe_retry_policy(c: &mut Criterion) {
     group.bench_function("retry_on_failure", |b| {
         b.to_async(&rt).iter(|| async {
             let attempt = std::sync::atomic::AtomicUsize::new(0);
-            let result = fail_safe.execute(black_box("retry-test"), || async {
-                let current = attempt.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if current < 2 {
-                    Err(anyhow::anyhow!("timeout"))
-                } else {
-                    Ok("success".to_string())
-                }
-            }).await;
+            let result = fail_safe
+                .execute(black_box("retry-test"), || async {
+                    let current = attempt.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if current < 2 {
+                        Err(anyhow::anyhow!("timeout"))
+                    } else {
+                        Ok("success".to_string())
+                    }
+                })
+                .await;
             black_box(result);
         });
     });
@@ -136,7 +149,8 @@ fn bench_fail_safe_bulkhead(c: &mut Criterion) {
             timeout: Duration::from_secs(5),
         },
         ..Default::default()
-    }).unwrap();
+    })
+    .unwrap();
 
     let mut group = c.benchmark_group("fail_safe_bulkhead");
     group.measurement_time(Duration::from_secs(10));
@@ -144,30 +158,36 @@ fn bench_fail_safe_bulkhead(c: &mut Criterion) {
 
     for concurrent in [1, 5, 10, 20].iter() {
         group.throughput(Throughput::Elements(*concurrent));
-        group.bench_with_input(BenchmarkId::new("bulkhead_concurrent", concurrent), concurrent, |b, &size| {
-            b.to_async(&rt).iter(|| async {
-                let mut handles = Vec::new();
-                for _ in 0..size {
-                    let fail_safe = fail_safe.clone();
-                    handles.push(tokio::spawn(async move {
-                        fail_safe.execute("bulkhead-test", || async {
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                            Ok("done".to_string())
-                        }).await
-                    }));
-                }
-                for handle in handles {
-                    let _ = handle.await;
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("bulkhead_concurrent", concurrent),
+            concurrent,
+            |b, &size| {
+                b.to_async(&rt).iter(|| async {
+                    let mut handles = Vec::new();
+                    for _ in 0..size {
+                        let fail_safe = fail_safe.clone();
+                        handles.push(tokio::spawn(async move {
+                            fail_safe
+                                .execute("bulkhead-test", || async {
+                                    tokio::time::sleep(Duration::from_millis(10)).await;
+                                    Ok("done".to_string())
+                                })
+                                .await
+                        }));
+                    }
+                    for handle in handles {
+                        let _ = handle.await;
+                    }
+                });
+            },
+        );
     }
 
     group.finish();
 }
 
 fn bench_health_monitor(c: &mut Criterion) {
-    use pn_gateway::{HealthMonitor, HealthConfig, HealthCheck};
+    use pn_gateway::{HealthCheck, HealthConfig, HealthMonitor};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let health = HealthMonitor::new(HealthConfig::default()).unwrap();
@@ -221,13 +241,21 @@ fn bench_metrics_collection(c: &mut Criterion) {
 
     group.bench_function("record_histogram", |b| {
         b.iter(|| {
-            metrics.record_histogram(black_box("test_histogram"), black_box(123.456), black_box(&[("label", "value")]));
+            metrics.record_histogram(
+                black_box("test_histogram"),
+                black_box(123.456),
+                black_box(&[("label", "value")]),
+            );
         });
     });
 
     group.bench_function("record_gauge", |b| {
         b.iter(|| {
-            metrics.set_gauge(black_box("test_gauge"), black_box(42.0), black_box(&[("label", "value")]));
+            metrics.set_gauge(
+                black_box("test_gauge"),
+                black_box(42.0),
+                black_box(&[("label", "value")]),
+            );
         });
     });
 

@@ -29,9 +29,7 @@ pub fn resolve_symlink_chain(path: &Path) -> Result<PathBuf, String> {
                         let resolved = if target.is_absolute() {
                             target
                         } else {
-                            current.parent()
-                                .unwrap_or(Path::new(""))
-                                .join(target)
+                            current.parent().unwrap_or(Path::new("")).join(target)
                         };
                         current = resolved.canonicalize().unwrap_or(resolved);
                         continue;
@@ -56,13 +54,21 @@ pub fn is_symlink(path: &Path) -> bool {
 }
 
 /// Translate a path from guest to host perspective
-pub fn translate_guest_to_host(guest_path: &Path, guest_root: &std::path::Path, host_root: &std::path::Path) -> PathBuf {
+pub fn translate_guest_to_host(
+    guest_path: &Path,
+    guest_root: &std::path::Path,
+    host_root: &std::path::Path,
+) -> PathBuf {
     let relative = guest_path.strip_prefix(guest_root).unwrap_or(guest_path);
     host_root.join(relative)
 }
 
 /// Translate a path from host to guest perspective
-pub fn translate_host_to_guest(host_path: &Path, host_root: &std::path::Path, guest_root: &std::path::Path) -> PathBuf {
+pub fn translate_host_to_guest(
+    host_path: &Path,
+    host_root: &std::path::Path,
+    guest_root: &std::path::Path,
+) -> PathBuf {
     let relative = host_path.strip_prefix(host_root).unwrap_or(host_path);
     guest_root.join(relative)
 }
@@ -70,8 +76,8 @@ pub fn translate_host_to_guest(host_path: &Path, host_root: &std::path::Path, gu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::io::Write;
+    use tempfile::tempdir;
 
     #[test]
     fn test_resolve_symlink_chain() {
@@ -81,7 +87,10 @@ mod tests {
         let link2 = dir.path().join("link2.txt");
 
         // Create target file
-        std::fs::File::create(&target).unwrap().write_all(b"test").unwrap();
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"test")
+            .unwrap();
 
         // Create symlink chain: link2 -> link1 -> target
         std::os::unix::fs::symlink(&target, &link1).unwrap();

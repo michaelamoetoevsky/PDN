@@ -3,16 +3,16 @@
 //! Provides network management with CNI (Container Network Interface) plugin support
 //! for container networking.
 
-use anyhow::{Result, Context, bail};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::process::Command as StdCommand;
-use tokio::sync::RwLock;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
+use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json;
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,7 +56,7 @@ impl Default for CniConfig {
         dirs.push("/opt/cni/bin".into());
         dirs.push("/usr/libexec/cni".into());
         dirs.push("/usr/local/libexec/cni".into());
-        
+
         Self {
             plugin_dirs: dirs,
             config_dir: "/etc/cni/net.d".into(),
@@ -174,7 +174,7 @@ impl NetworkManager {
             cni_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
     }
-    
+
     pub async fn initialize(&self) -> Result<()> {
         // Create default bridge network
         self.create_network(Network {
@@ -188,14 +188,15 @@ impl NetworkManager {
             mtu: self.config.mtu,
             created_at: chrono::Utc::now(),
             containers: Vec::new(),
-        }).await?;
-        
+        })
+        .await?;
+
         // Load CNI configurations
         self.load_cni_configs().await?;
-        
+
         Ok(())
     }
-    
+
     /// Load CNI configurations from config directory
     async fn load_cni_configs(&self) -> Result<()> {
         let config_dir = &self.config.cni.config_dir;
@@ -203,30 +204,38 @@ impl NetworkManager {
             // Create default CNI config
             self.create_default_cni_config().await?;
         }
-        
+
         // Load existing CNI configs
         if config_dir.is_dir() {
             let mut entries = tokio::fs::read_dir(config_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "conf" || ext == "json") {
+                if path
+                    .extension()
+                    .map_or(false, |ext| ext == "conf" || ext == "json")
+                {
                     if let Ok(content) = tokio::fs::read_to_string(&path).await {
-                        if let Ok(config) = serde_json::from_slice::<CniNetworkConfig>(content.as_bytes()) {
-                            self.cni_cache.write().await.insert(config.name.clone(), config);
+                        if let Ok(config) =
+                            serde_json::from_slice::<CniNetworkConfig>(content.as_bytes())
+                        {
+                            self.cni_cache
+                                .write()
+                                .await
+                                .insert(config.name.clone(), config);
                         }
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Create default CNI configuration
     async fn create_default_cni_config(&self) -> Result<()> {
         let config_dir = &self.config.cni.config_dir;
         tokio::fs::create_dir_all(config_dir).await?;
-        
+
         let default_config = CniNetworkConfig {
             cni_version: "0.4.0".to_string(),
             name: self.config.cni.default_network.clone(),
@@ -242,48 +251,62 @@ impl NetworkManager {
                 ranges: None,
             }),
         };
-        
+
         let config_path = config_dir.join("10-default.conf");
         let content = serde_json::to_string_pretty(&default_config)?;
         tokio::fs::write(config_path, content).await?;
-        
-        self.cni_cache.write().await.insert(default_config.name.clone(), default_config);
-        
+
+        self.cni_cache
+            .write()
+            .await
+            .insert(default_config.name.clone(), default_config);
+
         Ok(())
     }
-    
+
     pub async fn shutdown(&self) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn create_network(&self, network: Network) -> Result<()> {
         let mut networks = self.networks.write().await;
         networks.insert(network.name.clone(), network);
         Ok(())
     }
-    
+
     pub async fn remove_network(&self, name: &str) -> Result<()> {
         let mut networks = self.networks.write().await;
         networks.remove(name);
         Ok(())
     }
-    
+
     pub async fn get_network(&self, name: &str) -> Option<Network> {
         self.networks.read().await.get(name).cloned()
     }
-    
+
     pub async fn list_networks(&self) -> Vec<Network> {
         self.networks.read().await.values().cloned().collect()
     }
-    
+
     /// Connect a container to a network using CNI
-    pub async fn connect_container(&self, network_name: &str, container_name: &str) -> Result<NetworkInterface> {
+    pub async fn connect_container(
+        &self,
+        network_name: &str,
+        container_name: &str,
+    ) -> Result<NetworkInterface> {
         // Get network
-        let network = self.get_network(network_name).await
+        let network = self
+            .get_network(network_name)
+            .await
             .ok_or_else(|| anyhow::anyhow!("Network not found: {}", network_name))?;
-        
+
         // Get CNI config for network
-        let cni_config = self.cni_cache.read().await.get(network_name).cloned()
+        let cni_config = self
+            .cni_cache
+            .read()
+            .await
+            .get(network_name)
+            .cloned()
             .unwrap_or_else(|| CniNetworkConfig {
                 cni_version: "0.4.0".to_string(),
                 name: network_name.to_string(),
@@ -299,27 +322,35 @@ impl NetworkManager {
                     ranges: None,
                 }),
             });
-        
+
         // Create container network namespace
         let container_id = Uuid::new_v4().to_string();
         let netns_path = format!("/var/run/netns/{}", container_name);
-        
+
         // Create network namespace (simulated for now)
         tokio::fs::create_dir_all("/var/run/netns").await?;
         tokio::fs::write(&netns_path, "").await?;
-        
+
         // Execute CNI ADD command
-        let cni_result = self.cni_add(&cni_config, &container_id, container_name, &netns_path).await?;
-        
+        let cni_result = self
+            .cni_add(&cni_config, &container_id, container_name, &netns_path)
+            .await?;
+
         // Extract first interface from CNI result
-        let first_interface = cni_result.interfaces.into_iter().next()
+        let first_interface = cni_result
+            .interfaces
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow::anyhow!("No interface returned from CNI plugin"))?;
-        
+
         // Get IP address from CNI result
-        let ip_address = cni_result.ips.into_iter().next()
+        let ip_address = cni_result
+            .ips
+            .into_iter()
+            .next()
             .and_then(|ip| ip.address.parse().ok())
             .unwrap_or(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
-        
+
         // Store interface
         let net_iface = NetworkInterface {
             id: Uuid::new_v4(),
@@ -327,25 +358,42 @@ impl NetworkManager {
             network_id: network.id,
             container_id: Some(Uuid::parse_str(&container_id).unwrap_or(Uuid::nil())),
             ip_address,
-            mac_address: first_interface.mac.unwrap_or_else(|| format!("02:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", 
-                rand::random::<u8>(), rand::random::<u8>(), rand::random::<u8>(), rand::random::<u8>(), rand::random::<u8>())),
+            mac_address: first_interface.mac.unwrap_or_else(|| {
+                format!(
+                    "02:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    rand::random::<u8>(),
+                    rand::random::<u8>(),
+                    rand::random::<u8>(),
+                    rand::random::<u8>(),
+                    rand::random::<u8>()
+                )
+            }),
             macvlan: false,
         };
-        
+
         // Store interface
-        self.interfaces.write().await.insert(first_interface.name.clone(), net_iface.clone());
-        
+        self.interfaces
+            .write()
+            .await
+            .insert(first_interface.name.clone(), net_iface.clone());
+
         // Update network
         let mut networks = self.networks.write().await;
         if let Some(net) = networks.get_mut(network_name) {
             net.containers.push(container_name.to_string());
         }
-        
+
         Ok(net_iface)
     }
-    
+
     /// Execute CNI ADD command
-    async fn cni_add(&self, cni_config: &CniNetworkConfig, container_id: &str, container_name: &str, netns_path: &str) -> Result<CniResult> {
+    async fn cni_add(
+        &self,
+        cni_config: &CniNetworkConfig,
+        container_id: &str,
+        container_name: &str,
+        netns_path: &str,
+    ) -> Result<CniResult> {
         // Build CNI args
         let args = CniRuntimeArgs {
             cni_version: cni_config.cni_version.clone(),
@@ -354,50 +402,64 @@ impl NetworkManager {
             cni_netns: netns_path.to_string(),
             cni_ifname: "eth0".to_string(),
             cni_args: None,
-            cni_path: Some(self.config.cni.plugin_dirs.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(":")),
+            cni_path: Some(
+                self.config
+                    .cni
+                    .plugin_dirs
+                    .iter()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(":"),
+            ),
         };
-        
+
         // Serialize network config
         let config_json = serde_json::to_string(cni_config)?;
-        
+
         // Execute first plugin (typically bridge)
         for plugin in &cni_config.plugins {
             let plugin_path = self.find_plugin(&plugin.type_)?;
-            
+
             let mut cmd = StdCommand::new(&plugin_path);
             cmd.env("CNI_VERSION", &args.cni_version)
-               .env("CNI_COMMAND", &args.cni_command)
-               .env("CNI_CONTAINERID", &args.cni_containerid)
-               .env("CNI_NETNS", &args.cni_netns)
-               .env("CNI_IFNAME", &args.cni_ifname)
-               .env("CNI_PATH", args.cni_path.as_deref().unwrap_or(""))
-               .stdin(std::process::Stdio::piped())
-               .stdout(std::process::Stdio::piped())
-               .stderr(std::process::Stdio::piped());
-            
+                .env("CNI_COMMAND", &args.cni_command)
+                .env("CNI_CONTAINERID", &args.cni_containerid)
+                .env("CNI_NETNS", &args.cni_netns)
+                .env("CNI_IFNAME", &args.cni_ifname)
+                .env("CNI_PATH", args.cni_path.as_deref().unwrap_or(""))
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
             let mut child = cmd.spawn()?;
             let mut stdin = child.stdin.take().unwrap();
             use std::io::Write;
             stdin.write_all(config_json.as_bytes())?;
             drop(stdin);
-            
+
             let output = child.wait_with_output()?;
-            
+
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 bail!("CNI plugin {} failed: {}", plugin.name, stderr);
             }
-            
+
             // Parse result
             let result: CniResult = serde_json::from_slice(&output.stdout)?;
             return Ok(result);
         }
-        
+
         bail!("No CNI plugins configured")
     }
-    
+
     /// Execute CNI DEL command
-    async fn cni_del(&self, cni_config: &CniNetworkConfig, container_id: &str, container_name: &str, netns_path: &str) -> Result<()> {
+    async fn cni_del(
+        &self,
+        cni_config: &CniNetworkConfig,
+        container_id: &str,
+        container_name: &str,
+        netns_path: &str,
+    ) -> Result<()> {
         let args = CniRuntimeArgs {
             cni_version: cni_config.cni_version.clone(),
             cni_command: "DEL".to_string(),
@@ -405,43 +467,51 @@ impl NetworkManager {
             cni_netns: netns_path.to_string(),
             cni_ifname: "eth0".to_string(),
             cni_args: None,
-            cni_path: Some(self.config.cni.plugin_dirs.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(":")),
+            cni_path: Some(
+                self.config
+                    .cni
+                    .plugin_dirs
+                    .iter()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(":"),
+            ),
         };
-        
+
         let config_json = serde_json::to_string(cni_config)?;
-        
+
         // Execute plugins in reverse order
         for plugin in cni_config.plugins.iter().rev() {
             let plugin_path = self.find_plugin(&plugin.type_)?;
-            
+
             let mut cmd = StdCommand::new(&plugin_path);
             cmd.env("CNI_VERSION", &args.cni_version)
-               .env("CNI_COMMAND", &args.cni_command)
-               .env("CNI_CONTAINERID", &args.cni_containerid)
-               .env("CNI_NETNS", &args.cni_netns)
-               .env("CNI_IFNAME", &args.cni_ifname)
-               .env("CNI_PATH", args.cni_path.as_deref().unwrap_or(""))
-               .stdin(std::process::Stdio::piped())
-               .stdout(std::process::Stdio::piped())
-               .stderr(std::process::Stdio::piped());
-            
+                .env("CNI_COMMAND", &args.cni_command)
+                .env("CNI_CONTAINERID", &args.cni_containerid)
+                .env("CNI_NETNS", &args.cni_netns)
+                .env("CNI_IFNAME", &args.cni_ifname)
+                .env("CNI_PATH", args.cni_path.as_deref().unwrap_or(""))
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
             let mut child = cmd.spawn()?;
             let mut stdin = child.stdin.take().unwrap();
             use std::io::Write;
             stdin.write_all(config_json.as_bytes())?;
             drop(stdin);
-            
+
             let output = child.wait_with_output()?;
-            
+
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 eprintln!("CNI plugin {} DEL failed: {}", plugin.name, stderr);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Find CNI plugin binary
     fn find_plugin(&self, plugin_type: &str) -> Result<PathBuf> {
         for dir in &self.config.cni.plugin_dirs {
@@ -450,7 +520,7 @@ impl NetworkManager {
                 return Ok(path);
             }
         }
-        
+
         // Try with CNI prefix
         for dir in &self.config.cni.plugin_dirs {
             let path = dir.join(format!("cni-{}", plugin_type));
@@ -458,24 +528,36 @@ impl NetworkManager {
                 return Ok(path);
             }
         }
-        
+
         bail!("CNI plugin not found: {}", plugin_type)
     }
-    
+
     /// Disconnect container from network
-    pub async fn disconnect_container(&self, network_name: &str, container_name: &str) -> Result<()> {
+    pub async fn disconnect_container(
+        &self,
+        network_name: &str,
+        container_name: &str,
+    ) -> Result<()> {
         // Get interface
         let interfaces = self.interfaces.read().await;
-        let interface = interfaces.values().find(|i| {
-            // Find interface for this container
-            i.name.contains(container_name)
-        }).cloned();
-        
+        let interface = interfaces
+            .values()
+            .find(|i| {
+                // Find interface for this container
+                i.name.contains(container_name)
+            })
+            .cloned();
+
         if let Some(interface) = interface {
             let network = self.get_network(network_name).await;
             if let Some(network) = network {
                 // Get CNI config
-                let cni_config = self.cni_cache.read().await.get(network_name).cloned()
+                let cni_config = self
+                    .cni_cache
+                    .read()
+                    .await
+                    .get(network_name)
+                    .cloned()
                     .unwrap_or_else(|| CniNetworkConfig {
                         cni_version: "0.4.0".to_string(),
                         name: network_name.to_string(),
@@ -491,16 +573,17 @@ impl NetworkManager {
                             ranges: None,
                         }),
                     });
-                
+
                 let container_id = Uuid::new_v4().to_string();
                 let netns_path = format!("/var/run/netns/{}", container_name);
-                
+
                 // Execute CNI DEL
-                self.cni_del(&cni_config, &container_id, container_name, &netns_path).await?;
-                
+                self.cni_del(&cni_config, &container_id, container_name, &netns_path)
+                    .await?;
+
                 // Remove interface
                 self.interfaces.write().await.remove(&interface.name);
-                
+
                 // Update network
                 let mut networks = self.networks.write().await;
                 if let Some(net) = networks.get_mut(network_name) {
@@ -508,16 +591,19 @@ impl NetworkManager {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get container network interface
     pub async fn get_container_interface(&self, container_name: &str) -> Option<NetworkInterface> {
         let interfaces = self.interfaces.read().await;
-        interfaces.values().find(|i| i.name.contains(container_name)).cloned()
+        interfaces
+            .values()
+            .find(|i| i.name.contains(container_name))
+            .cloned()
     }
-    
+
     /// List all interfaces
     pub async fn list_interfaces(&self) -> Vec<NetworkInterface> {
         self.interfaces.read().await.values().cloned().collect()
@@ -590,21 +676,21 @@ pub struct NetworkInterface {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_network_manager_creation() {
         let config = NetworkConfig::default();
         let manager = NetworkManager::new(config);
         assert!(manager.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_cni_config_default() {
         let config = CniConfig::default();
         assert!(!config.plugin_dirs.is_empty());
         assert!(!config.plugins.is_empty());
     }
-    
+
     #[test]
     fn test_cni_network_config_serialization() {
         let config = CniNetworkConfig {

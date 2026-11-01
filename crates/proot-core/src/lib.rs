@@ -1,35 +1,38 @@
 //! PRoot Core - Rust Implementation
-//! 
+//!
 //! A ptrace-based chroot, mount --bind, and binfmt_misc implementation
 //! without privilege/setup for Linux. Compatible with Termux Android 16+.
 
 pub mod arch;
-pub mod ptrace;
-pub mod syscall;
-pub mod path;
-pub mod tracee;
-pub mod extension;
 pub mod cli;
+pub mod compat;
+pub mod extension;
+pub mod path;
+pub mod ptrace;
 pub mod seccomp;
+pub mod syscall;
+pub mod tracee;
 pub mod tracee_state;
 pub mod vfs;
-pub mod compat;
 
-pub use arch::{Arch, get_arch, sysnum};
-pub use ptrace::{PtraceController, PtraceEvent};
-pub use syscall::{SyscallHandler, SyscallConfig};
-pub use path::{PathTranslator};
-pub use tracee::{Tracee, TraceeId, TraceeState, Registers, SyscallInfo, PathInfo, MountInfo, VfsContext, FdTable, FdEntry, RawSyscall};
+pub use arch::{get_arch, sysnum, Arch};
+pub use cli::{BindMount, ProotConfig};
 pub use extension::{Extension, ExtensionManager};
-pub use cli::{ProotConfig, BindMount};
+pub use path::PathTranslator;
+pub use ptrace::{PtraceController, PtraceEvent};
 pub use seccomp::SeccompFilter;
+pub use syscall::{SyscallConfig, SyscallHandler};
+pub use tracee::{
+    FdEntry, FdTable, MountInfo, PathInfo, RawSyscall, Registers, SyscallInfo, Tracee, TraceeId,
+    TraceeState, VfsContext,
+};
 pub use tracee_state::TraceeStateManager;
 pub use vfs::VfsManager;
 
 use anyhow::Result;
-use tokio::process::Command;
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::sync::Arc;
+use tokio::process::Command;
 
 /// Main PRoot engine
 #[derive(Clone)]
@@ -69,10 +72,12 @@ impl ProotEngine {
         self.seccomp_filter.lock().install()?;
 
         // Start ptrace loop
-        self.ptrace_ctrl.lock().run_loop(&mut self.syscall_handler.lock(), 
-                                   &mut self.path_translator.lock(),
-                                   &mut self.tracee_manager.lock(),
-                                   &mut self.vfs_manager.lock())
+        self.ptrace_ctrl.lock().run_loop(
+            &mut self.syscall_handler.lock(),
+            &mut self.path_translator.lock(),
+            &mut self.tracee_manager.lock(),
+            &mut self.vfs_manager.lock(),
+        )
     }
 
     pub async fn start(&mut self) -> Result<u32> {
@@ -84,30 +89,32 @@ impl ProotEngine {
         if self.config.command.len() > 1 {
             cmd.args(&self.config.command[1..]);
         }
-        
+
         // Set up environment
         for env in &self.config.env {
             if let Some((k, v)) = env.split_once('=') {
                 cmd.env(k, v);
             }
         }
-        
+
         // Set working directory
         if let Some(cwd) = &self.config.cwd {
             cmd.current_dir(cwd);
         }
-        
+
         // Set up bind mounts (would need to be done via ptrace)
         // For now, we'll just spawn the process
         let child = cmd.spawn()?;
-        let pid = child.id().ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
-        
+        let pid = child
+            .id()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
+
         // In a real implementation, we would ptrace the child process
         // and set up the chroot environment before it runs
-        
+
         Ok(pid)
     }
-    
+
     /// Execute a command in the foreground and wait for completion, returning exit code
     pub async fn execute(&mut self) -> Result<i32> {
         // Initialize seccomp filter
@@ -118,39 +125,49 @@ impl ProotEngine {
         if self.config.command.len() > 1 {
             cmd.args(&self.config.command[1..]);
         }
-        
+
         // Debug: print command
-        eprintln!("[DEBUG] Executing command: {:?}", self.config.command);
-        eprintln!("[DEBUG] CWD: {:?}", self.config.cwd);
-        eprintln!("[DEBUG] Env: {:?}", self.config.env);
-        
+        if self.config.verbose > 0 {
+            eprintln!("[DEBUG] Executing command: {:?}", self.config.command);
+            eprintln!("[DEBUG] CWD: {:?}", self.config.cwd);
+            eprintln!("[DEBUG] Env: {:?}", self.config.env);
+        }
+
         // Set up environment
         for env in &self.config.env {
             if let Some((k, v)) = env.split_once('=') {
                 cmd.env(k, v);
             }
         }
-        
+
         // Set working directory
         if let Some(cwd) = &self.config.cwd {
             cmd.current_dir(cwd);
         }
-        
+
         // For now, we'll just spawn the process and wait
         let mut child = cmd
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
             .stdin(std::process::Stdio::inherit())
             .spawn()?;
-        let pid = child.id().ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
-        eprintln!("[DEBUG] Spawned PID: {}", pid);
-        
+        let pid = child
+            .id()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
+        if self.config.verbose > 0 {
+            eprintln!("[DEBUG] Spawned PID: {}", pid);
+        }
+
         // Wait for the process to complete and get exit code
         let exit_status = child.wait().await?;
-        eprintln!("[DEBUG] Exit status: {:?}", exit_status);
+        if self.config.verbose > 0 {
+            eprintln!("[DEBUG] Exit status: {:?}", exit_status);
+        }
         let exit_code = exit_status.code().unwrap_or(-1);
-        eprintln!("[DEBUG] Exit code: {}", exit_code);
-        
+        if self.config.verbose > 0 {
+            eprintln!("[DEBUG] Exit code: {}", exit_code);
+        }
+
         Ok(exit_code)
     }
 
@@ -168,20 +185,20 @@ pub fn init() -> Result<ProotEngine> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_init() {
         let engine = init();
         assert!(engine.is_ok());
     }
-    
+
     #[test]
     fn test_proot_engine_new() {
         let config = ProotConfig::default();
         let engine = ProotEngine::new(config);
         assert!(engine.is_ok());
     }
-    
+
     #[test]
     fn test_proot_config_default() {
         let config = ProotConfig::default();
@@ -189,7 +206,7 @@ mod tests {
         assert!(config.bind.is_empty());
         assert!(config.env.is_empty());
     }
-    
+
     #[test]
     fn test_proot_config_custom() {
         let config = ProotConfig {

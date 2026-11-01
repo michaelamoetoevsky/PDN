@@ -3,11 +3,11 @@
 //! Provides seccomp profile management, AppArmor/SELinux integration,
 //! and security policy enforcement for containers.
 
-use std::path::{Path, PathBuf};
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use std::path::{Path, PathBuf};
 
 /// Security profile configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,7 +230,7 @@ impl SecurityHardeningManager {
             PathBuf::from("/etc/selinux/pn-next"),
         )
     }
-    
+
     /// Create a new SecurityHardeningManager with custom directory paths (useful for testing)
     pub fn with_custom_dirs(
         seccomp_dir: PathBuf,
@@ -261,26 +261,32 @@ impl SecurityHardeningManager {
 
     /// Apply security profile to container
     pub async fn apply_profile(&self, profile_name: &str, container_rootfs: &Path) -> Result<()> {
-        let profile = self.profiles.get(profile_name)
+        let profile = self
+            .profiles
+            .get(profile_name)
             .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", profile_name))?;
 
         // Apply seccomp profile
         if let Some(seccomp) = &profile.seccomp {
-            self.apply_seccomp_profile(seccomp, container_rootfs).await?;
+            self.apply_seccomp_profile(seccomp, container_rootfs)
+                .await?;
         }
 
         // Apply AppArmor profile
         if let Some(apparmor) = &profile.apparmor {
-            self.apply_apparmor_profile(apparmor, container_rootfs).await?;
+            self.apply_apparmor_profile(apparmor, container_rootfs)
+                .await?;
         }
 
         // Apply SELinux profile
         if let Some(selinux) = &profile.selinux {
-            self.apply_selinux_profile(selinux, container_rootfs).await?;
+            self.apply_selinux_profile(selinux, container_rootfs)
+                .await?;
         }
 
         // Apply capability configuration
-        self.apply_capabilities(&profile.capabilities, container_rootfs).await?;
+        self.apply_capabilities(&profile.capabilities, container_rootfs)
+            .await?;
 
         // Apply no_new_privileges
         if profile.no_new_privileges {
@@ -296,49 +302,69 @@ impl SecurityHardeningManager {
     }
 
     /// Apply seccomp profile
-    async fn apply_seccomp_profile(&self, profile: &SeccompProfile, _container_rootfs: &Path) -> Result<()> {
+    async fn apply_seccomp_profile(
+        &self,
+        profile: &SeccompProfile,
+        _container_rootfs: &Path,
+    ) -> Result<()> {
         // Generate seccomp JSON profile
         let profile_json = serde_json::to_string_pretty(profile)?;
-        
+
         // Save to seccomp directory
         let profile_path = self.seccomp_dir.join("default.json");
         fs::write(&profile_path, profile_json)?;
 
         // In a real implementation, this would load the seccomp profile into the kernel
         // using prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &filter) or similar
-        
+
         tracing::info!("Applied seccomp profile: {:?}", profile.default_action);
         Ok(())
     }
 
     /// Apply AppArmor profile
-    async fn apply_apparmor_profile(&self, profile: &AppArmorProfile, _container_rootfs: &Path) -> Result<()> {
+    async fn apply_apparmor_profile(
+        &self,
+        profile: &AppArmorProfile,
+        _container_rootfs: &Path,
+    ) -> Result<()> {
         // Save AppArmor profile
         let profile_path = self.apparmor_dir.join(&profile.profile_name);
         fs::write(&profile_path, &profile.profile_content)?;
 
         // Load AppArmor profile
         // In real implementation: apparmor_parser -r <profile>
-        
+
         tracing::info!("Applied AppArmor profile: {}", profile.profile_name);
         Ok(())
     }
 
     /// Apply SELinux profile
-    async fn apply_selinux_profile(&self, profile: &SelLinuxProfile, _container_rootfs: &Path) -> Result<()> {
+    async fn apply_selinux_profile(
+        &self,
+        profile: &SelLinuxProfile,
+        _container_rootfs: &Path,
+    ) -> Result<()> {
         // Set SELinux context for container
         // In real implementation: setcon or similar
-        
+
         tracing::info!("Applied SELinux context: {}", profile.context);
         Ok(())
     }
 
     /// Apply capabilities
-    async fn apply_capabilities(&self, caps: &CapabilityConfig, _container_rootfs: &Path) -> Result<()> {
+    async fn apply_capabilities(
+        &self,
+        caps: &CapabilityConfig,
+        _container_rootfs: &Path,
+    ) -> Result<()> {
         // Apply capability configuration using libcap or similar
         // This would typically use capset() or similar syscalls
-        
-        tracing::info!("Applied capabilities: drop={:?}, add={:?}", caps.drop, caps.add);
+
+        tracing::info!(
+            "Applied capabilities: drop={:?}, add={:?}",
+            caps.drop,
+            caps.add
+        );
         Ok(())
     }
 
@@ -346,7 +372,7 @@ impl SecurityHardeningManager {
     async fn apply_no_new_privileges(&self, _container_rootfs: &Path) -> Result<()> {
         // Set PR_SET_NO_NEW_PRIVS
         // unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-        
+
         tracing::info!("Applied no_new_privileges");
         Ok(())
     }
@@ -361,7 +387,7 @@ impl SecurityHardeningManager {
         //     nix::mount::MsFlags::MS_BIND | nix::mount::MsFlags::MS_RDONLY | nix::mount::MsFlags::MS_REMOUNT,
         //     None::<&str>
         // )?;
-        
+
         tracing::info!("Applied read-only rootfs");
         Ok(())
     }
@@ -386,7 +412,12 @@ impl SecurityHardeningManager {
     pub fn generate_unconfined_seccomp_profile() -> SeccompProfile {
         SeccompProfile {
             default_action: SeccompAction::Allow,
-            architectures: vec![SeccompArch::X86_64, SeccompArch::Aarch64, SeccompArch::X86, SeccompArch::Arm],
+            architectures: vec![
+                SeccompArch::X86_64,
+                SeccompArch::Aarch64,
+                SeccompArch::X86,
+                SeccompArch::Arm,
+            ],
             syscalls: vec![],
             listener_path: None,
             listener_metadata: None,
@@ -758,38 +789,36 @@ fn get_default_seccomp_rules() -> Vec<SeccompSyscallRule> {
 
 /// Get restricted seccomp rules (minimal syscalls only)
 fn get_restricted_seccomp_rules() -> Vec<SeccompSyscallRule> {
-    vec![
-        SeccompSyscallRule {
-            names: vec![
-                "read".to_string(),
-                "write".to_string(),
-                "open".to_string(),
-                "close".to_string(),
-                "exit".to_string(),
-                "exit_group".to_string(),
-                "brk".to_string(),
-                "mmap".to_string(),
-                "munmap".to_string(),
-                "rt_sigaction".to_string(),
-                "rt_sigreturn".to_string(),
-                "rt_sigprocmask".to_string(),
-                "futex".to_string(),
-                "getpid".to_string(),
-                "getuid".to_string(),
-                "getgid".to_string(),
-                "geteuid".to_string(),
-                "getegid".to_string(),
-            ],
-            action: SeccompAction::Allow,
-            args: None,
-        },
-    ]
+    vec![SeccompSyscallRule {
+        names: vec![
+            "read".to_string(),
+            "write".to_string(),
+            "open".to_string(),
+            "close".to_string(),
+            "exit".to_string(),
+            "exit_group".to_string(),
+            "brk".to_string(),
+            "mmap".to_string(),
+            "munmap".to_string(),
+            "rt_sigaction".to_string(),
+            "rt_sigreturn".to_string(),
+            "rt_sigprocmask".to_string(),
+            "futex".to_string(),
+            "getpid".to_string(),
+            "getuid".to_string(),
+            "getgid".to_string(),
+            "geteuid".to_string(),
+            "getegid".to_string(),
+        ],
+        action: SeccompAction::Allow,
+        args: None,
+    }]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_security_profile_default() {
         let config = SecurityProfileConfig::default();
@@ -801,7 +830,7 @@ mod tests {
         assert!(!config.read_only_rootfs);
         assert!(!config.user_namespace);
     }
-    
+
     #[test]
     fn test_security_profile_custom() {
         let config = SecurityProfileConfig {
@@ -814,7 +843,7 @@ mod tests {
         assert_eq!(config.profile_type, SecurityProfileType::Restricted);
         assert!(!config.enabled);
     }
-    
+
     #[test]
     fn test_security_profile_type_serialization() {
         let types = vec![
@@ -829,7 +858,7 @@ mod tests {
             assert_eq!(t, parsed);
         }
     }
-    
+
     #[test]
     fn test_seccomp_profile_default() {
         let profile = SeccompProfile::default();
@@ -837,21 +866,21 @@ mod tests {
         assert!(!profile.syscalls.is_empty());
         assert_eq!(profile.architectures.len(), 4);
     }
-    
+
     #[test]
     fn test_seccomp_profile_restricted() {
         let profile = SecurityHardeningManager::generate_restricted_seccomp_profile();
         assert_eq!(profile.default_action, SeccompAction::Kill);
         assert_eq!(profile.architectures.len(), 2);
     }
-    
+
     #[test]
     fn test_seccomp_profile_unconfined() {
         let profile = SecurityHardeningManager::generate_unconfined_seccomp_profile();
         assert_eq!(profile.default_action, SeccompAction::Allow);
         assert!(profile.syscalls.is_empty());
     }
-    
+
     #[test]
     fn test_seccomp_action_serialization() {
         let actions = vec![
@@ -869,7 +898,7 @@ mod tests {
             assert_eq!(a, parsed);
         }
     }
-    
+
     #[test]
     fn test_capability_config_default() {
         let caps = CapabilityConfig::default();
@@ -878,7 +907,7 @@ mod tests {
         assert!(caps.drop.contains(&"CAP_SYS_ADMIN".to_string()));
         assert!(caps.drop.contains(&"CAP_SYS_MODULE".to_string()));
     }
-    
+
     #[test]
     fn test_capability_config_custom() {
         let caps = CapabilityConfig {
@@ -889,7 +918,7 @@ mod tests {
         assert_eq!(caps.add, vec!["CAP_NET_ADMIN".to_string()]);
         assert!(caps.drop.is_empty());
     }
-    
+
     #[test]
     fn test_seccomp_syscall_rule_serialization() {
         let rule = SeccompSyscallRule {
@@ -907,7 +936,7 @@ mod tests {
         assert_eq!(rule.names, parsed.names);
         assert_eq!(rule.action, parsed.action);
     }
-    
+
     #[test]
     fn test_security_hardening_manager_creation() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -918,7 +947,7 @@ mod tests {
         );
         assert!(manager.is_ok());
     }
-    
+
     #[test]
     fn test_register_and_get_profile() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -926,13 +955,14 @@ mod tests {
             temp_dir.path().join("seccomp"),
             temp_dir.path().join("apparmor"),
             temp_dir.path().join("selinux"),
-        ).unwrap();
+        )
+        .unwrap();
         let config = SecurityProfileConfig::default();
         manager.register_profile("test".to_string(), config.clone());
         let retrieved = manager.get_profile("test").unwrap();
         assert_eq!(retrieved.name, config.name);
     }
-    
+
     #[test]
     fn test_get_nonexistent_profile() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -940,7 +970,8 @@ mod tests {
             temp_dir.path().join("seccomp"),
             temp_dir.path().join("apparmor"),
             temp_dir.path().join("selinux"),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(manager.get_profile("nonexistent").is_none());
     }
 }

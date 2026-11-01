@@ -1,14 +1,14 @@
 //! Health monitoring for PN Gateway
 
-use super::config::{HealthConfig, HealthCheck, HealthCheckType, RecoveryAction};
+use super::config::{HealthCheck, HealthCheckType, HealthConfig, RecoveryAction};
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use tokio::time::interval;
-use tracing::{warn, error, info, debug};
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+use tokio::time::interval;
+use tracing::{debug, error, info, warn};
 
 /// Health check handler type identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,20 +24,39 @@ pub enum HealthCheckHandlerType {
 pub struct HealthMonitor {
     config: HealthConfig,
     status: Arc<RwLock<HealthStatus>>,
-    check_handlers: Arc<RwLock<HashMap<HealthCheckHandlerType, Box<dyn HealthCheckHandler + Send + Sync>>>>,
+    check_handlers:
+        Arc<RwLock<HashMap<HealthCheckHandlerType, Box<dyn HealthCheckHandler + Send + Sync>>>>,
     check_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
 }
 
 impl HealthMonitor {
     pub fn new(config: HealthConfig) -> Self {
-        let mut handlers: HashMap<HealthCheckHandlerType, Box<dyn HealthCheckHandler + Send + Sync>> = HashMap::new();
-        
-        handlers.insert(HealthCheckHandlerType::Process, Box::new(ProcessCheckHandler));
-        handlers.insert(HealthCheckHandlerType::DiskSpace, Box::new(DiskSpaceCheckHandler));
-        handlers.insert(HealthCheckHandlerType::MemoryUsage, Box::new(MemoryUsageCheckHandler));
-        handlers.insert(HealthCheckHandlerType::CpuUsage, Box::new(CpuUsageCheckHandler));
-        handlers.insert(HealthCheckHandlerType::NetworkConnectivity, Box::new(NetworkConnectivityCheckHandler));
-        
+        let mut handlers: HashMap<
+            HealthCheckHandlerType,
+            Box<dyn HealthCheckHandler + Send + Sync>,
+        > = HashMap::new();
+
+        handlers.insert(
+            HealthCheckHandlerType::Process,
+            Box::new(ProcessCheckHandler),
+        );
+        handlers.insert(
+            HealthCheckHandlerType::DiskSpace,
+            Box::new(DiskSpaceCheckHandler),
+        );
+        handlers.insert(
+            HealthCheckHandlerType::MemoryUsage,
+            Box::new(MemoryUsageCheckHandler),
+        );
+        handlers.insert(
+            HealthCheckHandlerType::CpuUsage,
+            Box::new(CpuUsageCheckHandler),
+        );
+        handlers.insert(
+            HealthCheckHandlerType::NetworkConnectivity,
+            Box::new(NetworkConnectivityCheckHandler),
+        );
+
         Self {
             config,
             status: Arc::new(RwLock::new(HealthStatus::default())),
@@ -45,12 +64,12 @@ impl HealthMonitor {
             check_tasks: HashMap::new(),
         }
     }
-    
+
     pub async fn start(&mut self) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
-        
+
         for check in &self.config.checks {
             let check_name = check.name.clone();
             let check_interval = check.interval;
@@ -59,62 +78,60 @@ impl HealthMonitor {
             let target = check.target.clone();
             let status = self.status.clone();
             let handlers = self.check_handlers.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let mut interval_timer = interval(check_interval);
-                
+
                 loop {
                     interval_timer.tick().await;
-                    
+
                     let start = Instant::now();
-                    
+
                     // Run check with timeout
                     let result = tokio::time::timeout(timeout, async {
                         let handlers = handlers.read().await;
                         if let Some(handler) = handlers.get(&map_check_type(&check_type)) {
                             handler.check(&target)
                         } else {
-                            Err(anyhow::anyhow!("No handler for check type: {:?}", check_type))
+                            Err(anyhow::anyhow!(
+                                "No handler for check type: {:?}",
+                                check_type
+                            ))
                         }
-                    }).await;
-                    
+                    })
+                    .await;
+
                     let duration = start.elapsed();
-                    
+
                     let result = match result {
-                        Ok(Ok(message)) => {
-                            HealthCheckResult {
-                                check_name: check_name.clone(),
-                                status: HealthCheckStatus::Healthy,
-                                message,
-                                duration,
-                                timestamp: Utc::now(),
-                            }
-                        }
-                        Ok(Err(e)) => {
-                            HealthCheckResult {
-                                check_name: check_name.clone(),
-                                status: HealthCheckStatus::Unhealthy,
-                                message: e.to_string(),
-                                duration,
-                                timestamp: Utc::now(),
-                            }
-                        }
-                        Err(_) => {
-                            HealthCheckResult {
-                                check_name: check_name.clone(),
-                                status: HealthCheckStatus::Timeout,
-                                message: format!("Check timed out after {:?}", timeout),
-                                duration,
-                                timestamp: Utc::now(),
-                            }
-                        }
+                        Ok(Ok(message)) => HealthCheckResult {
+                            check_name: check_name.clone(),
+                            status: HealthCheckStatus::Healthy,
+                            message,
+                            duration,
+                            timestamp: Utc::now(),
+                        },
+                        Ok(Err(e)) => HealthCheckResult {
+                            check_name: check_name.clone(),
+                            status: HealthCheckStatus::Unhealthy,
+                            message: e.to_string(),
+                            duration,
+                            timestamp: Utc::now(),
+                        },
+                        Err(_) => HealthCheckResult {
+                            check_name: check_name.clone(),
+                            status: HealthCheckStatus::Timeout,
+                            message: format!("Check timed out after {:?}", timeout),
+                            duration,
+                            timestamp: Utc::now(),
+                        },
                     };
-                    
+
                     // Update status
                     let mut status = status.write().await;
                     status.checks.insert(check_name.clone(), result);
                     status.update_overall();
-                    
+
                     // Check if recovery actions needed
                     if !status.is_healthy() {
                         // Trigger recovery actions
@@ -122,42 +139,46 @@ impl HealthMonitor {
                     }
                 }
             });
-            
+
             // Store task handle
             // In a real implementation, we'd store these handles
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn stop(&mut self) -> Result<()> {
         for (_, handle) in self.check_tasks.drain() {
             handle.abort();
         }
         Ok(())
     }
-    
+
     pub async fn is_healthy(&self) -> bool {
         self.status.read().await.is_healthy()
     }
-    
+
     pub async fn get_status(&self) -> HealthStatus {
         self.status.read().await.clone()
     }
-    
+
     pub async fn run_check(&self, check_name: &str) -> Result<HealthCheckResult> {
-        let check = self.config.checks.iter()
+        let check = self
+            .config
+            .checks
+            .iter()
             .find(|c| c.name == check_name)
             .ok_or_else(|| anyhow::anyhow!("Check not found: {}", check_name))?;
-        
+
         let handlers = self.check_handlers.read().await;
-        let handler = handlers.get(&map_check_type(&check.check_type))
+        let handler = handlers
+            .get(&map_check_type(&check.check_type))
             .ok_or_else(|| anyhow::anyhow!("No handler for check type: {:?}", check.check_type))?;
-        
+
         let start = Instant::now();
         let result = handler.check(&check.target);
         let duration = start.elapsed();
-        
+
         match result {
             Ok(result) => Ok(HealthCheckResult {
                 check_name: check_name.to_string(),
@@ -172,7 +193,7 @@ impl HealthMonitor {
                 message: e.to_string(),
                 duration,
                 timestamp: Utc::now(),
-            })
+            }),
         }
     }
 }
@@ -197,10 +218,8 @@ struct ProcessCheckHandler;
 impl HealthCheckHandler for ProcessCheckHandler {
     fn check(&self, target: &str) -> anyhow::Result<String> {
         // Check if process is running
-        let output = std::process::Command::new("pgrep")
-            .arg(target)
-            .output()?;
-        
+        let output = std::process::Command::new("pgrep").arg(target).output()?;
+
         if output.status.success() && !output.stdout.is_empty() {
             Ok(format!("Process '{}' is running", target))
         } else {
@@ -247,15 +266,15 @@ impl HealthCheckHandler for NetworkConnectivityCheckHandler {
         // Simple ping or TCP connect test
         use std::net::TcpStream;
         use std::time::Duration;
-        
+
         let parts: Vec<&str> = target.split(':').collect();
         if parts.len() == 2 {
             let host = parts[0];
             let port: u16 = parts[1].parse()?;
-            
+
             match std::net::TcpStream::connect_timeout(
                 &format!("{}:{}", host, port).parse()?,
-                std::time::Duration::from_secs(5)
+                std::time::Duration::from_secs(5),
             ) {
                 Ok(_) => Ok(format!("Network connectivity to {}:{} OK", host, port)),
                 Err(e) => Err(anyhow::anyhow!("Connection failed: {}", e)),
@@ -276,13 +295,23 @@ pub struct HealthStatus {
 
 impl HealthStatus {
     pub fn is_healthy(&self) -> bool {
-        !self.checks.is_empty() && self.checks.values().all(|c| c.status == HealthCheckStatus::Healthy)
+        !self.checks.is_empty()
+            && self
+                .checks
+                .values()
+                .all(|c| c.status == HealthCheckStatus::Healthy)
     }
-    
+
     fn update_overall(&mut self) {
-        let has_unhealthy = self.checks.values().any(|c| c.status == HealthCheckStatus::Unhealthy);
-        let has_timeout = self.checks.values().any(|c| c.status == HealthCheckStatus::Timeout);
-        
+        let has_unhealthy = self
+            .checks
+            .values()
+            .any(|c| c.status == HealthCheckStatus::Unhealthy);
+        let has_timeout = self
+            .checks
+            .values()
+            .any(|c| c.status == HealthCheckStatus::Timeout);
+
         self.overall_status = if has_unhealthy {
             OverallHealthStatus::Unhealthy
         } else if has_timeout {
@@ -334,7 +363,7 @@ pub struct HealthCheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_health_monitor_creation() {
         let config = crate::config::HealthConfig::default();

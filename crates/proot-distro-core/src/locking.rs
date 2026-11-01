@@ -1,10 +1,10 @@
 //! Locking mechanism for PRoot Distro
 
-use std::path::{Path, PathBuf};
+use anyhow::Result;
 use std::fs;
 use std::os::unix::io::AsRawFd;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use anyhow::Result;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -19,11 +19,13 @@ impl LockManager {
             locks: std::collections::HashMap::new(),
         })
     }
-    
+
     pub fn acquire(&mut self, name: &str) -> Result<()> {
-        let lock = self.locks.entry(name.to_string())
+        let lock = self
+            .locks
+            .entry(name.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())));
-        
+
         // Try to acquire lock with timeout
         let mut guard = lock.try_lock();
         if guard.is_err() {
@@ -36,18 +38,20 @@ impl LockManager {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
-        
+
         Ok(())
     }
-    
+
     pub fn release(&mut self, name: &str) {
         self.locks.remove(name);
     }
-    
+
     pub fn try_acquire(&mut self, name: &str, timeout: std::time::Duration) -> bool {
-        let lock = self.locks.entry(name.to_string())
+        let lock = self
+            .locks
+            .entry(name.to_string())
             .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())));
-        
+
         let start = std::time::Instant::now();
         while start.elapsed() < timeout {
             if let Ok(_) = self.locks.get(name).unwrap().try_lock() {
@@ -72,32 +76,32 @@ impl FileLock {
             file: None,
         }
     }
-    
+
     pub fn lock(&mut self) -> Result<()> {
         use std::fs::OpenOptions;
         use std::os::unix::fs::FileExt;
-        
+
         let file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&self.path)?;
-        
+
         // Use flock for locking
         unsafe {
             let result = libc::flock(
                 self.file.as_ref().map(|f| f.as_raw_fd()).unwrap_or(0),
-                libc::LOCK_EX | libc::LOCK_NB
+                libc::LOCK_EX | libc::LOCK_NB,
             );
-            
+
             if result != 0 {
                 return Err(anyhow::anyhow!("Failed to acquire lock"));
             }
         }
-        
+
         self.file = Some(self.file.take().unwrap());
         Ok(())
     }
-    
+
     pub fn unlock(&mut self) -> Result<()> {
         if let Some(file) = self.file.take() {
             unsafe {
@@ -128,42 +132,48 @@ impl ContainerLock {
             .join(".pn-next")
             .join("locks")
             .join(format!("{}.lock", name));
-        
+
         Self {
             lock_file,
             file: None,
             exclusive,
         }
     }
-    
+
     pub fn acquire(&mut self) -> Result<()> {
         use std::fs::OpenOptions;
-        
+
         fs::create_dir_all(self.lock_file.parent().unwrap())?;
-        
+
         let file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .open(&self.lock_file)?;
-        
+
         // Try to acquire lock
         let result = unsafe {
             if self.exclusive {
-                libc::flock(self.file.as_ref().unwrap().as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
+                libc::flock(
+                    self.file.as_ref().unwrap().as_raw_fd(),
+                    libc::LOCK_EX | libc::LOCK_NB,
+                )
             } else {
-                libc::flock(self.file.as_ref().unwrap().as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB)
+                libc::flock(
+                    self.file.as_ref().unwrap().as_raw_fd(),
+                    libc::LOCK_SH | libc::LOCK_NB,
+                )
             }
         };
-        
+
         if result != 0 {
             return Err(anyhow::anyhow!("Failed to acquire lock"));
         }
-        
+
         self.file = Some(file);
         Ok(())
     }
-    
+
     pub fn release(&mut self) -> Result<()> {
         if let Some(file) = self.file.take() {
             unsafe {

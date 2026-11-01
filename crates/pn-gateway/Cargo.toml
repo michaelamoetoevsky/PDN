@@ -1,10 +1,10 @@
 [package]
 name = "pn-gateway"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "PN Gateway - Bridge layer between PRoot, PRoot-distro, and proot-compat"
-license = "GPL-2.0-or-later"
-repository = "https://github.com/hermes-agent/PDN"
+license.workspace = true
+repository.workspace = true
 
 [features]
 default = []

@@ -1,7 +1,7 @@
 //! Performance benchmarks for pn-next
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use pn_next::{RuntimeManager, ContainerConfig, Resources, SecurityProfile};
+use pn_next::{ContainerConfig, Resources, RuntimeManager, SecurityProfile};
 use std::time::Duration;
 
 fn bench_sandbox_creation(c: &mut Criterion) {
@@ -14,11 +14,14 @@ fn bench_sandbox_creation(c: &mut Criterion) {
 
     group.bench_function("create_sandbox", |b| {
         b.to_async(&rt).iter(|| async {
-            let sandbox = runtime.create_sandbox(black_box(pn_next::SandboxConfig {
-                hostname: "bench-sandbox".to_string(),
-                network: "bridge".to_string(),
-                ..Default::default()
-            })).await.unwrap();
+            let sandbox = runtime
+                .create_sandbox(black_box(pn_next::SandboxConfig {
+                    hostname: "bench-sandbox".to_string(),
+                    network: "bridge".to_string(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
             black_box(sandbox);
         });
     });
@@ -36,27 +39,33 @@ fn bench_container_creation(c: &mut Criterion) {
 
     group.bench_function("create_container", |b| {
         b.to_async(&rt).iter(|| async {
-            let sandbox = runtime.create_sandbox(pn_next::SandboxConfig {
-                hostname: "bench-sandbox".to_string(),
-                network: "bridge".to_string(),
-                ..Default::default()
-            }).await.unwrap();
-
-            let container = runtime.create_container(ContainerConfig {
-                sandbox_id: sandbox.id,
-                image: "docker.io/library/alpine:latest".to_string(),
-                config: Some(ContainerConfigInner {
-                    hostname: "bench-container".to_string(),
-                    working_dir: "/root".to_string(),
-                    resources: Some(Resources {
-                        memory_limit: "512M".to_string(),
-                        cpu_limit: "1.0".to_string(),
-                        pids_limit: 50,
-                    }),
-                    security_profile: SecurityProfile::Default,
+            let sandbox = runtime
+                .create_sandbox(pn_next::SandboxConfig {
+                    hostname: "bench-sandbox".to_string(),
+                    network: "bridge".to_string(),
                     ..Default::default()
-                }),
-            }).await.unwrap();
+                })
+                .await
+                .unwrap();
+
+            let container = runtime
+                .create_container(ContainerConfig {
+                    sandbox_id: sandbox.id,
+                    image: "docker.io/library/alpine:latest".to_string(),
+                    config: Some(ContainerConfigInner {
+                        hostname: "bench-container".to_string(),
+                        working_dir: "/root".to_string(),
+                        resources: Some(Resources {
+                            memory_limit: "512M".to_string(),
+                            cpu_limit: "1.0".to_string(),
+                            pids_limit: 50,
+                        }),
+                        security_profile: SecurityProfile::Default,
+                        ..Default::default()
+                    }),
+                })
+                .await
+                .unwrap();
             black_box(container);
         });
     });
@@ -68,27 +77,31 @@ fn bench_exec_throughput(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let runtime = rt.block_on(RuntimeManager::new()).unwrap();
 
-    let sandbox = rt.block_on(runtime.create_sandbox(pn_next::SandboxConfig {
-        hostname: "bench-sandbox".to_string(),
-        network: "bridge".to_string(),
-        ..Default::default()
-    })).unwrap();
-
-    let container = rt.block_on(runtime.create_container(ContainerConfig {
-        sandbox_id: sandbox.id,
-        image: "docker.io/library/alpine:latest".to_string(),
-        config: Some(ContainerConfigInner {
-            hostname: "bench-container".to_string(),
-            working_dir: "/root".to_string(),
-            resources: Some(Resources {
-                memory_limit: "512M".to_string(),
-                cpu_limit: "1.0".to_string(),
-                pids_limit: 50,
-            }),
-            security_profile: SecurityProfile::Default,
+    let sandbox = rt
+        .block_on(runtime.create_sandbox(pn_next::SandboxConfig {
+            hostname: "bench-sandbox".to_string(),
+            network: "bridge".to_string(),
             ..Default::default()
-        }),
-    })).unwrap();
+        }))
+        .unwrap();
+
+    let container = rt
+        .block_on(runtime.create_container(ContainerConfig {
+            sandbox_id: sandbox.id,
+            image: "docker.io/library/alpine:latest".to_string(),
+            config: Some(ContainerConfigInner {
+                hostname: "bench-container".to_string(),
+                working_dir: "/root".to_string(),
+                resources: Some(Resources {
+                    memory_limit: "512M".to_string(),
+                    cpu_limit: "1.0".to_string(),
+                    pids_limit: 50,
+                }),
+                security_profile: SecurityProfile::Default,
+                ..Default::default()
+            }),
+        }))
+        .unwrap();
 
     rt.block_on(runtime.start_container(&container.id)).unwrap();
 
@@ -105,11 +118,16 @@ fn bench_exec_throughput(c: &mut Criterion) {
                     let runtime = runtime.clone();
                     let container_id = container.id.clone();
                     handles.push(tokio::spawn(async move {
-                        runtime.exec(container_id, pn_next::ExecConfig {
-                            command: vec!["echo".to_string(), "hello".to_string()],
-                            tty: false,
-                            ..Default::default()
-                        }).await
+                        runtime
+                            .exec(
+                                container_id,
+                                pn_next::ExecConfig {
+                                    command: vec!["echo".to_string(), "hello".to_string()],
+                                    tty: false,
+                                    ..Default::default()
+                                },
+                            )
+                            .await
                     }));
                 }
                 for handle in handles {
@@ -123,7 +141,7 @@ fn bench_exec_throughput(c: &mut Criterion) {
 }
 
 fn bench_guardrails_evaluation(c: &mut Criterion) {
-    use pn_gateway::{GuardrailsEngine, GuardrailsConfig, ResourceRequest};
+    use pn_gateway::{GuardrailsConfig, GuardrailsEngine, ResourceRequest};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let guardrails = GuardrailsEngine::new(GuardrailsConfig::default()).unwrap();
@@ -149,7 +167,7 @@ fn bench_guardrails_evaluation(c: &mut Criterion) {
 }
 
 fn bench_fail_safe_circuit_breaker(c: &mut Criterion) {
-    use pn_gateway::{FailSafeManager, FailSafeConfig};
+    use pn_gateway::{FailSafeConfig, FailSafeManager};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let fail_safe = FailSafeManager::new(FailSafeConfig::default()).unwrap();
@@ -160,9 +178,11 @@ fn bench_fail_safe_circuit_breaker(c: &mut Criterion) {
 
     group.bench_function("execute_with_circuit_breaker", |b| {
         b.to_async(&rt).iter(|| async {
-            let result = fail_safe.execute(black_box("test-operation"), || async {
-                Ok::<_, anyhow::Error>("success".to_string())
-            }).await;
+            let result = fail_safe
+                .execute(black_box("test-operation"), || async {
+                    Ok::<_, anyhow::Error>("success".to_string())
+                })
+                .await;
             black_box(result);
         });
     });
@@ -171,7 +191,7 @@ fn bench_fail_safe_circuit_breaker(c: &mut Criterion) {
 }
 
 fn bench_seccomp_filter_generation(c: &mut Criterion) {
-    use proot_compat::security::{SecurityHardeningManager, SeccompProfile};
+    use proot_compat::security::{SeccompProfile, SecurityHardeningManager};
 
     let mut group = c.benchmark_group("seccomp_filter_generation");
     group.measurement_time(Duration::from_secs(10));
@@ -195,7 +215,7 @@ fn bench_seccomp_filter_generation(c: &mut Criterion) {
 }
 
 fn bench_path_translation(c: &mut Criterion) {
-    use proot_compat::path_translation::{PathTranslator, PathTranslationConfig};
+    use proot_compat::path_translation::{PathTranslationConfig, PathTranslator};
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 

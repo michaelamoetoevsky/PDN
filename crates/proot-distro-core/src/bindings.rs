@@ -1,8 +1,8 @@
 //! Bindings management for PRoot Distro
 
-use std::path::PathBuf;
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Bindings manager
 pub struct BindingManager {
@@ -13,20 +13,20 @@ impl BindingManager {
     pub fn new() -> Self {
         Self { binds: Vec::new() }
     }
-    
+
     pub fn add_bind(&mut self, bind: BindMount) {
         self.binds.push(bind);
     }
-    
+
     pub fn remove_bind(&mut self, target: &str) -> bool {
         self.binds.retain(|b| b.target != target);
         true
     }
-    
+
     pub fn get_binds(&self) -> &[BindMount] {
         &self.binds
     }
-    
+
     pub fn clear(&mut self) {
         self.binds.clear();
     }

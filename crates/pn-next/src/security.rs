@@ -1,12 +1,12 @@
 //! Security management for PN Next
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
-use serde_json;
 
 /// Security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,47 +66,50 @@ impl SecurityManager {
             capabilities: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
     }
-    
+
     pub async fn initialize(&self) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn shutdown(&self) -> Result<()> {
         Ok(())
     }
-    
+
     pub async fn validate_container_creation(&self, name: &str, args: &[String]) -> Result<()> {
         // Validate container name
         if name.is_empty() {
             return Err(anyhow::anyhow!("Container name cannot be empty"));
         }
-        
+
         // Check for privileged access
         for arg in args {
             if arg.contains("--privileged") || arg.contains("--cap-add") {
                 // Check if privileged access is allowed
             }
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn validate_container_config(&self, _config: &serde_json::Value) -> Result<()> {
         // Validate security config
         Ok(())
     }
-    
+
     pub async fn apply_security_profile(&self, container_name: &str, profile: &str) -> Result<()> {
         // Apply seccomp, AppArmor, SELinux profiles
         Ok(())
     }
-    
+
     pub async fn get_capabilities(&self, container_name: &str) -> Option<Vec<String>> {
         self.capabilities.read().await.get(container_name).cloned()
     }
-    
+
     pub async fn set_capabilities(&self, container_name: &str, capabilities: Vec<String>) {
-        self.capabilities.write().await.insert(container_name.to_string(), capabilities);
+        self.capabilities
+            .write()
+            .await
+            .insert(container_name.to_string(), capabilities);
     }
 }
 

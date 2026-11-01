@@ -3,7 +3,18 @@
 ## Project Vision
 Build PDN (PRoot Distro Next) - a next-generation container platform for Termux/Android that unifies PRoot, PRoot-distro, and proot-compat into a single, cohesive Rust codebase with a gateway layer providing fail-safe mechanisms, guardrails, health monitoring, and metrics.
 
-## Current Status: Phase 3 Complete ✅, Phase 4 Complete ✅, Phase 5 Complete ✅ (except Termux APK)
+## Current Verified Status (2026-11-01)
+
+- **Version Alignment**: Workspace centralized to `0.1.7` in root `Cargo.toml`.
+- **Local Binaries**: `podnext 0.1.7` and `podnext-daemon 0.1.7` built and verified (`target/release/`).
+- **Code Quality Gates**: `cargo fmt --all -- --check` PASS (0 diffs), `git diff --check` PASS (0 whitespace errors).
+- **Test Evidence**: 93 passed in workspace test suite; 49 passed in `pn-next` CRI feature test suite.
+- **IPC Baseline**: Daemon Unix socket answered `ping` and `list` in live smoke test.
+- **Packaging**: `termux-package/recipe/build.sh` aligned to `TERMUX_PKG_VERSION="0.1.7"`.
+- **Remote Release Reality**: Public GitHub releases are at `v0.1.5`. Local tag `v0.1.7` exists locally; remote publication is pending.
+- **Runtime Differentiation**: Unit test & compilation verified for v2.0/v2.1 modules; live multi-node clustering and kubelet gRPC runtime are unverified in production.
+
+## Status History & Milestones Overview
 
 ### Phase 1: Core Implementation (COMPLETED)
 - [x] proot-core: Core PRoot implementation (ptrace, syscall, VFS, tracee)
@@ -159,7 +170,10 @@ Note: All modules compile successfully. Workspace compiles cleanly.
 | M4: Android cross-compile verified | 2026-11-12 | ✅ DONE |
 | M5: Termux package build | 2026-11-19 | ❌ BLOCKED (PR #33069 closed - termux-packages requires established community) |
 | M5b: One-line installer | 2026-11-19 | ✅ COMPLETE (install.sh + install-short.sh, auto-published to releases) |
+| M5c: Community adoption | 2026-11-19 | 🔄 IN PROGRESS (COMMUNITY_STRATEGY.md created, Discord/Discussions setup needed) |
 | M6: v1.0.0 release | 2026-11-26 | ✅ DONE |
+| M6b: v0.1.3 release | 2026-11-19 | ✅ DONE (local build, binaries uploaded) |
+| M6c: v0.1.4 release | 2026-11-19 | ✅ DONE (local build, binaries uploaded) |
 || M7: Service Supervisor (v2.0) | 2027-Q1 | ✅ IMPLEMENTED (all v2.0 criteria met) |
 || M8: Kubernetes CRI / Web UI (v2.1) | 2027-Q2 | ✅ IMPLEMENTED (all 6 modules compile, tests pass) |
 

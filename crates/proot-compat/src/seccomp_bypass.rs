@@ -30,7 +30,7 @@ pub fn configure_seccomp_filter() -> Result<(), String> {
     // On Android, PR_SET_NO_NEW_PRIVS might cause SIGSYS on some kernels.
     // We skip this call and rely on PRoot's built-in seccomp handling.
     // The Android syscalls are documented for reference.
-    
+
     #[cfg(debug_assertions)]
     {
         eprintln!(

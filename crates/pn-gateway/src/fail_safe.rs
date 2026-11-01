@@ -1,12 +1,12 @@
 //! Fail-safe manager for PN Gateway
 
-use super::config::{FailSafeConfig, FailSafeAction, CircuitBreakerConfig, CircuitBreakerState};
+use super::config::{CircuitBreakerConfig, CircuitBreakerState, FailSafeAction, FailSafeConfig};
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use std::time::{Duration, Instant};
 use std::collections::HashMap;
-use tracing::{warn, error, info};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
+use tracing::{error, info, warn};
 
 /// Fail-safe manager for handling failures gracefully
 pub struct FailSafeManager {
@@ -23,11 +23,11 @@ impl FailSafeManager {
             retry_counts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    
+
     pub fn config(&self) -> &FailSafeConfig {
         &self.config
     }
-    
+
     pub async fn execute_with_failsafe<F, Fut, T>(&self, mut operation: F) -> Result<T>
     where
         F: FnMut() -> Fut,
@@ -37,9 +37,9 @@ impl FailSafeManager {
         if !self.config.enabled {
             return operation().await;
         }
-        
+
         let mut last_error = None;
-        
+
         for attempt in 0..=self.config.max_retries {
             match operation().await {
                 Ok(result) => {
@@ -49,15 +49,15 @@ impl FailSafeManager {
                 }
                 Err(e) => {
                     last_error = Some(e);
-                    
+
                     // Check circuit breaker
                     if self.is_circuit_open("default").await {
                         return Err(anyhow::anyhow!("Circuit breaker is open"));
                     }
-                    
+
                     // Increment retry count
                     self.increment_retry_count("default").await;
-                    
+
                     // Check if we should retry
                     if attempt < self.config.max_retries {
                         // Wait before retry
@@ -67,13 +67,13 @@ impl FailSafeManager {
                 }
             }
         }
-        
+
         // All retries exhausted - execute fallback actions
         self.execute_fallback_actions().await;
-        
+
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Operation failed after retries")))
     }
-    
+
     pub async fn is_circuit_open(&self, key: &str) -> bool {
         let breakers = self.circuit_breakers.lock().await;
         if let Some(breaker) = breakers.get(key) {
@@ -82,17 +82,17 @@ impl FailSafeManager {
             false
         }
     }
-    
+
     pub async fn increment_retry_count(&self, key: &str) {
         let mut counts = self.retry_counts.lock().await;
         *counts.entry(key.to_string()).or_insert(0) += 1;
     }
-    
+
     pub async fn reset_retry_count(&self, key: &str) {
         let mut counts = self.retry_counts.lock().await;
         counts.remove(key);
     }
-    
+
     pub async fn execute_fallback_actions(&self) {
         for action in &self.config.fallback_actions {
             match action {
@@ -119,20 +119,22 @@ impl FailSafeManager {
             }
         }
     }
-    
+
     pub async fn record_failure(&self, key: &str) {
         let mut breakers = self.circuit_breakers.lock().await;
-        let breaker = breakers.entry(key.to_string()).or_insert_with(CircuitBreaker::new);
+        let breaker = breakers
+            .entry(key.to_string())
+            .or_insert_with(CircuitBreaker::new);
         breaker.record_failure();
     }
-    
+
     pub async fn record_success(&self, key: &str) {
         let mut breakers = self.circuit_breakers.lock().await;
         if let Some(breaker) = breakers.get_mut(key) {
             breaker.record_success();
         }
     }
-    
+
     pub async fn get_circuit_state(&self, key: &str) -> Option<CircuitBreakerState> {
         let breakers = self.circuit_breakers.lock().await;
         breakers.get(key).map(|b| b.state)
@@ -158,28 +160,29 @@ impl CircuitBreaker {
             last_state_change: None,
         }
     }
-    
+
     fn record_failure(&mut self) {
         self.failure_count += 1;
         self.success_count = 0;
         self.last_failure = Some(Instant::now());
-        
-        if self.failure_count >= 5 { // threshold
+
+        if self.failure_count >= 5 {
+            // threshold
             self.state = CircuitBreakerState::Open;
             self.last_state_change = Some(Instant::now());
         }
     }
-    
+
     fn record_success(&mut self) {
         self.success_count += 1;
         self.failure_count = 0;
-        
+
         if self.state == CircuitBreakerState::HalfOpen && self.success_count >= 3 {
             self.state = CircuitBreakerState::Closed;
             self.last_state_change = Some(Instant::now());
         }
     }
-    
+
     fn is_open(&self) -> bool {
         match self.state {
             CircuitBreakerState::Open => {

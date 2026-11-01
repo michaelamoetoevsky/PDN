@@ -1,10 +1,10 @@
 [package]
 name = "proot-core"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "PRoot core Rust implementation - ptrace-based chroot alternative"
-license = "GPL-2.0-or-later"
-repository = "https://github.com/hermes-agent/PDN"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 libc = "0.2"

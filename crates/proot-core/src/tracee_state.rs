@@ -1,10 +1,10 @@
 //! Tracee state management for PRoot
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use crate::tracee::{PathInfo, SyscallInfo, Tracee, TraceeState};
 use anyhow::Result;
 use nix::unistd::Pid;
-use crate::tracee::{Tracee, TraceeState, SyscallInfo, PathInfo};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// Tracee state manager
 pub struct TraceeStateManager {
@@ -28,26 +28,30 @@ impl TraceeStateManager {
             state_history: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    
+
     pub fn add_tracee(&self, tracee: crate::tracee::Tracee) {
         let pid = tracee.pid;
         self.tracees.lock().unwrap().insert(pid, tracee);
         self.record_state_change(pid, TraceeState::Running, TraceeState::Running, None);
     }
-    
+
     pub fn remove_tracee(&self, pid: nix::unistd::Pid) -> Option<crate::tracee::Tracee> {
         self.tracees.lock().unwrap().remove(&pid)
     }
-    
+
     pub fn get_tracee(&self, pid: nix::unistd::Pid) -> Option<crate::tracee::Tracee> {
         self.tracees.lock().unwrap().get(&pid).cloned()
     }
-    
+
     pub fn get_all_tracees(&self) -> Vec<crate::tracee::Tracee> {
         self.tracees.lock().unwrap().values().cloned().collect()
     }
-    
-    pub fn update_state(&self, pid: nix::unistd::Pid, new_state: crate::tracee::TraceeState) -> bool {
+
+    pub fn update_state(
+        &self,
+        pid: nix::unistd::Pid,
+        new_state: crate::tracee::TraceeState,
+    ) -> bool {
         let mut tracees = self.tracees.lock().unwrap();
         if let Some(tracee) = tracees.get_mut(&pid) {
             let old_state = tracee.state;
@@ -58,8 +62,12 @@ impl TraceeStateManager {
             false
         }
     }
-    
-    pub fn update_syscall_info(&self, pid: nix::unistd::Pid, info: crate::tracee::SyscallInfo) -> bool {
+
+    pub fn update_syscall_info(
+        &self,
+        pid: nix::unistd::Pid,
+        info: crate::tracee::SyscallInfo,
+    ) -> bool {
         let mut tracees = self.tracees.lock().unwrap();
         if let Some(tracee) = tracees.get_mut(&pid) {
             tracee.syscall_info = Some(info);
@@ -68,7 +76,7 @@ impl TraceeStateManager {
             false
         }
     }
-    
+
     pub fn update_path_info(&self, pid: nix::unistd::Pid, info: crate::tracee::PathInfo) -> bool {
         let mut tracees = self.tracees.lock().unwrap();
         if let Some(tracee) = tracees.get_mut(&pid) {
@@ -78,8 +86,14 @@ impl TraceeStateManager {
             false
         }
     }
-    
-    pub fn record_state_change(&self, pid: nix::unistd::Pid, from: TraceeState, to: TraceeState, syscall: Option<i64>) {
+
+    pub fn record_state_change(
+        &self,
+        pid: nix::unistd::Pid,
+        from: TraceeState,
+        to: TraceeState,
+        syscall: Option<i64>,
+    ) {
         let event = StateEvent {
             timestamp: chrono::Utc::now(),
             pid,
@@ -89,19 +103,21 @@ impl TraceeStateManager {
         };
         self.state_history.lock().unwrap().push(event);
     }
-    
+
     pub fn get_tracee_count(&self) -> usize {
         self.tracees.lock().unwrap().len()
     }
-    
+
     pub fn get_running_tracees(&self) -> Vec<nix::unistd::Pid> {
-        self.tracees.lock().unwrap()
+        self.tracees
+            .lock()
+            .unwrap()
             .iter()
             .filter(|(_, t)| t.state == TraceeState::Running)
             .map(|(pid, _)| *pid)
             .collect()
     }
-    
+
     pub fn get_syscall_stats(&self) -> HashMap<i64, u64> {
         let history = self.state_history.lock().unwrap();
         let mut stats = HashMap::new();

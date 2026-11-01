@@ -1,55 +1,71 @@
 //! PRoot Distro Core - Container management for PRoot
 
-pub mod container;
-pub mod image;
-pub mod config;
-pub mod install;
-pub mod login;
 pub mod bindings;
-pub mod session;
-pub mod paths;
-pub mod constants;
-pub mod message;
-pub mod dirfd;
-pub mod guestfile;
-pub mod sysdata;
-pub mod locking;
-pub mod names;
-pub mod progress;
 pub mod compress;
-pub mod shm;
-pub mod network;
-pub mod storage;
+pub mod config;
+pub mod constants;
+pub mod container;
+pub mod dirfd;
 pub mod gpu;
-pub mod signature;
+pub mod guestfile;
+pub mod image;
+pub mod install;
+pub mod locking;
+pub mod login;
+pub mod message;
+pub mod names;
+pub mod network;
+pub mod paths;
+pub mod progress;
 pub mod security;
+pub mod session;
+pub mod shm;
+pub mod signature;
+pub mod storage;
+pub mod sysdata;
 
-pub use container::{Container, ContainerManager, ContainerConfig, ContainerInfo, ContainerStatus, SessionInfo, ResourceLimits, NetworkConfig, SecurityConfig, BindMount, NetworkMode, PortMapping};
-pub use image::{Image, ImageManager, ImageSource};
-pub use config::{DistroConfig, Config, PathsConfig, LoggingConfig, FileRotationConfig, Repository, Scripts, InstallOptions};
-pub use install::{Installer};
-pub use login::{LoginManager, LoginOptions};
-pub use bindings::{BindingManager, BindConfig};
-pub use session::{SessionManager, Session, SessionStatus};
-pub use paths::{ContainerPaths, PathResolver};
+pub use bindings::{BindConfig, BindingManager};
+pub use compress::{CompressionFormat, Compressor};
+pub use config::{
+    Config, DistroConfig, DistroType, FileRotationConfig, InstallOptions, LoggingConfig,
+    PathsConfig, Repository, Scripts,
+};
 pub use constants::constants::Constants;
 pub use constants::termux::TermuxConstants;
-pub use message::{Message, MessageLevel};
+pub use container::{
+    BindMount, Container, ContainerConfig, ContainerInfo, ContainerManager, ContainerStatus,
+    NetworkConfig, NetworkMode, PortMapping, ResourceLimits, SecurityConfig, SessionInfo,
+};
 pub use dirfd::DirFd;
+pub use gpu::{
+    apply_gpu_to_rootfs, detect_gpu_devices, generate_gpu_bind_mounts, GpuConfig, GpuDevice,
+    GpuDeviceType,
+};
 pub use guestfile::GuestFile;
-pub use sysdata::SysdataManager;
+pub use image::{Image, ImageManager, ImageSource};
+pub use install::Installer;
 pub use locking::LockManager;
+pub use login::{LoginManager, LoginOptions};
+pub use message::{Message, MessageLevel};
 pub use names::NameValidator;
+pub use network::{NetworkInfo, NetworkManager};
+pub use paths::{ContainerPaths, PathResolver};
 pub use progress::ProgressTracker;
-pub use compress::{Compressor, CompressionFormat};
+pub use security::{
+    AppArmorProfile, CapabilityConfig, SeccompAction, SeccompArch, SeccompArg, SeccompOp,
+    SeccompProfile, SeccompSyscallRule, SecurityHardeningManager, SecurityProfileConfig,
+    SecurityProfileType, SelLinuxProfile,
+};
+pub use session::{Session, SessionManager, SessionStatus};
 pub use shm::ShmManager;
-pub use network::{NetworkManager, NetworkInfo};
+pub use signature::{
+    extract_signature_from_annotations, ImageSignature, SignatureConfig, SignatureType,
+    SignatureVerifier, TlogEntry, VerificationResult,
+};
 pub use storage::{StorageManager, VolumeConfig, VolumeInfo};
-pub use gpu::{GpuConfig, GpuDevice, GpuDeviceType, detect_gpu_devices, generate_gpu_bind_mounts, apply_gpu_to_rootfs};
-pub use signature::{SignatureConfig, SignatureVerifier, ImageSignature, SignatureType, VerificationResult, TlogEntry, extract_signature_from_annotations};
-pub use security::{SecurityProfileConfig, SecurityProfileType, SeccompProfile, SeccompAction, SeccompArch, SeccompSyscallRule, SeccompArg, SeccompOp, AppArmorProfile, SelLinuxProfile, CapabilityConfig, SecurityHardeningManager};
+pub use sysdata::SysdataManager;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 /// Main entry point for PRoot Distro Core
 pub struct ProotDistroCore {
@@ -64,14 +80,21 @@ pub struct ProotDistroCore {
 
 impl ProotDistroCore {
     pub fn new() -> Result<Self> {
+        eprintln!("[DEBUG new] Creating ContainerManager");
         let container_manager = ContainerManager::new()?;
+        eprintln!("[DEBUG new] Creating ImageManager");
         let image_manager = ImageManager::new()?;
+        eprintln!("[DEBUG new] Creating ConfigManager");
         let config_manager = ConfigManager::new()?;
+        eprintln!("[DEBUG new] Creating SessionManager");
         let session_manager = SessionManager::new()?;
+        eprintln!("[DEBUG new] Creating LockManager");
         let lock_manager = LockManager::new()?;
+        eprintln!("[DEBUG new] Creating SysdataManager");
         let sysdata_manager = SysdataManager::new()?;
+        eprintln!("[DEBUG new] Creating ShmManager");
         let shm_manager = ShmManager::new()?;
-        
+
         Ok(Self {
             container_manager,
             image_manager,
@@ -84,17 +107,45 @@ impl ProotDistroCore {
     }
 
     pub async fn install(&mut self, options: InstallOptions) -> Result<()> {
-        self.image_manager.download_and_verify_source(&options.source)?;
-        self.container_manager.create(&options.name, &options.config).await?;
+        self.image_manager
+            .download_and_verify_source(&options.source)?;
+        self.container_manager
+            .create(&options.name, &options.config)
+            .await?;
         self.shm_manager.create(&options.name, 1024 * 1024)?; // 1MB default
         Ok(())
     }
 
     pub async fn login(&mut self, options: LoginOptions) -> Result<()> {
         let container = self.container_manager.get(&options.container_name).await?;
-        let session = self.session_manager.create(&options.container_name, &options)?;
+        eprintln!("[DEBUG login] Got container: {}", options.container_name);
+        eprintln!(
+            "[DEBUG login] Container rootfs: {:?}",
+            container.rootfs_path
+        );
+        let session = self
+            .session_manager
+            .create(&options.container_name, &options)?;
+        eprintln!("[DEBUG login] Created session: {}", session.id);
         self.lock_manager.acquire(&options.container_name)?;
-        // Execute proot with container config
+        eprintln!("[DEBUG login] Acquired lock");
+
+        // Execute proot interactively with the provided command
+        let command = if options.command.is_empty() {
+            vec!["/bin/sh".to_string()]
+        } else {
+            options.command
+        };
+        eprintln!("[DEBUG login] Command: {:?}", command);
+
+        let exit_code = self
+            .container_manager
+            .execute(&options.container_name, command)
+            .await?;
+        eprintln!("[DEBUG login] Exit code: {}", exit_code);
+        if exit_code != 0 {
+            bail!("Login shell exited with code {}", exit_code);
+        }
         Ok(())
     }
 
@@ -137,7 +188,7 @@ pub fn init() -> Result<ProotDistroCore> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_init() {
         // Don't set PN_TEST_ROOT - let it use temp_dir() fallback which is writable
@@ -154,13 +205,13 @@ mod tests {
         }
         assert!(core.is_ok());
     }
-    
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_proot_distro_core_new() {
         let core = ProotDistroCore::new();
         assert!(core.is_ok());
     }
-    
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_install_options_default() {
         let options = InstallOptions::default();

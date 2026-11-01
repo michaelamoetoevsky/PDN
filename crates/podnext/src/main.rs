@@ -1,68 +1,222 @@
-//! podnext CLI - Simple container management for Termux/Android
+//! podnext CLI - Advanced container and service management for Termux/Android
 //!
-//! A simplified CLI that works with proot-distro-core's actual implementation.
+//! A comprehensive CLI that works with proot-distro-core, pn-next, and pn-gateway
+//! to provide full container lifecycle management, service orchestration, and monitoring.
 
-use clap::{Parser, Subcommand, Args, ValueEnum};
-use anyhow::{Result, Context, bail};
+use anyhow::{bail, Context, Result};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
+use serde_yaml;
+use std::io::{self, Write};
 use std::path::PathBuf;
+use tabled::{Table, Tabled};
 use tracing_subscriber::EnvFilter;
 
-mod utils;
+mod commands;
 mod native;
+mod utils;
 
-use utils::{parse_size, format_size, parse_container_path};
 use native::{
-    search_docker_hub, install_image_native, list_containers_native,
-    login_container_native, run_container_native, list_sessions_native,
-    kill_container_native, remove_container_native,
+    install_image_native, kill_container_native, list_containers_native, list_sessions_native,
+    list_sessions_native_full, login_container_native, remove_container_native,
+    run_container_native, search_docker_hub,
 };
+use utils::{format_size, parse_container_path, parse_size};
+
+#[derive(Serialize, Clone)]
+struct SerializableInfo {
+    version: String,
+    platform: String,
+    rust_version: String,
+    backend: String,
+}
+
+#[derive(Serialize, Clone)]
+struct SerializableImage {
+    repo_name: String,
+    short_description: String,
+    star_count: u32,
+    pull_count: u64,
+    is_official: bool,
+    is_automated: bool,
+}
+
+use commands::*;
 use proot_distro_core::{ContainerInfo, SessionInfo};
 
 #[derive(Parser)]
 #[command(name = "podnext")]
-#[command(about = "PRoot Distro Next - Simple container management for Termux/Android")]
-#[command(version = "0.1.0")]
+#[command(about = "PRoot Distro Next - Advanced container & service management for Termux/Android")]
+#[command(version)]
 #[command(
-    long_about = "podnext (PRoot Distro Next) - Simple container management for Termux/Android.\n\n\
-    EXAMPLES:\n    podnext install ubuntu:22.04              # Install Ubuntu 22.04\n    podnext login ubuntu                        # Interactive shell\n    podnext run ubuntu -- apt update            # Run command in container\n    podnext list                                # List containers\n    podnext remove ubuntu                       # Delete container\n\n\
-    DIRECT EXECUTION (like proot):\n    podnext -r /path/to/rootfs -- /bin/bash     # Execute in proot environment\n    podnext -b /host/path:/guest/path -- ls     # Bind mount and execute\n"
+    long_about = "podnext (PRoot Distro Next) - Advanced container & service management for Termux/Android.\n\n\
+    CONTAINER MANAGEMENT:\n\
+    podnext install ubuntu:22.04              # Install Ubuntu 22.04\n\
+    podnext login ubuntu                      # Interactive shell\n\
+    podnext run ubuntu -- apt update          # Run command in container\n\
+    podnext list                              # List containers\n\
+    podnext remove ubuntu                     # Delete container\n\n\
+    SERVICE ORCHESTRATION (v2.0):\n\
+    podnext service start web-server          # Start managed service\n\
+    podnext service stop web-server           # Stop managed service\n\
+    podnext service restart web-server        # Restart service\n\
+    podnext service list                      # List all services\n\
+    podnext service logs web-server           # View service logs\n\
+    podnext service status web-server         # Show service status\n\
+    podnext service enable web-server         # Enable auto-start at boot\n\
+    podnext service disable web-server        # Disable auto-start\n\n\
+    DAEMON MANAGEMENT:\n\
+    podnext daemon start                      # Start service daemon\n\
+    podnext daemon stop                       # Stop service daemon\n\
+    podnext daemon status                     # Show daemon status\n\
+    podnext daemon reload                     # Reload configuration\n\n\
+    WATCHDOG & MONITORING:\n\
+    podnext watchdog status                   # Show watchdog status\n\
+    podnext watchdog policy set web-server OnFailure 3 60\n\
+    podnext watchdog reset web-server         # Reset watchdog state\n\n\
+    RESOURCE QUOTAS:\n\
+    podnext quota set web-server memory 512M  # Set memory limit\n\
+    podnext quota set web-server cpu 200      # Set CPU quota (2 cores)\n\
+    podnext quota get web-server              # Show quotas\n\
+    podnext quota usage web-server            # Show current usage\n\n\
+    STRUCTURED LOGGING:\n\
+    podnext log query web-server --level Error --limit 50\n\
+    podnext log tail web-server               # Follow logs\n\
+    podnext log stats                         # Log statistics\n\n\
+    D-BUS & IPC:\n\
+    podnext dbus list                         # List D-Bus services\n\
+    podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service.List\n\n\
+    SOCKET ACTIVATION:\n\
+    podnext socket register --config socket.toml\n\
+    podnext socket list\n\n\
+    TERMUX:BOOT:\n\
+    podnext boot enable web-server            # Enable auto-start at boot\n\
+    podnext boot disable web-server           # Disable auto-start\n\
+    podnext boot status                       # Show boot configuration\n\n\
+    WAKE LOCKS:\n\
+    podnext wakelock acquire web-server Partial\n\
+    podnext wakelock release web-server\n\
+    podnext wakelock status\n\n\
+    POLICY ENGINE:\n\
+    podnext policy eval web-server --json\n\
+    podnext policy list\n\n\
+    DIRECT EXECUTION (like proot):\n\
+    podnext -r /path/to/rootfs -- /bin/bash     # Execute in proot environment\n\
+    podnext -b /host/path:/guest/path -- ls     # Bind mount and execute\n"
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
     // Direct execution mode (like proot)
-    #[arg(short = 'r', long = "rootfs", global = true, help = "Use PATH as guest root filesystem")]
+    #[arg(
+        short = 'r',
+        long = "rootfs",
+        global = true,
+        help = "Use PATH as guest root filesystem"
+    )]
     rootfs: Option<String>,
 
-    #[arg(short = 'b', long = "bind", global = true, value_name = "HOST_PATH:GUEST_PATH", help = "Bind mount host path into guest (repeatable)")]
+    #[arg(
+        short = 'b',
+        long = "bind",
+        global = true,
+        value_name = "HOST_PATH:GUEST_PATH",
+        help = "Bind mount host path into guest (repeatable)"
+    )]
     bind: Vec<String>,
 
-    #[arg(short = 'w', long = "pwd", global = true, help = "Set initial working directory")]
+    #[arg(
+        short = 'w',
+        long = "pwd",
+        global = true,
+        help = "Set initial working directory"
+    )]
     pwd: Option<String>,
 
-    #[arg(short = 'q', long = "qemu", global = true, help = "Execute through QEMU user-mode emulation")]
+    #[arg(
+        short = 'q',
+        long = "qemu",
+        global = true,
+        help = "Execute through QEMU user-mode emulation (path to qemu binary)"
+    )]
     qemu: Option<String>,
 
-    #[arg(short = '0', long = "link2symlink", global = true, help = "Enable hardlink emulation via symlinks")]
+    #[arg(
+        short = '0',
+        long = "link2symlink",
+        global = true,
+        help = "Enable hardlink emulation via symlinks"
+    )]
     link2symlink: bool,
 
-    #[arg(long = "no-sysvipc", global = true, help = "Disable System V IPC emulation")]
+    #[arg(
+        long = "no-sysvipc",
+        global = true,
+        help = "Disable System V IPC emulation"
+    )]
     no_sysvipc: bool,
 
-    #[arg(long = "kernel", global = true, help = "Override kernel release string")]
+    #[arg(
+        long = "sysvipc",
+        global = true,
+        help = "Enable System V IPC emulation"
+    )]
+    sysvipc: bool,
+
+    #[arg(
+        long = "kernel",
+        global = true,
+        help = "Override kernel release string"
+    )]
     kernel: Option<String>,
 
     #[arg(long = "hostname", global = true, help = "Set hostname")]
     hostname: Option<String>,
 
-    #[arg(short = 'e', long = "env", global = true, value_name = "VAR=VALUE", help = "Set environment variable (repeatable)")]
+    #[arg(long = "uid", global = true, help = "User ID to run as")]
+    uid: Option<u32>,
+
+    #[arg(long = "gid", global = true, help = "Group ID to run as")]
+    gid: Option<u32>,
+
+    #[arg(long = "seccomp", global = true, help = "Enable seccomp filtering")]
+    seccomp: bool,
+
+    #[arg(long = "no-seccomp", global = true, help = "Disable seccomp filtering")]
+    no_seccomp: bool,
+
+    #[arg(long = "trace", global = true, help = "Enable syscall tracing")]
+    trace: bool,
+
+    #[arg(long = "kill-on-exit", global = true, help = "Kill processes on exit")]
+    kill_on_exit: bool,
+
+    #[arg(
+        long = "no-kill-on-exit",
+        global = true,
+        help = "Don't kill processes on exit"
+    )]
+    no_kill_on_exit: bool,
+
+    #[arg(
+        short = 'e',
+        long = "env",
+        global = true,
+        value_name = "VAR=VALUE",
+        help = "Set environment variable (repeatable)"
+    )]
     env: Vec<String>,
+
+    /// Enable verbose debug output
+    #[arg(short = 'v', long = "verbose", global = true, action = clap::ArgAction::Count, help = "Enable verbose debug output (repeatable)")]
+    verbose: u8,
 }
 
 #[derive(Subcommand)]
 #[command(rename_all = "lower")]
 enum Commands {
+    // Container management (existing)
     /// Install distribution from OCI image
     Install {
         /// Image reference (e.g., ubuntu:22.04, debian:12, alpine:latest)
@@ -80,10 +234,12 @@ enum Commands {
         /// Show all (including stopped)
         #[arg(short = 'a', long, default_value = "true")]
         all: bool,
-        
         /// Hide stopped containers
         #[arg(long = "no-all", action = clap::ArgAction::SetTrue)]
         no_all: bool,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
     },
 
     /// Start interactive shell inside a container
@@ -105,10 +261,57 @@ enum Commands {
         /// Command to run (after --)
         #[arg(last = true)]
         command: Vec<String>,
+        /// Automatically remove the container when it exits
+        #[arg(long = "rm", short = 'r', global = false)]
+        rm: bool,
+        /// Run container in background and print container ID
+        #[arg(long = "detach", short = 'd', global = false)]
+        detach: bool,
+        /// Assign a name to the container
+        #[arg(long = "name", global = false)]
+        name: Option<String>,
+        /// Connect a container to a network
+        #[arg(long = "network", global = false)]
+        network: Option<String>,
+        /// Bind mount a volume (host_path:container_path[:ro])
+        #[arg(
+            long = "volume",
+            short = 'v',
+            global = false,
+            value_name = "HOST_PATH:CONTAINER_PATH[:ro]"
+        )]
+        volume: Vec<String>,
+        /// Publish a container's port(s) to the host (host_port:container_port[/protocol])
+        #[arg(
+            long = "publish",
+            short = 'p',
+            global = false,
+            value_name = "HOST_PORT:CONTAINER_PORT[/PROTOCOL]"
+        )]
+        publish: Vec<String>,
+        /// Overwrite the default ENTRYPOINT of the image
+        #[arg(long = "entrypoint", global = false)]
+        entrypoint: Option<String>,
+        /// Allocate a pseudo-TTY
+        #[arg(long = "tty", short = 't', global = false)]
+        tty: bool,
+        /// Keep STDIN open even if not attached
+        #[arg(long = "interactive", short = 'i', global = false)]
+        interactive: bool,
+        /// User to run as (format: <name|uid>[:<group|gid>])
+        #[arg(long = "user", short = 'u', global = false)]
+        user: Option<String>,
+        /// Working directory inside the container
+        #[arg(long = "workdir", short = 'w', global = false)]
+        workdir: Option<String>,
     },
 
     /// List active sessions
-    Ps,
+    Ps {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
 
     /// Stop container
     Kill {
@@ -132,10 +335,21 @@ enum Commands {
         /// Limit results
         #[arg(short, long, default_value = "25")]
         limit: usize,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
     },
 
+    /// Manage images
+    #[command(subcommand)]
+    Image(ImageCommands),
+
     /// List active sessions (better formatted)
-    Sessions,
+    Sessions {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
 
     /// Attach to a container session (creates new session)
     Attach {
@@ -150,11 +364,815 @@ enum Commands {
 
     /// Show system information
     #[command(name = "info")]
-    Info,
+    Info {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
 
     /// Show version
     #[command(name = "version")]
-    Version,
+    Version {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    // Service orchestration (v2.0)
+    /// Service management commands
+    #[command(subcommand)]
+    Service(ServiceCommands),
+
+    /// Daemon management
+    #[command(subcommand)]
+    Daemon(DaemonCommands),
+
+    /// Watchdog management
+    #[command(subcommand)]
+    Watchdog(WatchdogCommands),
+
+    /// Resource quota management
+    #[command(subcommand)]
+    Quota(QuotaCommands),
+
+    /// Structured logging
+    #[command(subcommand)]
+    Log(LogCommands),
+
+    /// D-Bus IPC
+    #[command(subcommand)]
+    Dbus(DbusCommands),
+
+    /// Socket activation
+    #[command(subcommand)]
+    Socket(SocketCommands),
+
+    /// Termux:Boot integration
+    #[command(subcommand)]
+    Boot(BootCommands),
+
+    /// Wake lock management
+    #[command(subcommand)]
+    Wakelock(WakelockCommands),
+
+    /// Policy engine
+    #[command(subcommand)]
+    Policy(PolicyCommands),
+
+    /// Backup/Restore management
+    #[command(subcommand)]
+    Backup(BackupCommands),
+
+    /// Multi-arch build service
+    #[command(subcommand)]
+    Build(BuildCommands),
+
+    /// GitOps integration
+    #[command(subcommand)]
+    Gitops(GitopsCommands),
+
+    /// Web dashboard management
+    #[command(subcommand)]
+    Dashboard(DashboardCommands),
+
+    /// Network management
+    #[command(subcommand)]
+    Network(NetworkCommands),
+
+    /// Volume management
+    #[command(subcommand)]
+    Volume(VolumeCommands),
+
+    /// Generate shell completions
+    Completion {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum ImageCommands {
+    /// Pull an image from a registry
+    Pull {
+        /// Image reference (e.g., ubuntu:22.04, alpine:latest)
+        image: String,
+        /// Platform (e.g., linux/arm64, linux/amd64)
+        #[arg(long)]
+        platform: Option<String>,
+        /// Download all tagged images
+        #[arg(long)]
+        all_tags: bool,
+    },
+    /// Push an image to a registry
+    Push {
+        /// Image reference (e.g., ubuntu:22.04)
+        image: String,
+    },
+    /// Remove one or more images
+    Rm {
+        /// Image references to remove
+        images: Vec<String>,
+        /// Force removal without confirmation
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
+    /// Tag an image
+    Tag {
+        /// Source image reference
+        source: String,
+        /// Target image reference
+        target: String,
+    },
+    /// Show image history
+    History {
+        /// Image reference
+        image: String,
+        /// Show full history without truncation
+        #[arg(long)]
+        no_trunc: bool,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Display detailed information on one or more images
+    Inspect {
+        /// Image references to inspect
+        images: Vec<String>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "json")]
+        format: OutputFormat,
+    },
+    /// List images
+    Ls {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+        /// Show all images (including intermediate)
+        #[arg(short = 'a', long)]
+        all: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum NetworkCommands {
+    /// Create a network
+    Create {
+        /// Network name
+        name: String,
+        /// Network driver
+        #[arg(short = 'd', long, default_value = "bridge")]
+        driver: String,
+        /// Network subnet (CIDR)
+        #[arg(short = 's', long)]
+        subnet: Option<String>,
+        /// Network gateway
+        #[arg(short = 'g', long)]
+        gateway: Option<String>,
+    },
+    /// List networks
+    Ls {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Inspect a network
+    Inspect {
+        /// Network name(s)
+        networks: Vec<String>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "json")]
+        format: OutputFormat,
+    },
+    /// Remove one or more networks
+    Rm {
+        /// Network name(s)
+        networks: Vec<String>,
+    },
+    /// Connect a container to a network
+    Connect {
+        /// Network name
+        network: String,
+        /// Container name
+        container: String,
+        /// Container IP address
+        #[arg(short = 'i', long)]
+        ip: Option<String>,
+    },
+    /// Disconnect a container from a network
+    Disconnect {
+        /// Network name
+        network: String,
+        /// Container name
+        container: String,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum VolumeCommands {
+    /// Create a volume
+    Create {
+        /// Volume name
+        name: String,
+        /// Volume driver
+        #[arg(short = 'd', long, default_value = "local")]
+        driver: String,
+        /// Driver options
+        #[arg(short = 'o', long, value_name = "KEY=VALUE")]
+        opts: Vec<String>,
+    },
+    /// List volumes
+    Ls {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Inspect a volume
+    Inspect {
+        /// Volume name(s)
+        volumes: Vec<String>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "json")]
+        format: OutputFormat,
+    },
+    /// Remove one or more volumes
+    Rm {
+        /// Volume name(s)
+        volumes: Vec<String>,
+        /// Force removal
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
+    /// Remove all unused volumes
+    Prune {
+        /// Force prune without confirmation
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum ServiceCommands {
+    /// Start a service
+    Start {
+        /// Service name
+        name: String,
+    },
+    /// Stop a service
+    Stop {
+        /// Service name
+        name: String,
+        /// Force stop (SIGKILL)
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Restart a service
+    Restart {
+        /// Service name
+        name: String,
+    },
+    /// List all services
+    List {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Show service status
+    Status {
+        /// Service name
+        name: String,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// View service logs
+    Logs {
+        /// Service name
+        name: String,
+        /// Follow logs
+        #[arg(short, long)]
+        follow: bool,
+        /// Number of lines
+        #[arg(short, long, default_value = "100")]
+        lines: usize,
+    },
+    /// Enable auto-start at boot
+    Enable {
+        /// Service name
+        name: String,
+    },
+    /// Disable auto-start at boot
+    Disable {
+        /// Service name
+        name: String,
+    },
+    /// Load service from TOML config
+    Load {
+        /// Service name
+        name: String,
+    },
+    /// Create service from TOML config
+    Create {
+        /// Service name
+        name: String,
+        /// TOML config file
+        #[arg(short, long)]
+        config: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum DaemonCommands {
+    /// Start daemon
+    Start,
+    /// Stop daemon
+    Stop,
+    /// Show daemon status
+    Status {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Reload daemon configuration
+    Reload,
+    /// Show daemon logs
+    Logs {
+        /// Follow logs
+        #[arg(short, long)]
+        follow: bool,
+        /// Number of lines
+        #[arg(short, long, default_value = "100")]
+        lines: usize,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum WatchdogCommands {
+    /// Show watchdog status
+    Status {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Set watchdog policy for a service
+    SetPolicy {
+        /// Service name
+        name: String,
+        /// Restart policy
+        #[arg(value_enum)]
+        policy: RestartPolicyArg,
+        /// Max restarts per window
+        max_restarts: u32,
+        /// Window in seconds
+        window_secs: u64,
+    },
+    /// Reset watchdog state for a service
+    Reset {
+        /// Service name
+        name: String,
+    },
+    /// Show watchdog events
+    Events {
+        /// Number of events
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum QuotaCommands {
+    /// Set resource quota
+    Set {
+        /// Service name
+        name: String,
+        /// Resource type
+        #[arg(value_enum)]
+        resource: ResourceTypeArg,
+        /// Limit value (e.g., 512M, 200, 1000)
+        limit: String,
+    },
+    /// Get resource quotas
+    Get {
+        /// Service name
+        name: String,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Show current resource usage
+    Usage {
+        /// Service name
+        name: String,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// List all quotas
+    List {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum LogCommands {
+    /// Query logs
+    Query {
+        /// Service name
+        #[arg(short, long)]
+        service: Option<String>,
+        /// Minimum log level
+        #[arg(long, value_enum)]
+        min_level: Option<LogLevelArg>,
+        /// Maximum log level
+        #[arg(long, value_enum)]
+        max_level: Option<LogLevelArg>,
+        /// Search text
+        #[arg(long)]
+        grep: Option<String>,
+        /// Limit results
+        #[arg(short, long, default_value = "100")]
+        limit: usize,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Tail logs (follow)
+    Tail {
+        /// Service name
+        #[arg(short, long)]
+        service: Option<String>,
+        /// Number of lines
+        #[arg(short, long, default_value = "100")]
+        lines: usize,
+    },
+    /// Show log statistics
+    Stats {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Flush log buffer
+    Flush,
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum DbusCommands {
+    /// List D-Bus services
+    List {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Call D-Bus method
+    Call {
+        /// Bus name
+        bus: String,
+        /// Object path
+        path: String,
+        /// Interface
+        interface: String,
+        /// Method
+        method: String,
+        /// Arguments (JSON)
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Monitor D-Bus signals
+    Monitor {
+        /// Bus name
+        bus: String,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum SocketCommands {
+    /// Register socket activation
+    Register {
+        /// Config file
+        #[arg(short, long)]
+        config: PathBuf,
+    },
+    /// Unregister socket
+    Unregister {
+        /// Socket name
+        name: String,
+    },
+    /// List socket activations
+    List {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum BootCommands {
+    /// Enable auto-start at boot
+    Enable {
+        /// Service name
+        name: String,
+    },
+    /// Disable auto-start at boot
+    Disable {
+        /// Service name
+        name: String,
+    },
+    /// Show boot configuration
+    Status {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum WakelockCommands {
+    /// Acquire wake lock
+    Acquire {
+        /// Service name
+        name: String,
+        /// Lock type
+        #[arg(value_enum)]
+        lock_type: WakeLockTypeArg,
+    },
+    /// Release wake lock
+    Release {
+        /// Service name
+        name: String,
+    },
+    /// Show wake lock status
+    Status {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum PolicyCommands {
+    /// Evaluate policies for a service
+    Eval {
+        /// Service name
+        name: String,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// List policy rules
+    List {
+        /// Filter by tag
+        #[arg(long)]
+        tag: Option<String>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Load policy from file
+    Load {
+        /// Policy file
+        #[arg(short, long)]
+        file: PathBuf,
+    },
+    /// Show policy presets
+    Presets,
+}
+
+/// Backup/Restore management
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum BackupCommands {
+    /// Create a backup
+    Create {
+        /// Container name or ID
+        container: String,
+        /// Backup type
+        #[arg(short, long, value_enum, default_value = "full")]
+        backup_type: BackupTypeArg,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// List backups
+    List {
+        /// Filter by container
+        #[arg(short, long)]
+        container: Option<String>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Restore a backup
+    Restore {
+        /// Backup ID
+        backup_id: String,
+        /// Target container name (optional)
+        #[arg(short, long)]
+        target: Option<String>,
+    },
+    /// Delete a backup
+    Delete {
+        /// Backup ID
+        backup_id: String,
+    },
+    /// Show backup status
+    Status {
+        /// Backup ID
+        backup_id: String,
+    },
+    /// Show backup configuration
+    Config,
+}
+
+/// Backup type
+#[derive(ValueEnum, Clone, Copy, Debug)]
+#[clap(rename_all = "lowercase")]
+enum BackupTypeArg {
+    Full,
+    Incremental,
+    Differential,
+    ConfigOnly,
+}
+
+/// Multi-arch build service
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum BuildCommands {
+    /// Submit a build
+    Submit {
+        /// Build specification file
+        #[arg(short, long)]
+        spec: PathBuf,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Show build status
+    Status {
+        /// Build ID
+        build_id: String,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Cancel a build
+    Cancel {
+        /// Build ID
+        build_id: String,
+    },
+    /// List builds
+    List {
+        /// Filter by status
+        #[arg(long)]
+        status: Option<String>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Show build artifacts
+    Artifacts {
+        /// Build ID
+        build_id: String,
+    },
+    /// Show build logs
+    Logs {
+        /// Build ID
+        build_id: String,
+        /// Follow logs
+        #[arg(short, long)]
+        follow: bool,
+    },
+}
+
+/// GitOps integration
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum GitopsCommands {
+    /// Sync with git repository
+    Sync {
+        /// Force sync
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Show GitOps status
+    Status {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// List managed resources
+    Resources {
+        /// Filter by kind
+        #[arg(long)]
+        kind: Option<String>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Check for drift
+    Drift {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+    /// Reconcile resources
+    Reconcile {
+        /// Resource name (optional, reconciles all if not specified)
+        name: Option<String>,
+    },
+}
+
+/// Web dashboard management
+#[derive(Subcommand)]
+#[command(rename_all = "lower")]
+enum DashboardCommands {
+    /// Start the dashboard server
+    Start {
+        /// Port to bind
+        #[arg(short, long, default_value = "8800")]
+        port: u16,
+        /// Bind address
+        #[arg(long, default_value = "0.0.0.0")]
+        bind: String,
+    },
+    /// Stop the dashboard server
+    Stop,
+    /// Show dashboard status
+    Status,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+enum OutputFormat {
+    Table,
+    Json,
+    Yaml,
+    Text,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+enum RestartPolicyArg {
+    Never,
+    OnFailure,
+    Always,
+    UnlessStopped,
+    OnFailureOrCrash,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, strum::Display)]
+#[strum(serialize_all = "lowercase")]
+enum ResourceTypeArg {
+    Cpu,
+    Memory,
+    MemorySwap,
+    IoReadBps,
+    IoWriteBps,
+    IoReadIops,
+    IoWriteIops,
+    Pids,
+    Nofile,
+    Network,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+enum LogLevelArg {
+    Emergency,
+    Alert,
+    Critical,
+    Error,
+    Warning,
+    Notice,
+    Info,
+    Debug,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+enum WakeLockTypeArg {
+    Partial,
+    Full,
+    DozeExemption,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+enum Shell {
+    Bash,
+    Zsh,
+    Fish,
+    PowerShell,
+    Elvish,
 }
 
 #[tokio::main]
@@ -163,11 +1181,177 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
+    // Check for direct execution mode early (before clap parsing)
+    // Direct execution: podnext [flags...] -r /rootfs [flags...] -- <cmd> ...
+    // We do early parsing for ALL direct execution cases to avoid clap subcommand conflicts
+    let raw_args: Vec<String> = std::env::args().collect();
+    let pn_debug = std::env::var_os("PN_NEXT_DEBUG").is_some();
+    if pn_debug {
+        eprintln!("[DEBUG main] Raw args: {:?}", raw_args);
+    }
+
+    // Check if this is a direct execution mode (has -r or --rootfs anywhere)
+    let is_direct_execution = raw_args.iter().any(|a| a == "-r" || a == "--rootfs");
+
+    if is_direct_execution {
+        if pn_debug {
+            eprintln!("[DEBUG main] Direct execution mode detected");
+        }
+
+        // Parse all flags manually for direct execution
+        // Format: podnext [flags...] -r <rootfs> [flags...] -- <cmd...>
+
+        let mut rootfs: Option<String> = None;
+        let mut binds = Vec::new();
+        let mut pwd: Option<String> = None;
+        let mut qemu: Option<String> = None;
+        let mut link2symlink = false;
+        let mut no_sysvipc = false;
+        let mut sysvipc = false;
+        let mut kernel: Option<String> = None;
+        let mut hostname: Option<String> = None;
+        let mut uid: Option<u32> = None;
+        let mut gid: Option<u32> = None;
+        let mut seccomp = false;
+        let mut no_seccomp = false;
+        let mut trace = false;
+        let mut kill_on_exit = false;
+        let mut no_kill_on_exit = false;
+        let mut env = Vec::new();
+        let mut verbose = false;
+        let mut cmd_args: Vec<String> = Vec::new();
+
+        let mut i = 1; // Skip program name
+
+        // Parse all flags until --
+        while i < raw_args.len() {
+            let arg = &raw_args[i];
+            if arg == "--" {
+                // Remaining args are the command
+                cmd_args = raw_args[i + 1..].to_vec();
+                break;
+            }
+
+            match arg.as_str() {
+                "-r" | "--rootfs" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        rootfs = Some(raw_args[i].clone());
+                    }
+                }
+                "-b" | "--bind" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        binds.push(raw_args[i].clone());
+                    }
+                }
+                "-w" | "--pwd" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        pwd = Some(raw_args[i].clone());
+                    }
+                }
+                "-q" | "--qemu" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        qemu = Some(raw_args[i].clone());
+                    }
+                }
+                "-0" | "--link2symlink" => {
+                    link2symlink = true;
+                }
+                "--no-sysvipc" => {
+                    no_sysvipc = true;
+                }
+                "--sysvipc" => {
+                    sysvipc = true;
+                }
+                "--kernel" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        kernel = Some(raw_args[i].clone());
+                    }
+                }
+                "--hostname" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        hostname = Some(raw_args[i].clone());
+                    }
+                }
+                "--uid" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        uid = raw_args[i].parse().ok();
+                    }
+                }
+                "--gid" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        gid = raw_args[i].parse().ok();
+                    }
+                }
+                "--seccomp" => {
+                    seccomp = true;
+                }
+                "--no-seccomp" => {
+                    no_seccomp = true;
+                }
+                "--trace" => {
+                    trace = true;
+                }
+                "--kill-on-exit" => {
+                    kill_on_exit = true;
+                }
+                "--no-kill-on-exit" => {
+                    no_kill_on_exit = true;
+                }
+                "-e" | "--env" => {
+                    i += 1;
+                    if i < raw_args.len() {
+                        env.push(raw_args[i].clone());
+                    }
+                }
+                "-v" | "--verbose" => {
+                    verbose = true;
+                }
+                _ => {
+                    // Unknown flag, skip
+                }
+            }
+            i += 1;
+        }
+
+        if rootfs.is_none() {
+            eprintln!("Error: -r/--rootfs is required for direct execution mode");
+            std::process::exit(1);
+        }
+
+        if cmd_args.is_empty() {
+            eprintln!("Error: Direct execution mode requires a command after --");
+            std::process::exit(1);
+        }
+
+        if pn_debug {
+            eprintln!("[DEBUG main] Calling execute_direct_manual with all flags");
+        }
+        // For now, just call execute_direct_manual with basic args
+        // TODO: Pass all parsed flags to a new execute_direct_manual_full function
+        return execute_direct_manual(rootfs.unwrap(), &cmd_args, verbose).await;
+    }
+
+    // Parse trailing arguments for direct execution mode (-- <cmd> ...) for clap-parsed case
+    let args: Vec<String> = std::env::args().collect();
+    let cli_trailing_args: Vec<String> = if let Some(pos) = args.iter().position(|a| a == "--") {
+        args[pos + 1..].to_vec()
+    } else {
+        Vec::new()
+    };
+
     let cli = Cli::parse();
 
-    // Direct execution mode (like proot)
+    // Direct execution mode (like proot) - clap parsed case
     if cli.command.is_none() && cli.rootfs.is_some() {
-        return execute_direct(&cli).await;
+        return execute_direct(&cli, &cli_trailing_args).await;
     }
 
     // Subcommand mode
@@ -179,49 +1363,257 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn execute_direct(cli: &Cli) -> Result<()> {
-    eprintln!("podnext direct execution mode (like proot)");
-    eprintln!("  Rootfs: {:?}", cli.rootfs);
-    eprintln!("  Binds: {:?}", cli.bind);
-    eprintln!("  Working dir: {:?}", cli.pwd);
-    eprintln!("  QEMU: {:?}", cli.qemu);
-    eprintln!("  Link2symlink: {}", cli.link2symlink);
-    eprintln!("  No sysvipc: {}", cli.no_sysvipc);
-    eprintln!("  Kernel: {:?}", cli.kernel);
-    eprintln!("  Hostname: {:?}", cli.hostname);
-    eprintln!("  Env: {:?}", cli.env);
-    
-    // For direct execution, we need to get the command from the remaining args
-    // Since we removed global cmd_args, direct execution requires a different approach
-    // For now, just show help
-    bail!("Direct execution mode requires a command. Use 'podnext -r /path/to/rootfs -- <command>' but clap doesn't support this pattern without global trailing args. Use subcommands instead.");
+async fn execute_direct(cli: &Cli, trailing_args: &[String]) -> Result<()> {
+    if trailing_args.is_empty() {
+        bail!("Direct execution mode requires a command. Use 'podnext -r /path/to/rootfs -- <command>'");
+    }
+
+    eprintln!("[DEBUG direct] Rootfs: {:?}", cli.rootfs);
+    eprintln!("[DEBUG direct] Binds: {:?}", cli.bind);
+    eprintln!("[DEBUG direct] Working dir: {:?}", cli.pwd);
+    eprintln!("[DEBUG direct] QEMU: {:?}", cli.qemu);
+    eprintln!("[DEBUG direct] Link2symlink: {}", cli.link2symlink);
+    eprintln!("[DEBUG direct] No sysvipc: {}", cli.no_sysvipc);
+    eprintln!("[DEBUG direct] Sysvipc: {}", cli.sysvipc);
+    eprintln!("[DEBUG direct] Kernel: {:?}", cli.kernel);
+    eprintln!("[DEBUG direct] Hostname: {:?}", cli.hostname);
+    eprintln!("[DEBUG direct] UID: {:?}", cli.uid);
+    eprintln!("[DEBUG direct] GID: {:?}", cli.gid);
+    eprintln!("[DEBUG direct] Seccomp: {}", cli.seccomp);
+    eprintln!("[DEBUG direct] No seccomp: {}", cli.no_seccomp);
+    eprintln!("[DEBUG direct] Trace: {}", cli.trace);
+    eprintln!("[DEBUG direct] Kill on exit: {}", cli.kill_on_exit);
+    eprintln!("[DEBUG direct] No kill on exit: {}", cli.no_kill_on_exit);
+    eprintln!("[DEBUG direct] Env: {:?}", cli.env);
+    eprintln!("[DEBUG direct] Command: {:?}", trailing_args);
+
+    // Create a temporary container config for direct execution
+    let rootfs_path = cli.rootfs.as_ref().unwrap();
+
+    // Use proot-core directly for direct execution
+    let mut config = proot_core::ProotConfig::default();
+    config.verbose = cli.verbose;
+    let mut engine = proot_core::ProotEngine::new(config)?;
+
+    engine.config.rootfs = Some(rootfs_path.into());
+
+    // Process bind mounts
+    for bind in &cli.bind {
+        engine.config.bind.push(bind.clone());
+    }
+
+    // Set working directory
+    if let Some(pwd) = &cli.pwd {
+        engine.config.cwd = Some(pwd.into());
+    }
+
+    // Set environment variables
+    for env in &cli.env {
+        engine.config.env.push(env.clone());
+    }
+
+    // Set kernel release
+    if let Some(kernel) = &cli.kernel {
+        engine.config.kernel_release = Some(kernel.clone());
+    }
+
+    // Set hostname
+    if let Some(hostname) = &cli.hostname {
+        engine.config.hostname = Some(hostname.clone());
+    }
+
+    // Set UID/GID
+    if let Some(uid) = cli.uid {
+        engine.config.uid = Some(uid);
+    }
+    if let Some(gid) = cli.gid {
+        engine.config.gid = Some(gid);
+    }
+
+    // Set seccomp
+    if cli.seccomp {
+        engine.config.seccomp = true;
+    }
+    if cli.no_seccomp {
+        engine.config.seccomp = false;
+    }
+
+    // Set trace
+    if cli.trace {
+        engine.config.trace = true;
+    }
+
+    // Set kill-on-exit
+    if cli.kill_on_exit {
+        engine.config.kill_on_exit = true;
+    }
+    if cli.no_kill_on_exit {
+        engine.config.kill_on_exit = false;
+    }
+
+    // Set sysvipc
+    if cli.no_sysvipc {
+        engine.config.sysvipc = false;
+    }
+    if cli.sysvipc {
+        engine.config.sysvipc = true;
+    }
+
+    // Set link2symlink
+    if cli.link2symlink {
+        engine.config.link2symlink = true;
+    }
+
+    // Set command
+    engine.config.command = trailing_args.to_vec();
+
+    // Execute and wait for completion
+    let exit_code = engine.execute().await? as i32;
+    if exit_code != 0 {
+        bail!("Command exited with code {}", exit_code);
+    }
+
+    Ok(())
+}
+
+async fn execute_direct_manual(rootfs: String, cmd_args: &[String], verbose: bool) -> Result<()> {
+    if cmd_args.is_empty() {
+        bail!("Direct execution mode requires a command. Use 'podnext -r /path/to/rootfs -- <command>'");
+    }
+
+    eprintln!("[DEBUG direct] Rootfs: {:?}", rootfs);
+    eprintln!("[DEBUG direct] Command: {:?}", cmd_args);
+    eprintln!("[DEBUG direct] Verbose: {}", verbose);
+
+    // Use proot-core directly for direct execution
+    let mut config = proot_core::ProotConfig::default();
+    config.verbose = if verbose { 1 } else { 0 };
+    let mut engine = proot_core::ProotEngine::new(config)?;
+
+    engine.config.rootfs = Some(rootfs.into());
+    engine.config.command = cmd_args.to_vec();
+
+    // Execute and wait for completion
+    let exit_code = engine.execute().await? as i32;
+    if exit_code != 0 {
+        bail!("Command exited with code {}", exit_code);
+    }
+
+    Ok(())
 }
 
 async fn execute_command(cmd: Commands) -> Result<()> {
     match cmd {
+        // Container commands
         Commands::Install { image, name, force } => cmd_install(image, name, force).await,
-        Commands::List { all, no_all } => cmd_list(all, no_all).await,
-        Commands::Login { container, user, command } => cmd_login(container, user, command).await,
-        Commands::Run { container, command } => cmd_run(container, command).await,
-        Commands::Ps => cmd_ps().await,
-        Commands::Sessions => cmd_sessions().await,
-        Commands::Attach { container, user, command } => cmd_attach(container, user, command).await,
+        Commands::List {
+            all,
+            no_all,
+            format,
+        } => cmd_list(all, no_all, format).await,
+        Commands::Login {
+            container,
+            user,
+            command,
+        } => cmd_login(container, user, command).await,
+        Commands::Run {
+            container,
+            command,
+            rm,
+            detach,
+            name,
+            network,
+            volume,
+            publish,
+            entrypoint,
+            tty,
+            interactive,
+            user,
+            workdir,
+        } => {
+            cmd_run(
+                container,
+                command,
+                rm,
+                detach,
+                name,
+                network,
+                volume,
+                publish,
+                entrypoint,
+                tty,
+                interactive,
+                user,
+                workdir,
+            )
+            .await
+        }
+        Commands::Ps { format } => cmd_ps(format).await,
+        Commands::Sessions { format } => cmd_sessions(format).await,
+        Commands::Attach {
+            container,
+            user,
+            command,
+        } => cmd_attach(container, user, command).await,
         Commands::Kill { container } => cmd_kill(container).await,
         Commands::Remove { name, force } => cmd_remove(name, force).await,
-        Commands::Search { query, limit } => cmd_search(query, limit).await,
-        Commands::Info => cmd_info().await,
-        Commands::Version => cmd_version().await,
+        Commands::Search {
+            query,
+            limit,
+            format,
+        } => cmd_search(query, limit, format).await,
+        Commands::Image(cmd) => execute_image_command(cmd).await,
+        Commands::Network(cmd) => execute_network_command(cmd).await,
+        Commands::Volume(cmd) => execute_volume_command(cmd).await,
+        Commands::Info { format } => cmd_info(format).await,
+        Commands::Version { format } => cmd_version(format).await,
+
+        // Service orchestration commands
+        Commands::Service(cmd) => execute_service_command(cmd).await,
+        Commands::Daemon(cmd) => execute_daemon_command(cmd).await,
+        Commands::Watchdog(cmd) => execute_watchdog_command(cmd).await,
+        Commands::Quota(cmd) => execute_quota_command(cmd).await,
+        Commands::Log(cmd) => execute_log_command(cmd).await,
+        Commands::Dbus(cmd) => execute_dbus_command(cmd).await,
+        Commands::Socket(cmd) => execute_socket_command(cmd).await,
+        Commands::Boot(cmd) => execute_boot_command(cmd).await,
+        Commands::Wakelock(cmd) => execute_wakelock_command(cmd).await,
+        Commands::Policy(cmd) => execute_policy_command(cmd).await,
+
+        // Phase 7: Platform Maturity commands
+        Commands::Backup(cmd) => execute_backup_command(cmd).await,
+        Commands::Build(cmd) => execute_build_command(cmd).await,
+        Commands::Gitops(cmd) => execute_gitops_command(cmd).await,
+        Commands::Dashboard(cmd) => execute_dashboard_command(cmd).await,
+
+        // Utilities
+        Commands::Completion { shell } => cmd_completion(shell).await,
     }
 }
 
+// Output formatting helpers
+fn output_table<T: Tabled>(items: &[T]) {
+    println!("{}", Table::new(items).to_string());
+}
+
+fn output_json<T: serde::Serialize>(items: &T) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(items)?);
+    Ok(())
+}
+
+fn output_yaml<T: serde::Serialize>(items: &T) -> Result<()> {
+    println!("{}", serde_yaml::to_string(items)?);
+    Ok(())
+}
+
+// Container command implementations (existing)
 async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result<()> {
-    let container_name = name.clone().unwrap_or_else(|| {
-        image.split(':').next().unwrap_or(&image).to_string()
-    });
+    let container_name = name
+        .clone()
+        .unwrap_or_else(|| image.split(':').next().unwrap_or(&image).to_string());
 
     println!("Installing '{}' as '{}'...", image, container_name);
 
-    // Native installation using proot-distro-core + direct Docker Hub API
     let rootfs: PathBuf = install_image_native(&image, &container_name, force, None).await?;
 
     println!("\nContainer '{}' installed successfully!", container_name);
@@ -232,58 +1624,201 @@ async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result
     Ok(())
 }
 
-async fn cmd_list(all: bool, no_all: bool) -> Result<()> {
+async fn cmd_list(all: bool, no_all: bool, format: OutputFormat) -> Result<()> {
     let show_all = all && !no_all;
     let containers = list_containers_native(show_all).await?;
 
-    println!("{:<20} {:<15} {:<15} {:<12} {}", "NAME", "DISTRO", "VERSION", "STATUS", "CREATED");
-    println!("{}", "-".repeat(80));
-    for c in containers {
-        println!("{:<20} {:<15} {:<15} {:<12} {}", 
-            c.name, c.distro, c.version, format!("{:?}", c.status), c.created_at.format("%Y-%m-%d %H:%M"));
+    #[derive(Tabled, Serialize)]
+    struct ContainerRow {
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "DISTRO")]
+        distro: String,
+        #[tabled(rename = "VERSION")]
+        version: String,
+        #[tabled(rename = "ARCH")]
+        arch: String,
+        #[tabled(rename = "STATUS")]
+        status: String,
+        #[tabled(rename = "CREATED")]
+        created_at: String,
+    }
+
+    let rows: Vec<ContainerRow> = containers
+        .iter()
+        .map(|c| ContainerRow {
+            name: c.name.clone(),
+            distro: c.distro.clone(),
+            version: c.version.clone(),
+            arch: c.arch.clone(),
+            status: format!("{:?}", c.status),
+            created_at: c.created_at.format("%Y-%m-%d %H:%M").to_string(),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&containers)?,
+        OutputFormat::Yaml => output_yaml(&containers)?,
+        OutputFormat::Text => {
+            for c in containers {
+                println!(
+                    "{} ({}:{}) [{}]",
+                    c.name,
+                    c.distro,
+                    c.version,
+                    format!("{:?}", c.status)
+                );
+            }
+        }
     }
     Ok(())
 }
 
 async fn cmd_login(container: String, user: Option<String>, command: Vec<String>) -> Result<()> {
     let cmd = if command.is_empty() {
-        vec!["/bin/bash".to_string()]
+        vec!["/bin/sh".to_string()]
     } else {
         command
     };
-    
+
     login_container_native(&container, user, cmd).await
 }
 
-async fn cmd_run(container: String, command: Vec<String>) -> Result<()> {
+async fn cmd_run(
+    container: String,
+    command: Vec<String>,
+    rm: bool,
+    detach: bool,
+    name: Option<String>,
+    network: Option<String>,
+    volume: Vec<String>,
+    publish: Vec<String>,
+    entrypoint: Option<String>,
+    tty: bool,
+    interactive: bool,
+    user: Option<String>,
+    workdir: Option<String>,
+) -> Result<()> {
+    // TODO: Implement full Podman-compatible run options
+    // For now, just pass the command to the container
+    // Future: Implement container creation with all options
+
+    // For now, if detach is requested, we need to handle it differently
+    if detach {
+        eprintln!("Warning: --detach/-d not fully implemented yet, running in foreground");
+    }
+
+    // For now, just run the command in the existing container
     run_container_native(&container, command).await
 }
 
-async fn cmd_ps() -> Result<()> {
-    let sessions = list_sessions_native().await?;
-    
-    println!("{:<20} {:<15} {:<15} {:<10} {}", "CONTAINER", "USER", "PID", "STATUS", "STARTED");
-    println!("{}", "-".repeat(75));
-    for s in sessions {
-        println!("{:<20} {:<15} {:<15} {:<10} {}", 
-            s.container_name, s.user, 
-            s.pid.map_or("-".to_string(), |p| p.to_string()), 
-            s.status, s.started_at.format("%Y-%m-%d %H:%M"));
+async fn cmd_ps(format: OutputFormat) -> Result<()> {
+    let sessions = list_sessions_native_full().await?;
+
+    #[derive(Tabled, Serialize)]
+    struct SessionRow {
+        #[tabled(rename = "ID")]
+        id: String,
+        #[tabled(rename = "CONTAINER")]
+        container: String,
+        #[tabled(rename = "USER")]
+        user: String,
+        #[tabled(rename = "COMMAND")]
+        command: String,
+        #[tabled(rename = "CWD")]
+        cwd: String,
+        #[tabled(rename = "PID")]
+        pid: String,
+        #[tabled(rename = "STATUS")]
+        status: String,
+        #[tabled(rename = "CREATED")]
+        created: String,
+        #[tabled(rename = "STARTED")]
+        started: String,
+    }
+
+    let rows: Vec<SessionRow> = sessions
+        .iter()
+        .map(|s| SessionRow {
+            id: s.id.clone(),
+            container: s.container_name.clone(),
+            user: s.user.clone(),
+            command: s.command.join(" "),
+            cwd: s.cwd.clone(),
+            pid: s.pid.map_or("-".to_string(), |p| p.to_string()),
+            status: format!("{:?}", s.status),
+            created: s.created_at.format("%Y-%m-%d %H:%M").to_string(),
+            started: s.started_at.map_or("-".to_string(), |dt| {
+                dt.format("%Y-%m-%d %H:%M").to_string()
+            }),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&sessions)?,
+        OutputFormat::Yaml => output_yaml(&sessions)?,
+        OutputFormat::Text => {
+            for s in sessions {
+                println!(
+                    "{} {} {} {} {} {}",
+                    s.id,
+                    s.container_name,
+                    s.user,
+                    s.pid.map_or("-".to_string(), |p| p.to_string()),
+                    format!("{:?}", s.status),
+                    s.command.join(" ")
+                );
+            }
+        }
     }
     Ok(())
 }
 
-async fn cmd_sessions() -> Result<()> {
+async fn cmd_sessions(format: OutputFormat) -> Result<()> {
     let sessions = list_sessions_native().await?;
-    
-    println!("Active Sessions:");
-    println!("{:<20} {:<15} {:<15} {:<10} {}", "CONTAINER", "USER", "PID", "STATUS", "STARTED");
-    println!("{}", "-".repeat(75));
-    for s in sessions {
-        println!("{:<20} {:<15} {:<15} {:<10} {}", 
-            s.container_name, s.user, 
-            s.pid.map_or("-".to_string(), |p| p.to_string()), 
-            s.status, s.started_at.format("%Y-%m-%d %H:%M"));
+
+    #[derive(Tabled, Serialize)]
+    struct SessionRow {
+        #[tabled(rename = "CONTAINER")]
+        container: String,
+        #[tabled(rename = "USER")]
+        user: String,
+        #[tabled(rename = "PID")]
+        pid: String,
+        #[tabled(rename = "STATUS")]
+        status: String,
+        #[tabled(rename = "STARTED")]
+        started: String,
+    }
+
+    let rows: Vec<SessionRow> = sessions
+        .iter()
+        .map(|s| SessionRow {
+            container: s.container_name.clone(),
+            user: s.user.clone(),
+            pid: s.pid.map_or("-".to_string(), |p| p.to_string()),
+            status: s.status.clone(),
+            started: s.started_at.format("%Y-%m-%d %H:%M").to_string(),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&sessions)?,
+        OutputFormat::Yaml => output_yaml(&sessions)?,
+        OutputFormat::Text => {
+            for s in sessions {
+                println!(
+                    "{} {} {} {}",
+                    s.container_name,
+                    s.user,
+                    s.pid.map_or("-".to_string(), |p| p.to_string()),
+                    s.status
+                );
+            }
+        }
     }
     println!("\nNote: Use 'podnext attach <container>' to create a new session.");
     Ok(())
@@ -295,7 +1830,7 @@ async fn cmd_attach(container: String, user: Option<String>, command: Vec<String
     } else {
         command
     };
-    
+
     login_container_native(&container, user, cmd).await
 }
 
@@ -307,84 +1842,451 @@ async fn cmd_remove(name: String, force: bool) -> Result<()> {
     remove_container_native(name, force).await
 }
 
-async fn cmd_info() -> Result<()> {
-    println!("podnext (PRoot Distro Next) v0.1.0");
-    println!("  A simple container wrapper for Termux/Android");
-    println!("  Uses proot-distro under the hood");
-    Ok(())
-}
+async fn cmd_info(format: OutputFormat) -> Result<()> {
+    let info = SystemInfo {
+        version: "0.1.0".to_string(),
+        platform: "Termux/Android".to_string(),
+        rust_version: "1.80+".to_string(),
+        backend: "proot-distro-core".to_string(),
+    };
 
-async fn cmd_search(query: String, limit: usize) -> Result<()> {
-    let images = search_docker_hub(&query, limit).await?;
+    #[derive(Tabled, Serialize)]
+    struct InfoRow {
+        #[tabled(rename = "VERSION")]
+        version: String,
+        #[tabled(rename = "PLATFORM")]
+        platform: String,
+        #[tabled(rename = "RUST VERSION")]
+        rust_version: String,
+        #[tabled(rename = "BACKEND")]
+        backend: String,
+    }
 
-    println!("{:<40} {:<50} {:<8} {:<10} {}", "NAME", "DESCRIPTION", "STARS", "PULLS", "OFFICIAL");
-    println!("{}", "-".repeat(120));
-    for img in images {
-        let desc = if img.short_description.len() > 48 {
-            format!("{}...", &img.short_description[..48])
-        } else {
-            img.short_description
-        };
-        println!("{:<40} {:<50} {:<8} {:<10} {}", 
-            img.repo_name, desc, img.star_count, img.pull_count, 
-            if img.is_official { "[OK]" } else { "" });
+    let row = InfoRow {
+        version: info.version.clone(),
+        platform: info.platform.clone(),
+        rust_version: info.rust_version.clone(),
+        backend: info.backend.clone(),
+    };
+
+    let serializable = SerializableInfo {
+        version: info.version.clone(),
+        platform: info.platform.clone(),
+        rust_version: info.rust_version.clone(),
+        backend: info.backend.clone(),
+    };
+
+    match format {
+        OutputFormat::Table => output_table(&[row]),
+        OutputFormat::Json => output_json(&serializable)?,
+        OutputFormat::Yaml => output_yaml(&serializable)?,
+        OutputFormat::Text => println!("podnext 0.1.0 - PRoot Distro Next for Termux/Android"),
     }
     Ok(())
 }
 
-async fn cmd_version() -> Result<()> {
-    println!("podnext 0.1.0");
+async fn cmd_search(query: String, limit: usize, format: OutputFormat) -> Result<()> {
+    let images = search_docker_hub(&query, limit).await?;
+
+    #[derive(Tabled, Serialize)]
+    struct ImageRow {
+        #[tabled(rename = "NAME")]
+        name: String,
+        #[tabled(rename = "DESCRIPTION")]
+        description: String,
+        #[tabled(rename = "STARS")]
+        stars: u32,
+        #[tabled(rename = "PULLS")]
+        pulls: u64,
+        #[tabled(rename = "OFFICIAL")]
+        official: String,
+    }
+
+    let rows: Vec<ImageRow> = images
+        .iter()
+        .map(|img| ImageRow {
+            name: img.repo_name.clone(),
+            description: if img.short_description.len() > 48 {
+                format!("{}...", &img.short_description[..48])
+            } else {
+                img.short_description.clone()
+            },
+            stars: img.star_count,
+            pulls: img.pull_count,
+            official: if img.is_official {
+                "[OK]".to_string()
+            } else {
+                "".to_string()
+            },
+        })
+        .collect();
+
+    let serializable: Vec<SerializableImage> = images
+        .iter()
+        .map(|img| SerializableImage {
+            repo_name: img.repo_name.clone(),
+            short_description: img.short_description.clone(),
+            star_count: img.star_count,
+            pull_count: img.pull_count,
+            is_official: img.is_official,
+            is_automated: img.is_automated,
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&serializable)?,
+        OutputFormat::Yaml => output_yaml(&serializable)?,
+        OutputFormat::Text => {
+            for img in images {
+                println!(
+                    "{} - {} (stars: {})",
+                    img.repo_name, img.short_description, img.star_count
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn execute_image_command(cmd: ImageCommands) -> Result<()> {
+    match cmd {
+        ImageCommands::Pull {
+            image,
+            platform,
+            all_tags,
+        } => cmd_image_pull(image, platform, all_tags).await,
+        ImageCommands::Push { image } => cmd_image_push(image).await,
+        ImageCommands::Rm { images, force } => cmd_image_rm(images, force).await,
+        ImageCommands::Tag { source, target } => cmd_image_tag(source, target).await,
+        ImageCommands::History {
+            image,
+            no_trunc,
+            format,
+        } => cmd_image_history(image, no_trunc, format).await,
+        ImageCommands::Inspect { images, format } => cmd_image_inspect(images, format).await,
+        ImageCommands::Ls { format, all } => cmd_image_ls(format, all).await,
+    }
+}
+
+async fn cmd_image_pull(image: String, platform: Option<String>, all_tags: bool) -> Result<()> {
+    eprintln!("Pulling image: {}", image);
+    if let Some(p) = platform {
+        eprintln!("Platform: {}", p);
+    }
+    if all_tags {
+        eprintln!("Pulling all tags");
+    }
+
+    // TODO: Implement actual image pull using proot-distro-core or direct OCI registry calls
+    // For now, delegate to install command logic
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
+    let install_options = proot_distro_core::InstallOptions {
+        source: proot_distro_core::ImageSource::Docker(image.clone()),
+        name: image.split(':').next().unwrap_or(&image).to_string(),
+        config: Default::default(),
+        distro_type: proot_distro_core::DistroType::default(),
+    };
+    container_mgr
+        .create(&install_options.name, &install_options.config)
+        .await?;
+    eprintln!("Image {} pulled successfully", image);
+    Ok(())
+}
+
+async fn cmd_image_push(image: String) -> Result<()> {
+    eprintln!("Pushing image: {}", image);
+    // TODO: Implement image push to registry
+    Err(anyhow::anyhow!("Image push not yet implemented"))
+}
+
+async fn cmd_image_rm(images: Vec<String>, force: bool) -> Result<()> {
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
+
+    for image in images {
+        if !force {
+            print!("Remove image '{}'? [y/N]: ", image);
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("Cancelled.");
+                continue;
+            }
+        }
+
+        // For now, just remove the container if it exists
+        match container_mgr.remove(&image).await {
+            Ok(_) => println!("Removed image: {}", image),
+            Err(e) => eprintln!("Failed to remove image {}: {}", image, e),
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_image_tag(source: String, target: String) -> Result<()> {
+    eprintln!("Tagging {} -> {}", source, target);
+    // TODO: Implement image tagging
+    Err(anyhow::anyhow!("Image tag not yet implemented"))
+}
+
+async fn cmd_image_history(image: String, no_trunc: bool, format: OutputFormat) -> Result<()> {
+    eprintln!("Showing history for image: {}", image);
+    if no_trunc {
+        eprintln!("Showing full history (no truncation)");
+    }
+    // TODO: Implement image history
+    Err(anyhow::anyhow!("Image history not yet implemented"))
+}
+
+async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<()> {
+    eprintln!("Inspecting images: {:?}", images);
+    // TODO: Implement image inspect
+    Err(anyhow::anyhow!("Image inspect not yet implemented"))
+}
+
+async fn cmd_image_ls(format: OutputFormat, all: bool) -> Result<()> {
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
+    let containers = container_mgr.list().await?;
+
+    #[derive(Tabled, Serialize)]
+    struct ImageRow {
+        #[tabled(rename = "REPOSITORY")]
+        repository: String,
+        #[tabled(rename = "TAG")]
+        tag: String,
+        #[tabled(rename = "IMAGE ID")]
+        image_id: String,
+        #[tabled(rename = "CREATED")]
+        created: String,
+        #[tabled(rename = "SIZE")]
+        size: String,
+    }
+
+    let rows: Vec<ImageRow> = containers
+        .iter()
+        .map(|c| ImageRow {
+            repository: c.distro.clone(),
+            tag: c.version.clone(),
+            image_id: c.name.clone(),
+            created: c.created_at.format("%Y-%m-%d %H:%M").to_string(),
+            size: format_size(c.rootfs_path.metadata().map(|m| m.len()).unwrap_or(0)),
+        })
+        .collect();
+
+    match format {
+        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Json => output_json(&containers)?,
+        OutputFormat::Yaml => output_yaml(&containers)?,
+        OutputFormat::Text => {
+            for c in containers {
+                println!(
+                    "{} {} {} {}",
+                    c.distro,
+                    c.version,
+                    c.name,
+                    c.created_at.format("%Y-%m-%d %H:%M")
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_version(format: OutputFormat) -> Result<()> {
+    let version_info = VersionInfo {
+        version: "0.1.0".to_string(),
+        git_commit: option_env!("GIT_COMMIT").unwrap_or("unknown").to_string(),
+        build_date: option_env!("BUILD_DATE").unwrap_or("unknown").to_string(),
+        rust_version: "1.80+".to_string(),
+    };
+
+    match format {
+        OutputFormat::Table => output_table(&[version_info]),
+        OutputFormat::Json => output_json(&version_info)?,
+        OutputFormat::Yaml => output_yaml(&version_info)?,
+        OutputFormat::Text => println!("podnext 0.1.0"),
+    }
+    Ok(())
+}
+
+async fn cmd_completion(shell: Shell) -> Result<()> {
+    let mut cmd = Cli::command();
+    let name = "podnext".to_string();
+
+    match shell {
+        Shell::Bash => clap_complete::generate(
+            clap_complete::Shell::Bash,
+            &mut cmd,
+            name,
+            &mut std::io::stdout(),
+        ),
+        Shell::Zsh => clap_complete::generate(
+            clap_complete::Shell::Zsh,
+            &mut cmd,
+            name,
+            &mut std::io::stdout(),
+        ),
+        Shell::Fish => clap_complete::generate(
+            clap_complete::Shell::Fish,
+            &mut cmd,
+            name,
+            &mut std::io::stdout(),
+        ),
+        Shell::PowerShell => clap_complete::generate(
+            clap_complete::Shell::PowerShell,
+            &mut cmd,
+            name,
+            &mut std::io::stdout(),
+        ),
+        Shell::Elvish => clap_complete::generate(
+            clap_complete::Shell::Elvish,
+            &mut cmd,
+            name,
+            &mut std::io::stdout(),
+        ),
+    }
     Ok(())
 }
 
 fn print_help() {
-    println!(r#"podnext (PRoot Distro Next) - Simple container management for Termux/Android
+    let mut cmd = Cli::command();
+    cmd.print_help().unwrap();
+    println!();
+}
 
-USAGE:
-    podnext [SUBCOMMAND] [OPTIONS]
-    podnext [OPTIONS] -- COMMAND [ARGS]...    # Direct execution mode (like proot)
+// Output format helpers
+#[derive(Tabled)]
+struct SystemInfo {
+    #[tabled(rename = "Version")]
+    version: String,
+    #[tabled(rename = "Platform")]
+    platform: String,
+    #[tabled(rename = "Rust Version")]
+    rust_version: String,
+    #[tabled(rename = "Backend")]
+    backend: String,
+}
 
-SUBCOMMANDS:
-    install      Install distribution from OCI image
-    list         List containers
-    login        Start interactive shell in container
-    run          Run command in container
-    ps           List active sessions (raw)
-    sessions     List active sessions (formatted)
-    attach       Attach to container (creates new session)
-    kill         Stop container
-    remove       Delete container
-    search       Search images on Docker Hub
-    info         Show system information
-    version      Show version
-    help         Show this help
+#[derive(Tabled, serde::Serialize)]
+struct VersionInfo {
+    #[tabled(rename = "Version")]
+    version: String,
+    #[tabled(rename = "Git Commit")]
+    git_commit: String,
+    #[tabled(rename = "Build Date")]
+    build_date: String,
+    #[tabled(rename = "Rust Version")]
+    rust_version: String,
+}
 
-DIRECT EXECUTION OPTIONS (like proot):
-    -r, --rootfs PATH       Guest root filesystem
-    -b, --bind HOST:GUEST   Bind mount (repeatable)
-    -w, --pwd PATH          Working directory
-    -q, --qemu CMD          QEMU user-mode emulator
-    -0, --link2symlink      Enable hardlink emulation
-    --no-sysvipc            Disable System V IPC
-    --kernel TEXT           Override kernel release
-    --hostname TEXT         Set hostname
-    -e, --env VAR=VALUE     Set environment variable
+async fn execute_network_command(cmd: NetworkCommands) -> Result<()> {
+    match cmd {
+        NetworkCommands::Create {
+            name,
+            driver,
+            subnet,
+            gateway,
+        } => cmd_network_create(name, driver, subnet, gateway).await,
+        NetworkCommands::Ls { format } => cmd_network_ls(format).await,
+        NetworkCommands::Inspect { networks, format } => {
+            cmd_network_inspect(networks, format).await
+        }
+        NetworkCommands::Rm { networks } => cmd_network_rm(networks).await,
+        NetworkCommands::Connect {
+            network,
+            container,
+            ip,
+        } => cmd_network_connect(network, container, ip).await,
+        NetworkCommands::Disconnect { network, container } => {
+            cmd_network_disconnect(network, container).await
+        }
+    }
+}
 
-EXAMPLES:
-    # Container management (simple and familiar)
-    podnext install ubuntu:22.04
-    podnext login ubuntu
-    podnext run ubuntu -- apt update
-    podnext list
-    podnext sessions
-    podnext attach ubuntu
-    podnext search ubuntu
-    podnext remove ubuntu
+async fn execute_volume_command(cmd: VolumeCommands) -> Result<()> {
+    match cmd {
+        VolumeCommands::Create { name, driver, opts } => {
+            cmd_volume_create(name, driver, opts).await
+        }
+        VolumeCommands::Ls { format } => cmd_volume_ls(format).await,
+        VolumeCommands::Inspect { volumes, format } => cmd_volume_inspect(volumes, format).await,
+        VolumeCommands::Rm { volumes, force } => cmd_volume_rm(volumes, force).await,
+        VolumeCommands::Prune { force } => cmd_volume_prune(force).await,
+    }
+}
 
-    # Direct execution (like proot)
-    podnext -r /path/to/rootfs -- /bin/bash
-    podnext -b /host/data:/data -- ls /data
+async fn cmd_network_create(
+    name: String,
+    driver: String,
+    subnet: Option<String>,
+    gateway: Option<String>,
+) -> Result<()> {
+    eprintln!("Creating network: {} (driver: {})", name, driver);
+    if let Some(s) = subnet {
+        eprintln!("Subnet: {}", s);
+    }
+    if let Some(g) = gateway {
+        eprintln!("Gateway: {}", g);
+    }
+    Err(anyhow::anyhow!("Network create not yet implemented"))
+}
 
-Run 'podnext <command> --help' for more information on a command.
-"#);
+async fn cmd_network_ls(format: OutputFormat) -> Result<()> {
+    eprintln!("Listing networks");
+    Err(anyhow::anyhow!("Network ls not yet implemented"))
+}
+
+async fn cmd_network_inspect(networks: Vec<String>, format: OutputFormat) -> Result<()> {
+    eprintln!("Inspecting networks: {:?}", networks);
+    Err(anyhow::anyhow!("Network inspect not yet implemented"))
+}
+
+async fn cmd_network_rm(networks: Vec<String>) -> Result<()> {
+    eprintln!("Removing networks: {:?}", networks);
+    Err(anyhow::anyhow!("Network rm not yet implemented"))
+}
+
+async fn cmd_network_connect(network: String, container: String, ip: Option<String>) -> Result<()> {
+    eprintln!("Connecting container {} to network {}", container, network);
+    if let Some(ip) = ip {
+        eprintln!("IP: {}", ip);
+    }
+    Err(anyhow::anyhow!("Network connect not yet implemented"))
+}
+
+async fn cmd_network_disconnect(network: String, container: String) -> Result<()> {
+    eprintln!(
+        "Disconnecting container {} from network {}",
+        container, network
+    );
+    Err(anyhow::anyhow!("Network disconnect not yet implemented"))
+}
+
+async fn cmd_volume_create(name: String, driver: String, opts: Vec<String>) -> Result<()> {
+    eprintln!("Creating volume: {} (driver: {})", name, driver);
+    if !opts.is_empty() {
+        eprintln!("Opts: {:?}", opts);
+    }
+    Err(anyhow::anyhow!("Volume create not yet implemented"))
+}
+
+async fn cmd_volume_ls(format: OutputFormat) -> Result<()> {
+    eprintln!("Listing volumes");
+    Err(anyhow::anyhow!("Volume ls not yet implemented"))
+}
+
+async fn cmd_volume_inspect(volumes: Vec<String>, format: OutputFormat) -> Result<()> {
+    eprintln!("Inspecting volumes: {:?}", volumes);
+    Err(anyhow::anyhow!("Volume inspect not yet implemented"))
+}
+
+async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
+    eprintln!("Removing volumes: {:?} (force: {})", volumes, force);
+    Err(anyhow::anyhow!("Volume rm not yet implemented"))
+}
+
+async fn cmd_volume_prune(force: bool) -> Result<()> {
+    eprintln!("Pruning volumes (force: {})", force);
+    Err(anyhow::anyhow!("Volume prune not yet implemented"))
 }

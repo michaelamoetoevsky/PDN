@@ -1,12 +1,12 @@
 //! Guardrail manager for PN Gateway
 
-use super::config::{GuardrailConfig, GuardrailRule, GuardrailAction, Severity};
+use super::config::{GuardrailAction, GuardrailConfig, GuardrailRule, Severity};
 use anyhow::Result;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
-use tracing::{warn, error, info};
-use serde_json::Value;
+use tracing::{error, info, warn};
 
 /// Guardrail manager for enforcing safety rules
 pub struct GuardrailManager {
@@ -18,38 +18,51 @@ pub struct GuardrailManager {
 impl GuardrailManager {
     pub fn new(config: GuardrailConfig) -> Self {
         let mut evaluators: HashMap<String, Box<dyn RuleEvaluator + Send + Sync>> = HashMap::new();
-        
+
         // Register default evaluators
-        evaluators.insert("container_count".to_string(), Box::new(ContainerCountEvaluator));
+        evaluators.insert(
+            "container_count".to_string(),
+            Box::new(ContainerCountEvaluator),
+        );
         evaluators.insert("memory_usage".to_string(), Box::new(MemoryUsageEvaluator));
         evaluators.insert("cpu_usage".to_string(), Box::new(CpuUsageEvaluator));
         evaluators.insert("disk_usage".to_string(), Box::new(DiskUsageEvaluator));
-        evaluators.insert("privileged_access".to_string(), Box::new(PrivilegedAccessEvaluator));
+        evaluators.insert(
+            "privileged_access".to_string(),
+            Box::new(PrivilegedAccessEvaluator),
+        );
         evaluators.insert("network_usage".to_string(), Box::new(NetworkUsageEvaluator));
-        evaluators.insert("container_lifetime".to_string(), Box::new(ContainerLifetimeEvaluator));
-        
+        evaluators.insert(
+            "container_lifetime".to_string(),
+            Box::new(ContainerLifetimeEvaluator),
+        );
+
         Self {
             config,
             rule_evaluators: evaluators,
             violation_log: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
-    
+
     pub fn check_all(&self) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
-        
+
         for rule in &self.config.rules {
             if let Some(evaluator) = self.rule_evaluators.get(&rule.name) {
                 let result = evaluator.evaluate(&rule.condition)?;
-                
+
                 if result.triggered {
                     self.record_violation(&rule, &result)?;
-                    
+
                     match rule.action {
                         GuardrailAction::Deny => {
-                            return Err(anyhow::anyhow!("Guardrail '{}' denied: {}", rule.name, result.message));
+                            return Err(anyhow::anyhow!(
+                                "Guardrail '{}' denied: {}",
+                                rule.name,
+                                result.message
+                            ));
                         }
                         GuardrailAction::Throttle => {
                             // Apply throttling
@@ -69,16 +82,20 @@ impl GuardrailManager {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
-    pub async fn check_condition(&self, condition: &str, context: &HashMap<String, serde_json::Value>) -> Result<bool> {
+
+    pub async fn check_condition(
+        &self,
+        condition: &str,
+        context: &HashMap<String, serde_json::Value>,
+    ) -> Result<bool> {
         // Simple condition evaluation (in production, use a proper expression parser)
         // This is a simplified implementation
         Ok(false)
     }
-    
+
     fn record_violation(&self, rule: &GuardrailRule, result: &EvaluationResult) -> Result<()> {
         let record = ViolationRecord {
             rule_name: rule.name.clone(),
@@ -87,20 +104,29 @@ impl GuardrailManager {
             timestamp: chrono::Utc::now(),
             action_taken: rule.action.clone(),
         };
-        
+
         // Log based on severity
         match rule.severity {
             Severity::Critical => {
-                error!("GUARDRAIL VIOLATION [CRITICAL]: {} - {}", rule.name, result.message);
+                error!(
+                    "GUARDRAIL VIOLATION [CRITICAL]: {} - {}",
+                    rule.name, result.message
+                );
             }
             Severity::Warning => {
-                warn!("GUARDRAIL VIOLATION [WARNING]: {} - {}", rule.name, result.message);
+                warn!(
+                    "GUARDRAIL VIOLATION [WARNING]: {} - {}",
+                    rule.name, result.message
+                );
             }
             Severity::Info => {
-                info!("GUARDRAIL VIOLATION [INFO]: {} - {}", rule.name, result.message);
+                info!(
+                    "GUARDRAIL VIOLATION [INFO]: {} - {}",
+                    rule.name, result.message
+                );
             }
         }
-        
+
         // Log to violation log
         tokio::spawn({
             let log = self.violation_log.clone();
@@ -115,16 +141,16 @@ impl GuardrailManager {
                 }
             }
         });
-        
+
         Ok(())
     }
-    
+
     pub async fn get_violations(&self, limit: Option<usize>) -> Vec<ViolationRecord> {
         let log = self.violation_log.lock().await;
         let limit = limit.unwrap_or(100);
         log.iter().rev().take(limit).cloned().collect()
     }
-    
+
     pub async fn clear_violations(&self) {
         let mut log = self.violation_log.lock().await;
         log.clear();
@@ -152,7 +178,7 @@ impl RuleEvaluator for ContainerCountEvaluator {
             let metric = parts[0];
             let op = parts[1];
             let threshold: usize = parts[2].parse().unwrap_or(0);
-            
+
             if metric == "container_count" {
                 let current = get_container_count()?;
                 let triggered = match op {
@@ -164,15 +190,22 @@ impl RuleEvaluator for ContainerCountEvaluator {
                     "!=" => current != threshold,
                     _ => false,
                 };
-                
+
                 return Ok(EvaluationResult {
                     triggered,
-                    message: format!("Container count {} {} (threshold: {})", current, op, threshold),
+                    message: format!(
+                        "Container count {} {} (threshold: {})",
+                        current, op, threshold
+                    ),
                     value: Some(serde_json::json!(current)),
                 });
             }
         }
-        Ok(EvaluationResult { triggered: false, message: "Unknown condition".to_string(), value: None })
+        Ok(EvaluationResult {
+            triggered: false,
+            message: "Unknown condition".to_string(),
+            value: None,
+        })
     }
 }
 
@@ -186,7 +219,7 @@ impl RuleEvaluator for MemoryUsageEvaluator {
             let op = parts[1];
             let threshold_str = parts[2].trim_end_matches('%');
             let threshold: f64 = threshold_str.parse().unwrap_or(0.0);
-            
+
             if metric == "memory_usage" {
                 let current = get_memory_usage_percent()?;
                 let triggered = match op {
@@ -198,15 +231,22 @@ impl RuleEvaluator for MemoryUsageEvaluator {
                     "!=" => (current - threshold).abs() >= f64::EPSILON,
                     _ => false,
                 };
-                
+
                 return Ok(EvaluationResult {
                     triggered,
-                    message: format!("Memory usage {:.1}% {} {}% (threshold: {}%)", current, op, threshold, threshold),
+                    message: format!(
+                        "Memory usage {:.1}% {} {}% (threshold: {}%)",
+                        current, op, threshold, threshold
+                    ),
                     value: Some(serde_json::json!(current)),
                 });
             }
         }
-        Ok(EvaluationResult { triggered: false, message: "Unknown condition".to_string(), value: None })
+        Ok(EvaluationResult {
+            triggered: false,
+            message: "Unknown condition".to_string(),
+            value: None,
+        })
     }
 }
 
@@ -220,7 +260,7 @@ impl RuleEvaluator for CpuUsageEvaluator {
             let op = parts[1];
             let threshold_str = parts[2].trim_end_matches('%');
             let threshold: f64 = threshold_str.parse().unwrap_or(0.0);
-            
+
             if metric == "cpu_usage" {
                 let current = get_cpu_usage_percent()?;
                 let triggered = match op {
@@ -232,15 +272,22 @@ impl RuleEvaluator for CpuUsageEvaluator {
                     "!=" => (current - threshold).abs() >= f64::EPSILON,
                     _ => false,
                 };
-                
+
                 return Ok(EvaluationResult {
                     triggered,
-                    message: format!("CPU usage {:.1}% {} {}% (threshold: {}%)", current, op, threshold, threshold),
+                    message: format!(
+                        "CPU usage {:.1}% {} {}% (threshold: {}%)",
+                        current, op, threshold, threshold
+                    ),
                     value: Some(serde_json::json!(current)),
                 });
             }
         }
-        Ok(EvaluationResult { triggered: false, message: "Unknown condition".to_string(), value: None })
+        Ok(EvaluationResult {
+            triggered: false,
+            message: "Unknown condition".to_string(),
+            value: None,
+        })
     }
 }
 
@@ -254,7 +301,7 @@ impl RuleEvaluator for DiskUsageEvaluator {
             let op = parts[1];
             let threshold_str = parts[2].trim_end_matches('%');
             let threshold: f64 = threshold_str.parse().unwrap_or(0.0);
-            
+
             if metric == "disk_usage" {
                 let current = get_disk_usage_percent("/")?;
                 let triggered = match op {
@@ -266,15 +313,22 @@ impl RuleEvaluator for DiskUsageEvaluator {
                     "!=" => (current - threshold).abs() >= f64::EPSILON,
                     _ => false,
                 };
-                
+
                 return Ok(EvaluationResult {
                     triggered,
-                    message: format!("Disk usage {:.1}% {} {}% (threshold: {}%)", current, op, threshold, threshold),
+                    message: format!(
+                        "Disk usage {:.1}% {} {}% (threshold: {}%)",
+                        current, op, threshold, threshold
+                    ),
                     value: Some(serde_json::json!(current)),
                 });
             }
         }
-        Ok(EvaluationResult { triggered: false, message: "Unknown condition".to_string(), value: None })
+        Ok(EvaluationResult {
+            triggered: false,
+            message: "Unknown condition".to_string(),
+            value: None,
+        })
     }
 }
 
@@ -286,11 +340,19 @@ impl RuleEvaluator for PrivilegedAccessEvaluator {
             let has_privileged = check_privileged_containers()?;
             return Ok(EvaluationResult {
                 triggered: has_privileged,
-                message: if has_privileged { "Privileged container detected".to_string() } else { "No privileged containers".to_string() },
+                message: if has_privileged {
+                    "Privileged container detected".to_string()
+                } else {
+                    "No privileged containers".to_string()
+                },
                 value: Some(serde_json::json!(has_privileged)),
             });
         }
-        Ok(EvaluationResult { triggered: false, message: "Unknown condition".to_string(), value: None })
+        Ok(EvaluationResult {
+            triggered: false,
+            message: "Unknown condition".to_string(),
+            value: None,
+        })
     }
 }
 
@@ -299,7 +361,11 @@ struct NetworkUsageEvaluator;
 impl RuleEvaluator for NetworkUsageEvaluator {
     fn evaluate(&self, condition: &str) -> Result<EvaluationResult> {
         // Simplified implementation
-        Ok(EvaluationResult { triggered: false, message: "Network usage check not implemented".to_string(), value: None })
+        Ok(EvaluationResult {
+            triggered: false,
+            message: "Network usage check not implemented".to_string(),
+            value: None,
+        })
     }
 }
 
@@ -308,7 +374,11 @@ struct ContainerLifetimeEvaluator;
 impl RuleEvaluator for ContainerLifetimeEvaluator {
     fn evaluate(&self, condition: &str) -> Result<EvaluationResult> {
         // Simplified implementation
-        Ok(EvaluationResult { triggered: false, message: "Container lifetime check not implemented".to_string(), value: None })
+        Ok(EvaluationResult {
+            triggered: false,
+            message: "Container lifetime check not implemented".to_string(),
+            value: None,
+        })
     }
 }
 
@@ -341,4 +411,3 @@ fn get_disk_usage_percent(_path: &str) -> Result<f64> {
 fn check_privileged_containers() -> Result<bool> {
     Ok(false) // Mock
 }
-

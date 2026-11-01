@@ -4,26 +4,112 @@
 //! PRoot, PRoot-distro, and proot-compat to provide a more sophisticated,
 //! user-friendly, and organized system for managing containers on Termux.
 
+pub mod api;
+pub mod backup_restore;
+pub mod cluster;
+pub mod container_socket_activation;
+#[cfg(feature = "cri")]
+pub mod cri_plugin;
+pub mod daemon_runtime;
+pub mod dbus;
+pub mod gitops;
+pub mod multiarch_build;
+pub mod network;
+pub mod plugin;
+pub mod policy_engine;
+pub mod resource_quota;
 pub mod runtime;
 pub mod scheduler;
-pub mod network;
-pub mod storage;
 pub mod security;
-pub mod api;
+pub mod socket_activation;
+pub mod storage;
+pub mod structured_logging;
+pub mod supervisor;
+pub mod termux_boot;
+pub mod wake_lock;
+pub mod watchdog;
+pub mod web_dashboard;
 pub mod workflow;
-pub mod plugin;
 
+pub use api::{ApiConfig, ApiServer, ApiState};
+pub use backup_restore::{
+    BackupConfig, BackupEvent, BackupManager, BackupManifest, BackupMetadata, BackupProgress,
+    BackupStatus, BackupType, RestoreOptions,
+};
+pub use cluster::{
+    ClusterConfig, ClusterEvent, ClusterManager, ClusterStateInfo, GossipConfig, NodeInfo,
+    NodeResources, NodeRole, NodeStatus, PodSpec, SchedulerConfig as ClusterSchedulerConfig,
+    SchedulingAlgorithm,
+};
+pub use container_socket_activation::{
+    ContainerSocketConfig, ContainerSocketEvent, ContainerSocketManager,
+    HealthCheckConfig as ContainerHealthCheckConfig, HealthCheckType,
+};
+#[cfg(feature = "cri")]
+pub use cri_plugin::{CRIPluginConfig, CRIPluginManager};
+pub use daemon_runtime::{
+    DaemonEvent, DaemonHealthCheckConfig, DaemonHealthStatus, DaemonMessage, DaemonResponse,
+    DaemonRestartPolicy, DaemonRuntime, DaemonRuntimeConfig, DaemonServiceState,
+    DaemonServiceStatus, DaemonStatus, ManagedService,
+};
+pub use dbus::{
+    ConnectionInfo, DBusBroker, DBusBrokerConfig, DBusEvent, DBusMessage, MessageHeader,
+    MessageType, ServiceRegistration,
+};
+pub use gitops::{
+    Application, ApplicationDestination, ApplicationSource, GitOpsConfig, GitOpsEvent,
+    GitOpsManager, HealthStatus as GitOpsHealthStatus, SyncPolicy, SyncStatus,
+};
+pub use multiarch_build::{
+    BuildArtifact, BuildEvent, BuildManager, BuildMetadata,
+    BuildProgress as MultiArchBuildProgress, BuildServiceConfig, BuildSpec, BuildStatus,
+    PlatformResult, TargetArch,
+};
+pub use network::{NetworkConfig, NetworkInterface, NetworkManager};
+pub use plugin::{Plugin, PluginConfig, PluginManager};
+pub use policy_engine::{
+    ComparisonOperator, EvaluationContext, EvaluationResult, HealthStatus as PolicyHealthStatus,
+    PolicyAction, PolicyCondition, PolicyEffect, PolicyEngine, PolicyEngineConfig, PolicyRule,
+    ResourceType as PolicyResourceType,
+};
+pub use resource_quota::{
+    QuotaViolation, QuotaViolationAction, ResourceQuotaConfig, ResourceQuotaManager,
+    ResourceQuotas, ResourceType, ResourceUsage,
+};
 pub use runtime::{Runtime, RuntimeConfig, RuntimeState};
 pub use scheduler::{Scheduler, SchedulerConfig, Task, TaskPriority, TaskStatus};
-pub use network::{NetworkManager, NetworkConfig, NetworkInterface};
-pub use storage::{StorageManager, StorageConfig, Volume, VolumeDriver};
-pub use security::{SecurityManager, SecurityConfig, Capability, Policy};
-pub use api::{ApiServer, ApiConfig, ApiState};
-pub use workflow::{WorkflowEngine, WorkflowConfig, Workflow, WorkflowStep as Step};
-pub use plugin::{PluginManager, PluginConfig, Plugin};
+pub use security::{Capability, Policy, SecurityConfig, SecurityManager};
+pub use socket_activation::{
+    SocketActivationConfig, SocketActivationEvent, SocketActivationManager, SocketConfig,
+    SocketType,
+};
+pub use storage::{StorageConfig, StorageManager, Volume, VolumeDriver};
+pub use structured_logging::{
+    LogEntry, LogLevel, LogQuery, LogStats, RotationConfig, StructuredLogging,
+    StructuredLoggingConfig,
+};
+pub use supervisor::{
+    HealthCheckConfig as SupervisorHealthCheckConfig, HealthStatus, RestartCondition,
+    RestartPolicy, ServiceConfig, ServiceState, ServiceStatus, ServiceSupervisor, ServiceType,
+    SupervisorBuilder, SupervisorConfig, SupervisorEvent, SupervisorState,
+};
+pub use termux_boot::{TermuxBootConfig, TermuxBootManager};
+pub use wake_lock::{WakeLockConfig, WakeLockManager, WakeLockState, WakeLockType};
+pub use watchdog::{
+    EscalationAction, EscalationConfig, EscalationLevel, HealthCheckResult, MaxRestartsAction,
+    RestartPolicy as WatchdogRestartPolicy, ServiceWatchdogState, WatchdogConfig, WatchdogEvent,
+    WatchdogManager,
+};
+pub use web_dashboard::{
+    ContainerInfo, DashboardEvent, DashboardState, PortInfo, ServiceInfo, SystemStats,
+    WebDashboard, WebDashboardConfig,
+};
+pub use workflow::{Workflow, WorkflowConfig, WorkflowEngine, WorkflowStep as Step};
 
 use anyhow::Result;
+use dirs;
 use pn_gateway::PnGateway;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -38,6 +124,7 @@ pub struct PnNext {
     api: Arc<RwLock<ApiServer>>,
     workflow: Arc<RwLock<WorkflowEngine>>,
     plugin_manager: Arc<RwLock<PluginManager>>,
+    supervisor: Arc<RwLock<ServiceSupervisor>>,
     config: PnNextConfig,
     state: tokio::sync::RwLock<PnNextState>,
 }
@@ -61,6 +148,24 @@ impl PnNext {
         let workflow = WorkflowEngine::new(config.workflow.clone())?;
         let plugin_manager = PluginManager::new(config.plugin.clone())?;
 
+        // Create supervisor
+        let supervisor_config = config
+            .supervisor
+            .clone()
+            .unwrap_or_else(|| SupervisorConfig {
+                services_dir: dirs::config_dir()
+                    .unwrap_or_else(|| PathBuf::from("/etc/pn-next"))
+                    .join("services"),
+                runtime_dir: PathBuf::from("/run/pn-next"),
+                log_dir: PathBuf::from("/var/log/pn-next"),
+                ..Default::default()
+            });
+        let supervisor = SupervisorBuilder::new()
+            .services_dir(supervisor_config.services_dir.clone())
+            .runtime_dir(supervisor_config.runtime_dir.clone())
+            .log_dir(supervisor_config.log_dir.clone())
+            .build()?;
+
         Ok(Self {
             gateway: Arc::new(RwLock::new(Some(gateway))),
             runtime: Arc::new(RwLock::new(runtime)),
@@ -71,6 +176,7 @@ impl PnNext {
             api: Arc::new(RwLock::new(api)),
             workflow: Arc::new(RwLock::new(workflow)),
             plugin_manager: Arc::new(RwLock::new(plugin_manager)),
+            supervisor: Arc::new(RwLock::new(supervisor)),
             config,
             state: tokio::sync::RwLock::new(PnNextState::Initializing),
         })
@@ -94,6 +200,9 @@ impl PnNext {
         self.workflow.write().await.start().await?;
         self.plugin_manager.write().await.load_plugins().await?;
 
+        // Initialize supervisor
+        self.supervisor.write().await.initialize().await?;
+
         *self.state.write().await = PnNextState::Running;
 
         Ok(())
@@ -101,7 +210,11 @@ impl PnNext {
 
     pub async fn run_container(&self, name: &str, image: &str, args: Vec<String>) -> Result<()> {
         // Validate with security manager
-        self.security.read().await.validate_container_creation(&name, &args).await?;
+        self.security
+            .read()
+            .await
+            .validate_container_creation(&name, &args)
+            .await?;
 
         // Schedule the container creation
         let task = Task::new(
@@ -130,6 +243,10 @@ impl PnNext {
         self.api.write().await.stop().await?;
         self.workflow.write().await.stop().await?;
         self.plugin_manager.write().await.unload_all().await?;
+
+        // Shutdown supervisor
+        (self.supervisor.write().await).shutdown().await?;
+
         self.security.write().await.shutdown().await?;
         self.storage.write().await.shutdown().await?;
         self.network.write().await.shutdown().await?;
@@ -160,6 +277,7 @@ pub struct PnNextConfig {
     pub api: ApiConfig,
     pub workflow: WorkflowConfig,
     pub plugin: PluginConfig,
+    pub supervisor: Option<SupervisorConfig>,
 }
 
 impl Default for PnNextConfig {
@@ -173,6 +291,7 @@ impl Default for PnNextConfig {
             api: ApiConfig::default(),
             workflow: WorkflowConfig::default(),
             plugin: PluginConfig::default(),
+            supervisor: None,
         }
     }
 }
@@ -199,7 +318,16 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_pn_next_creation() {
-        let config = PnNextConfig::default();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = PnNextConfig {
+            supervisor: Some(SupervisorConfig {
+                services_dir: temp_dir.path().join("services"),
+                runtime_dir: temp_dir.path().join("runtime"),
+                log_dir: temp_dir.path().join("logs"),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
         let pn_next = PnNext::new(config).await;
         assert!(pn_next.is_ok());
     }

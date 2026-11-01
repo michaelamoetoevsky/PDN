@@ -3,13 +3,17 @@
 //! This module re-exports security hardening types from proot-compat
 //! to provide a unified API for container security hardening.
 
-pub use proot_compat::{SecurityProfileConfig, SecurityProfileType, SeccompProfile, SeccompAction, SeccompArch, SeccompSyscallRule, SeccompArg, SeccompOp, AppArmorProfile, SelLinuxProfile, CapabilityConfig, SecurityHardeningManager};
+pub use proot_compat::{
+    AppArmorProfile, CapabilityConfig, SeccompAction, SeccompArch, SeccompArg, SeccompOp,
+    SeccompProfile, SeccompSyscallRule, SecurityHardeningManager, SecurityProfileConfig,
+    SecurityProfileType, SelLinuxProfile,
+};
 
 // Additional proot-distro-core specific security types
-use std::path::{Path, PathBuf};
+use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, Context, bail};
-use serde::{Serialize, Deserialize};
+use std::path::{Path, PathBuf};
 
 /// Extended security profile for proot-distro-core containers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,12 +120,20 @@ impl DistroSecurityManager {
         self.profiles.get(name)
     }
 
-    pub async fn apply_profile(&self, profile_name: &str, container_rootfs: &std::path::Path) -> anyhow::Result<()> {
-        let profile = self.profiles.get(profile_name)
+    pub async fn apply_profile(
+        &self,
+        profile_name: &str,
+        container_rootfs: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        let profile = self
+            .profiles
+            .get(profile_name)
             .ok_or_else(|| anyhow::anyhow!("Profile not found: {}", profile_name))?;
 
         // Apply base security profile
-        self.base.apply_profile(&profile.base.name, container_rootfs).await?;
+        self.base
+            .apply_profile(&profile.base.name, container_rootfs)
+            .await?;
 
         // Apply network policy
         if let Some(net_policy) = &profile.network_policy {
@@ -130,7 +142,8 @@ impl DistroSecurityManager {
 
         // Apply filesystem policy
         if let Some(fs_policy) = &profile.filesystem_policy {
-            self.apply_filesystem_policy(fs_policy, container_rootfs).await?;
+            self.apply_filesystem_policy(fs_policy, container_rootfs)
+                .await?;
         }
 
         Ok(())
@@ -141,7 +154,11 @@ impl DistroSecurityManager {
         Ok(())
     }
 
-    async fn apply_filesystem_policy(&self, _policy: &FilesystemSecurityPolicy, _rootfs: &std::path::Path) -> anyhow::Result<()> {
+    async fn apply_filesystem_policy(
+        &self,
+        _policy: &FilesystemSecurityPolicy,
+        _rootfs: &std::path::Path,
+    ) -> anyhow::Result<()> {
         // Apply filesystem policy (mount options, etc.)
         Ok(())
     }
@@ -153,7 +170,7 @@ pub use proot_compat::security::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_distro_security_profile_default() {
         let profile = DistroSecurityProfile::default();

@@ -1,10 +1,10 @@
 //! Login management for PRoot Distro
 
-use std::path::PathBuf;
-use anyhow::Result;
-use crate::container::Container;
 use crate::bindings::BindMount;
-use serde::{Serialize, Deserialize};
+use crate::container::Container;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Login options
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +13,7 @@ pub struct LoginOptions {
     pub user: Option<String>,
     pub command: Vec<String>,
     pub env: Vec<(String, String)>,
-    pub env_vars: Vec<(String, String)>,  // Alias for env
+    pub env_vars: Vec<(String, String)>, // Alias for env
     pub cwd: Option<String>,
     pub detach: bool,
     pub stdin: bool,
@@ -23,7 +23,7 @@ pub struct LoginOptions {
     pub minimal: bool,
     pub shared_home: bool,
     pub shared_tmp: bool,
-    pub bind_mounts: Vec<BindMount>,  // Use BindMount directly
+    pub bind_mounts: Vec<BindMount>, // Use BindMount directly
     pub work_dir: Option<String>,
     pub redirect_ports: bool,
     pub get_proot_cmd: bool,
@@ -34,7 +34,7 @@ impl Default for LoginOptions {
         Self {
             container_name: String::new(),
             user: None,
-            command: vec!["/bin/bash".to_string()],
+            command: vec!["/bin/sh".to_string()],
             env: Vec::new(),
             env_vars: Vec::new(),
             cwd: None,
@@ -63,13 +63,21 @@ impl LoginManager {
     pub fn new() -> Self {
         Self {}
     }
-    
-    pub fn login(&self, container: &crate::container::Container, options: &LoginOptions) -> Result<()> {
+
+    pub fn login(
+        &self,
+        container: &crate::container::Container,
+        options: &LoginOptions,
+    ) -> Result<()> {
         // Execute proot with container config
         Ok(())
     }
-    
-    pub fn execute(&self, container: &crate::container::Container, command: &[String]) -> Result<()> {
+
+    pub fn execute(
+        &self,
+        container: &crate::container::Container,
+        command: &[String],
+    ) -> Result<()> {
         Ok(())
     }
 }

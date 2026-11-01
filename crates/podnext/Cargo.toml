@@ -1,21 +1,27 @@
 [package]
 name = "podnext"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "podnext - PRoot Distro Next CLI for Termux/Android"
-license = "GPL-2.0-or-later"
-repository = "https://github.com/hermes-agent/PDN"
+license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "podnext"
 path = "src/main.rs"
 
+[[bin]]
+name = "podnext-daemon"
+path = "src/daemon.rs"
+
 [dependencies]
 pn-gateway = { path = "../pn-gateway" }
+pn-next = { path = "../pn-next" }
 proot-distro-core = { path = "../proot-distro-core" }
 proot-core = { path = "../proot-core" }
 proot-compat = { path = "../proot-compat" }
 clap = { version = "4.0", features = ["derive"] }
+clap_complete = "4.0"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -35,3 +41,6 @@ flate2 = "1.0"
 oci-spec = "0.10"
 sha2 = "0.10"
 hex = "0.4"
+toml = "0.8"
+strum = { version = "0.25", features = ["derive"] }
+serde_yaml = "0.9"

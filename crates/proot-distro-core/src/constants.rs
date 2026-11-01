@@ -10,22 +10,22 @@ pub mod constants {
     pub const DEFAULT_CACHE_DIR: &str = "cache";
     pub const DEFAULT_LOG_DIR: &str = "logs";
     pub const DEFAULT_CONFIG_DIR: &str = "config";
-    
+
     pub const DEFAULT_DISTRO: &str = "ubuntu";
     pub const DEFAULT_VERSION: &str = "22.04";
     pub const DEFAULT_ARCH: &str = "aarch64";
-    
+
     pub const DEFAULT_NETWORK_BRIDGE: &str = "pn0";
     pub const DEFAULT_SUBNET: &str = "10.0.0.0/24";
-    
+
     pub const DEFAULT_CPU_LIMIT: f64 = 1.0;
     pub const DEFAULT_MEMORY_LIMIT: u64 = 1024 * 1024 * 1024; // 1 GB
     pub const DEFAULT_DISK_LIMIT: u64 = 10 * 1024 * 1024 * 1024; // 10 GB
     pub const DEFAULT_PIDS_LIMIT: u64 = 1000;
-    
+
     pub const DEFAULT_DNS_SERVERS: &[&str] = &["8.8.8.8", "1.1.1.1"];
     pub const DEFAULT_BRIDGE: &str = "pn0";
-    
+
     /// Constants container for runtime access
     #[derive(Debug, Clone)]
     pub struct Constants {
@@ -47,7 +47,7 @@ pub mod constants {
         pub dns_servers: Vec<String>,
         pub bridge: String,
     }
-    
+
     impl Default for Constants {
         fn default() -> Self {
             Self {
@@ -79,13 +79,10 @@ pub mod termux {
     pub const HOME: &str = "/data/data/com.termux/files/home";
     pub const TMP: &str = "/data/data/com.termux/files/usr/tmp";
     pub const PACKAGE: &str = "com.termux";
-    
-    pub const STORAGE_PERMISSIONS: &[&str] = &[
-        "/sdcard",
-        "/storage/emulated/0",
-        "/storage/self/primary",
-    ];
-    
+
+    pub const STORAGE_PERMISSIONS: &[&str] =
+        &["/sdcard", "/storage/emulated/0", "/storage/self/primary"];
+
     /// Termux constants container for runtime access
     #[derive(Debug, Clone)]
     pub struct TermuxConstants {
@@ -95,7 +92,7 @@ pub mod termux {
         pub package: String,
         pub storage_permissions: Vec<String>,
     }
-    
+
     impl Default for TermuxConstants {
         fn default() -> Self {
             Self {

@@ -1,8 +1,8 @@
 //! Gateway configuration
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::time::Duration;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
@@ -57,11 +57,31 @@ impl Default for ProotConfig {
         Self {
             rootfs: None,
             bind_mounts: vec![
-                BindMount { source: "/proc".into(), target: "/proc".into(), readonly: true },
-                BindMount { source: "/sys".into(), target: "/sys".into(), readonly: true },
-                BindMount { source: "/dev".into(), target: "/dev".into(), readonly: false },
-                BindMount { source: "/run".into(), target: "/run".into(), readonly: false },
-                BindMount { source: "/tmp".into(), target: "/tmp".into(), readonly: false },
+                BindMount {
+                    source: "/proc".into(),
+                    target: "/proc".into(),
+                    readonly: true,
+                },
+                BindMount {
+                    source: "/sys".into(),
+                    target: "/sys".into(),
+                    readonly: true,
+                },
+                BindMount {
+                    source: "/dev".into(),
+                    target: "/dev".into(),
+                    readonly: false,
+                },
+                BindMount {
+                    source: "/run".into(),
+                    target: "/run".into(),
+                    readonly: false,
+                },
+                BindMount {
+                    source: "/tmp".into(),
+                    target: "/tmp".into(),
+                    readonly: false,
+                },
             ],
             env_vars: std::collections::HashMap::new(),
             seccomp_enabled: true,
@@ -95,7 +115,11 @@ impl Default for DistroConfig {
             distro_sources: vec![
                 DistroSource {
                     name: "ubuntu".to_string(),
-                    versions: vec!["20.04".to_string(), "22.04".to_string(), "24.04".to_string()],
+                    versions: vec![
+                        "20.04".to_string(),
+                        "22.04".to_string(),
+                        "24.04".to_string(),
+                    ],
                     base_url: "https://cloud-images.ubuntu.com/minimal/releases".to_string(),
                 },
                 DistroSource {
@@ -422,10 +446,7 @@ impl Default for MetricsConfig {
             enabled: true,
             interval: Duration::from_secs(60),
             retention: Duration::from_secs(86400 * 7), // 7 days
-            exporters: vec![
-                MetricsExporter::Prometheus,
-                MetricsExporter::JsonFile,
-            ],
+            exporters: vec![MetricsExporter::Prometheus, MetricsExporter::JsonFile],
         }
     }
 }
@@ -550,67 +571,67 @@ impl GatewayConfigBuilder {
             config: GatewayConfig::default(),
         }
     }
-    
+
     pub fn name(mut self, name: String) -> Self {
         self.config.name = name;
         self
     }
-    
+
     pub fn version(mut self, version: String) -> Self {
         self.config.version = version;
         self
     }
-    
+
     pub fn proot_config(mut self, config: ProotConfig) -> Self {
         self.config.proot_config = config;
         self
     }
-    
+
     pub fn distro_config(mut self, config: DistroConfig) -> Self {
         self.config.distro_config = config;
         self
     }
-    
+
     pub fn compat_config(mut self, config: CompatConfig) -> Self {
         self.config.compat_config = config;
         self
     }
-    
+
     pub fn fail_safe(mut self, config: FailSafeConfig) -> Self {
         self.config.fail_safe = config;
         self
     }
-    
+
     pub fn guardrails(mut self, config: GuardrailConfig) -> Self {
         self.config.guardrails = config;
         self
     }
-    
+
     pub fn health(mut self, config: HealthConfig) -> Self {
         self.config.health = config;
         self
     }
-    
+
     pub fn metrics(mut self, config: MetricsConfig) -> Self {
         self.config.metrics = config;
         self
     }
-    
+
     pub fn network(mut self, config: NetworkConfig) -> Self {
         self.config.network = config;
         self
     }
-    
+
     pub fn storage(mut self, config: StorageConfig) -> Self {
         self.config.storage = config;
         self
     }
-    
+
     pub fn logging(mut self, config: LoggingConfig) -> Self {
         self.config.logging = config;
         self
     }
-    
+
     pub fn build(self) -> GatewayConfig {
         self.config
     }

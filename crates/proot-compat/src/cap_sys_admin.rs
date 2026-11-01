@@ -5,8 +5,8 @@
 //! capability availability and provides graceful fallbacks.
 
 use std::fs;
-use std::path::Path;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 /// CAP_SYS_ADMIN capability status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,17 +66,39 @@ impl Default for MountFlags {
 impl MountFlags {
     pub fn to_nix_flags(&self) -> nix::mount::MsFlags {
         let mut flags = nix::mount::MsFlags::empty();
-        if self.bind { flags |= nix::mount::MsFlags::MS_BIND; }
-        if self.recursive { flags |= nix::mount::MsFlags::MS_REC; }
-        if self.noexec { flags |= nix::mount::MsFlags::MS_NOEXEC; }
-        if self.nosuid { flags |= nix::mount::MsFlags::MS_NOSUID; }
-        if self.nodev { flags |= nix::mount::MsFlags::MS_NODEV; }
-        if self.readonly { flags |= nix::mount::MsFlags::MS_RDONLY; }
-        if self.remount { flags |= nix::mount::MsFlags::MS_REMOUNT; }
-        if self.private { flags |= nix::mount::MsFlags::MS_PRIVATE; }
-        if self.slave { flags |= nix::mount::MsFlags::MS_SLAVE; }
-        if self.shared { flags |= nix::mount::MsFlags::MS_SHARED; }
-        if self.unbindable { flags |= nix::mount::MsFlags::MS_UNBINDABLE; }
+        if self.bind {
+            flags |= nix::mount::MsFlags::MS_BIND;
+        }
+        if self.recursive {
+            flags |= nix::mount::MsFlags::MS_REC;
+        }
+        if self.noexec {
+            flags |= nix::mount::MsFlags::MS_NOEXEC;
+        }
+        if self.nosuid {
+            flags |= nix::mount::MsFlags::MS_NOSUID;
+        }
+        if self.nodev {
+            flags |= nix::mount::MsFlags::MS_NODEV;
+        }
+        if self.readonly {
+            flags |= nix::mount::MsFlags::MS_RDONLY;
+        }
+        if self.remount {
+            flags |= nix::mount::MsFlags::MS_REMOUNT;
+        }
+        if self.private {
+            flags |= nix::mount::MsFlags::MS_PRIVATE;
+        }
+        if self.slave {
+            flags |= nix::mount::MsFlags::MS_SLAVE;
+        }
+        if self.shared {
+            flags |= nix::mount::MsFlags::MS_SHARED;
+        }
+        if self.unbindable {
+            flags |= nix::mount::MsFlags::MS_UNBINDABLE;
+        }
         flags
     }
 }
@@ -128,18 +150,20 @@ impl CapSysAdminManager {
         } else {
             CapSysAdminStatus::Unavailable
         };
-        
+
         if self.status == CapSysAdminStatus::Unavailable {
-            log::warn!("CAP_SYS_ADMIN not available, using fallback mode (directory creation only)");
+            log::warn!(
+                "CAP_SYS_ADMIN not available, using fallback mode (directory creation only)"
+            );
         }
-        
+
         self.status
     }
 
     /// Test if we can perform mount operations
     fn test_mount_capability(&self) -> bool {
         use std::os::unix::fs::MetadataExt;
-        
+
         // First check if we're root
         if unsafe { libc::geteuid() } == 0 {
             return true;
@@ -167,7 +191,9 @@ impl CapSysAdminManager {
                     Some("tmpfs"),
                     &test_mount,
                     Some("tmpfs"),
-                    nix::mount::MsFlags::MS_NOEXEC | nix::mount::MsFlags::MS_NOSUID | nix::mount::MsFlags::MS_NODEV,
+                    nix::mount::MsFlags::MS_NOEXEC
+                        | nix::mount::MsFlags::MS_NOSUID
+                        | nix::mount::MsFlags::MS_NODEV,
                     None::<&str>,
                 );
                 let _ = fs::remove_dir(&test_mount);
@@ -192,7 +218,10 @@ impl CapSysAdminManager {
     pub fn mount_with_fallback(&self, config: &MountConfig) -> Result<(), String> {
         if self.is_fallback_mode() {
             self.create_mount_point_fallback(Path::new(&config.target))?;
-            log::info!("Fallback: Created directory {:?} instead of mounting", config.target);
+            log::info!(
+                "Fallback: Created directory {:?} instead of mounting",
+                config.target
+            );
             return Ok(());
         }
 
@@ -204,32 +233,40 @@ impl CapSysAdminManager {
             config.fstype.as_deref(),
             flags,
             config.data.as_deref(),
-        ).map_err(|e| {
+        )
+        .map_err(|e| {
             // If mount fails, fall back to directory creation
-            log::warn!("Mount failed ({}), falling back to directory creation: {}", e, config.target);
+            log::warn!(
+                "Mount failed ({}), falling back to directory creation: {}",
+                e,
+                config.target
+            );
             if let Err(fallback_err) = self.create_mount_point_fallback(Path::new(&config.target)) {
                 return format!("Mount failed: {} and fallback failed: {}", e, fallback_err);
             }
             format!("Mount failed, using fallback: {}", e)
         })?;
 
-        log::info!("Successfully mounted {:?} on {:?}", config.source, config.target);
+        log::info!(
+            "Successfully mounted {:?} on {:?}",
+            config.source,
+            config.target
+        );
         Ok(())
     }
 
     /// Create mount point directory as fallback
     fn create_mount_point_fallback(&self, target: &Path) -> Result<(), String> {
-        fs::create_dir_all(target).map_err(|e| {
-            format!("Failed to create mount point {:?}: {}", target, e)
-        })?;
-        
+        fs::create_dir_all(target)
+            .map_err(|e| format!("Failed to create mount point {:?}: {}", target, e))?;
+
         // Set appropriate permissions
         if let Ok(metadata) = fs::metadata(target) {
             let mut perms = metadata.permissions();
             perms.set_mode(0o755);
             let _ = fs::set_permissions(target, perms);
         }
-        
+
         Ok(())
     }
 
@@ -247,28 +284,47 @@ impl CapSysAdminManager {
                 source: Some("sysfs".to_string()),
                 target: rootfs.join("sys").to_string_lossy().to_string(),
                 fstype: Some("sysfs".to_string()),
-                flags: MountFlags { noexec: true, nosuid: true, nodev: true, ..Default::default() },
+                flags: MountFlags {
+                    noexec: true,
+                    nosuid: true,
+                    nodev: true,
+                    ..Default::default()
+                },
                 data: None,
             },
             MountConfig {
                 source: Some("devtmpfs".to_string()),
                 target: rootfs.join("dev").to_string_lossy().to_string(),
                 fstype: Some("devtmpfs".to_string()),
-                flags: MountFlags { noexec: true, nosuid: true, ..Default::default() },
+                flags: MountFlags {
+                    noexec: true,
+                    nosuid: true,
+                    ..Default::default()
+                },
                 data: Some("mode=755".to_string()),
             },
             MountConfig {
                 source: Some("tmpfs".to_string()),
                 target: rootfs.join("run").to_string_lossy().to_string(),
                 fstype: Some("tmpfs".to_string()),
-                flags: MountFlags { noexec: true, nosuid: true, nodev: true, ..Default::default() },
+                flags: MountFlags {
+                    noexec: true,
+                    nosuid: true,
+                    nodev: true,
+                    ..Default::default()
+                },
                 data: Some("mode=755".to_string()),
             },
             MountConfig {
                 source: Some("tmpfs".to_string()),
                 target: rootfs.join("tmp").to_string_lossy().to_string(),
                 fstype: Some("tmpfs".to_string()),
-                flags: MountFlags { noexec: true, nosuid: true, nodev: true, ..Default::default() },
+                flags: MountFlags {
+                    noexec: true,
+                    nosuid: true,
+                    nodev: true,
+                    ..Default::default()
+                },
                 data: Some("mode=1777".to_string()),
             },
         ];
@@ -319,12 +375,10 @@ impl CapSysAdminManager {
     /// Create default cgroup hierarchy
     fn create_default_cgroups(&self, cgroup_root: &Path) -> Result<(), String> {
         let slices = ["system.slice", "user.slice", "machine.slice"];
-        
+
         for slice in &slices {
             let path = cgroup_root.join(slice);
-            fs::create_dir_all(&path).map_err(|e| {
-                format!("Failed to create {:?}: {}", path, e)
-            })?;
+            fs::create_dir_all(&path).map_err(|e| format!("Failed to create {:?}: {}", path, e))?;
 
             // Set permissions
             if let Ok(metadata) = fs::metadata(&path) {
@@ -338,12 +392,21 @@ impl CapSysAdminManager {
     }
 
     /// Bind mount with fallback
-    pub fn bind_mount_with_fallback(&self, source: &Path, target: &Path, readonly: bool) -> Result<(), String> {
+    pub fn bind_mount_with_fallback(
+        &self,
+        source: &Path,
+        target: &Path,
+        readonly: bool,
+    ) -> Result<(), String> {
         // Always create target directory
         self.create_mount_point_fallback(target)?;
 
         if self.is_fallback_mode() {
-            log::info!("Fallback: Created bind mount directory {:?} -> {:?}", source, target);
+            log::info!(
+                "Fallback: Created bind mount directory {:?} -> {:?}",
+                source,
+                target
+            );
             return Ok(());
         }
 
@@ -377,9 +440,7 @@ impl CapSysAdminManager {
             return Ok(());
         }
 
-        nix::mount::umount(target).map_err(|e| {
-            format!("Failed to unmount {:?}: {}", target, e)
-        })
+        nix::mount::umount(target).map_err(|e| format!("Failed to unmount {:?}: {}", target, e))
     }
 }
 
@@ -395,7 +456,7 @@ pub fn init_global_manager(fallback: bool) {
         } else {
             CapSysAdminManager::new()
         });
-        
+
         if let Some(manager) = GLOBAL_MANAGER.as_mut() {
             manager.check_capability();
         }
@@ -410,7 +471,7 @@ pub fn init_global_manager_with_testing(enable_testing: bool) {
         } else {
             CapSysAdminManager::new_fallback()
         });
-        
+
         if let Some(manager) = GLOBAL_MANAGER.as_mut() {
             manager.check_capability();
         }
@@ -464,7 +525,7 @@ mod tests {
         let manager = CapSysAdminManager::new_fallback();
         let dir = tempdir().unwrap();
         let target = dir.path().join("test_mount");
-        
+
         assert!(manager.create_mount_point_fallback(&target).is_ok());
         assert!(target.exists());
     }
@@ -473,7 +534,7 @@ mod tests {
     fn test_mount_essential_filesystems_fallback() {
         let manager = CapSysAdminManager::new_fallback();
         let dir = tempdir().unwrap();
-        
+
         assert!(manager.mount_essential_filesystems(dir.path()).is_ok());
         assert!(dir.path().join("proc").exists());
         assert!(dir.path().join("sys").exists());
@@ -486,7 +547,7 @@ mod tests {
     fn test_setup_cgroup_v2_fallback() {
         let manager = CapSysAdminManager::new_fallback();
         let dir = tempdir().unwrap();
-        
+
         assert!(manager.setup_cgroup_v2(dir.path()).is_ok());
         assert!(dir.path().join("sys/fs/cgroup/system.slice").exists());
         assert!(dir.path().join("sys/fs/cgroup/user.slice").exists());
@@ -499,10 +560,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let source = dir.path().join("source");
         let target = dir.path().join("target");
-        
+
         fs::create_dir_all(&source).unwrap();
-        
-        assert!(manager.bind_mount_with_fallback(&source, &target, false).is_ok());
+
+        assert!(manager
+            .bind_mount_with_fallback(&source, &target, false)
+            .is_ok());
         assert!(target.exists());
     }
 }

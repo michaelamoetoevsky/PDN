@@ -2,18 +2,18 @@
 //!
 //! Provides container lifecycle management with proot-core integration.
 
-use std::path::{Path, PathBuf};
-use std::collections::HashMap;
-use std::sync::Arc;
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use tokio::sync::Mutex;
-use crate::paths::ContainerPaths;
-use crate::locking::LockManager;
-use proot_core::{ProotEngine, ProotConfig, BindMount as ProotBindMount};
 use crate::gpu::GpuConfig;
+use crate::locking::LockManager;
+use crate::paths::ContainerPaths;
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use nix::unistd::Pid;
+use proot_core::{BindMount as ProotBindMount, ProotConfig, ProotEngine};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Container manager
 pub struct ContainerManager {
@@ -31,12 +31,12 @@ impl ContainerManager {
             lock_manager: Arc::new(LockManager::new()?),
             proot_engine: Arc::new(Mutex::new(None)),
         };
-        
+
         // Load existing containers from disk
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(manager.load_containers())
         })?;
-        
+
         Ok(manager)
     }
 
@@ -48,15 +48,16 @@ impl ContainerManager {
         }
 
         let mut containers = self.containers.lock().await;
-        
+
         for entry in std::fs::read_dir(containers_dir)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
-            
+
             let metadata_path = entry.path().join("metadata.json");
             if metadata_path.exists() {
                 if let Ok(metadata_str) = std::fs::read_to_string(&metadata_path) {
-                    if let Ok(_metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
+                    if let Ok(_metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str)
+                    {
                         let rootfs_path = entry.path().join("rootfs");
                         if rootfs_path.exists() {
                             let config = ContainerConfig {
@@ -64,7 +65,7 @@ impl ContainerManager {
                                 rootfs_path: Some(rootfs_path),
                                 ..Default::default()
                             };
-                            
+
                             if let Ok(container) = Container::new(name.clone(), config) {
                                 containers.insert(name, container);
                             }
@@ -73,10 +74,10 @@ impl ContainerManager {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     async fn get_engine(&self) -> Result<Arc<Mutex<ProotEngine>>> {
         let mut engine_guard = self.proot_engine.lock().await;
         if engine_guard.is_none() {
@@ -87,41 +88,46 @@ impl ContainerManager {
         let engine = engine_guard.as_ref().unwrap();
         Ok(Arc::new(Mutex::new(engine.clone())))
     }
-    
+
     pub async fn create(&self, name: &str, config: &ContainerConfig) -> Result<Container> {
         let mut containers = self.containers.lock().await;
-        
+
         if containers.contains_key(name) {
             return Err(anyhow::anyhow!("Container '{}' already exists", name));
         }
-        
+
         let container = Container::new(name.to_string(), config.clone())?;
         containers.insert(name.to_string(), container.clone());
-        
+
         Ok(container)
     }
-    
+
     pub async fn get(&self, name: &str) -> Result<Container> {
         let containers = self.containers.lock().await;
-        containers.get(name).cloned().ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))
+        containers
+            .get(name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))
     }
-    
+
     pub async fn remove(&self, name: &str) -> Result<()> {
         let mut containers = self.containers.lock().await;
-        containers.remove(name).ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
+        containers
+            .remove(name)
+            .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
         Ok(())
     }
-    
+
     pub async fn list(&self) -> Result<Vec<ContainerInfo>> {
         let containers = self.containers.lock().await;
         Ok(containers.values().map(|c| c.info()).collect())
     }
-    
+
     pub async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
         // For now, return empty - sessions are managed by SessionManager
         Ok(Vec::new())
     }
-    
+
     pub async fn kill(&self, name: &str) -> Result<()> {
         let mut containers = self.containers.lock().await;
         if let Some(container) = containers.get_mut(name) {
@@ -132,30 +138,53 @@ impl ContainerManager {
             Err(anyhow::anyhow!("Container '{}' not found", name))
         }
     }
-    
+
     pub async fn start(&self, name: &str) -> Result<()> {
         let mut containers = self.containers.lock().await;
-        let container = containers.get_mut(name)
+        let container = containers
+            .get_mut(name)
             .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
-        
+
         if container.status == ContainerStatus::Running {
             return Err(anyhow::anyhow!("Container '{}' is already running", name));
         }
-        
+
         // Initialize proot engine if needed
         let engine = self.get_engine().await?;
         {
             let mut engine_guard = engine.lock().await;
-            
+
             // Configure proot from container config
             engine_guard.config.rootfs = Some(container.rootfs_path.clone());
-            engine_guard.config.bind = container.config.bind_mounts.iter().map(|b| {
-                format!("{}:{}:{}", b.source, b.target, if b.readonly { "ro" } else { "rw" })
-            }).collect();
-            engine_guard.config.cwd = Some(container.config.working_dir.clone().unwrap_or_else(|| "/".to_string()).into());
-            engine_guard.config.env = container.config.env_vars.iter().map(|(k,v)| format!("{}={}", k, v)).collect();
+            engine_guard.config.bind = container
+                .config
+                .bind_mounts
+                .iter()
+                .map(|b| {
+                    format!(
+                        "{}:{}:{}",
+                        b.source,
+                        b.target,
+                        if b.readonly { "ro" } else { "rw" }
+                    )
+                })
+                .collect();
+            engine_guard.config.cwd = Some(
+                container
+                    .config
+                    .working_dir
+                    .clone()
+                    .unwrap_or_else(|| "/".to_string())
+                    .into(),
+            );
+            engine_guard.config.env = container
+                .config
+                .env_vars
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect();
             engine_guard.config.command = if container.config.command.is_empty() {
-                vec!["/bin/bash".to_string()]
+                vec!["/bin/sh".to_string()]
             } else {
                 container.config.command.clone()
             };
@@ -163,29 +192,30 @@ impl ContainerManager {
             engine_guard.config.kernel_release = container.config.kernel_release.clone();
             engine_guard.config.hostname = container.config.hostname.clone();
         }
-        
+
         // Start the container
         let pid = engine.lock().await.start().await?;
-        
+
         container.status = ContainerStatus::Running;
         container.pid = Some(pid);
-        
+
         Ok(())
     }
-    
+
     pub async fn stop(&self, name: &str, timeout: u64) -> Result<()> {
         let mut containers = self.containers.lock().await;
-        let container = containers.get_mut(name)
+        let container = containers
+            .get_mut(name)
             .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
-        
+
         if container.status != ContainerStatus::Running {
             return Err(anyhow::anyhow!("Container '{}' is not running", name));
         }
-        
+
         if let Some(pid) = container.pid {
             // Send SIGTERM
             unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-            
+
             // Wait for process to exit
             let start = std::time::Instant::now();
             while start.elapsed().as_secs() < timeout {
@@ -195,60 +225,86 @@ impl ContainerManager {
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
-            
+
             // Force kill if still alive
             if unsafe { libc::kill(pid as i32, 0) } == 0 {
                 unsafe { libc::kill(pid as i32, libc::SIGKILL) };
             }
         }
-        
+
         container.status = ContainerStatus::Stopped;
         container.pid = None;
-        
+
         Ok(())
     }
-    
+
     pub async fn restart(&self, name: &str, timeout: u64) -> Result<()> {
-            self.stop(name, timeout).await?;
-            self.start(name).await
-        }
+        self.stop(name, timeout).await?;
+        self.start(name).await
+    }
 
-        /// Execute a command in the container and wait for completion (foreground execution)
-            pub async fn execute(&self, name: &str, command: Vec<String>) -> Result<i32> {
-                let container = self.get(name).await?;
-        
-                let engine = self.get_engine().await?;
-                let mut engine_guard = engine.lock().await;
-        
-                // Configure proot from container config
-                engine_guard.config.rootfs = Some(container.rootfs_path.clone());
-                engine_guard.config.bind = container.config.bind_mounts.iter().map(|b| {
-                    format!("{}:{}:{}", b.source, b.target, if b.readonly { "ro" } else { "rw" })
-                }).collect();
-                engine_guard.config.cwd = Some(container.config.working_dir.clone().unwrap_or_else(|| "/".to_string()).into());
-                engine_guard.config.env = container.config.env_vars.iter().map(|(k,v)| format!("{}={}", k, v)).collect();
-                engine_guard.config.seccomp = container.config.security.seccomp_profile.is_some();
-                engine_guard.config.kernel_release = container.config.kernel_release.clone();
-                engine_guard.config.hostname = container.config.hostname.clone();
-        
-                // Handle empty command
-                let cmd = if command.is_empty() {
-                    vec!["/bin/bash".to_string(), "-c".to_string(), "exec /bin/bash".to_string()]
-                } else {
-                    command
-                };
-                engine_guard.config.command = cmd;
-        
-                // Execute and wait for completion
-                        let exit_code = engine_guard.execute().await? as i32;
-                        Ok(exit_code)
-            }
+    /// Execute a command in the container and wait for completion (foreground execution)
+    pub async fn execute(&self, name: &str, command: Vec<String>) -> Result<i32> {
+        let container = self.get(name).await?;
 
-            pub fn backup(&self, container: &Container, dest: &Path) -> Result<()> {
+        let engine = self.get_engine().await?;
+        let mut engine_guard = engine.lock().await;
+
+        // Configure proot from container config
+        engine_guard.config.rootfs = Some(container.rootfs_path.clone());
+        engine_guard.config.bind = container
+            .config
+            .bind_mounts
+            .iter()
+            .map(|b| {
+                format!(
+                    "{}:{}:{}",
+                    b.source,
+                    b.target,
+                    if b.readonly { "ro" } else { "rw" }
+                )
+            })
+            .collect();
+        engine_guard.config.cwd = Some(
+            container
+                .config
+                .working_dir
+                .clone()
+                .unwrap_or_else(|| "/".to_string())
+                .into(),
+        );
+        engine_guard.config.env = container
+            .config
+            .env_vars
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+        engine_guard.config.seccomp = container.config.security.seccomp_profile.is_some();
+        engine_guard.config.kernel_release = container.config.kernel_release.clone();
+        engine_guard.config.hostname = container.config.hostname.clone();
+
+        // Handle empty command
+        let cmd = if command.is_empty() {
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "exec /bin/sh".to_string(),
+            ]
+        } else {
+            command
+        };
+        engine_guard.config.command = cmd;
+
+        // Execute and wait for completion
+        let exit_code = engine_guard.execute().await? as i32;
+        Ok(exit_code)
+    }
+
+    pub fn backup(&self, container: &Container, dest: &Path) -> Result<()> {
         // Implementation for backing up container
         Ok(())
     }
-    
+
     pub fn restore(&mut self, name: &str, src: &Path) -> Result<()> {
         // Implementation for restoring container
         Ok(())
@@ -404,9 +460,13 @@ pub struct Container {
 impl Container {
     pub fn new(name: String, config: ContainerConfig) -> Result<Self> {
         let rootfs_path = config.rootfs_path.clone().unwrap_or_else(|| {
-            dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/user")).join(".pn-next").join("containers").join(&name)
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/home/user"))
+                .join(".pn-next")
+                .join("containers")
+                .join(&name)
         });
-        
+
         Ok(Self {
             name,
             config,
@@ -416,7 +476,7 @@ impl Container {
             rootfs_path,
         })
     }
-    
+
     pub fn info(&self) -> ContainerInfo {
         ContainerInfo {
             name: self.name.clone(),

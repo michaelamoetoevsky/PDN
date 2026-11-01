@@ -1,9 +1,9 @@
 //! Mount helper for essential filesystems
 //! Mount otomatis /proc, /sys, /dev, /run, /tmp di dalam guest rootfs
 
+use crate::cap_sys_admin::{CapSysAdminManager, MountConfig, MountFlags};
 use std::fs;
 use std::path::Path;
-use crate::cap_sys_admin::{CapSysAdminManager, MountConfig, MountFlags};
 
 /// Mount essential filesystems inside the guest rootfs.
 /// These are needed for Chrome headless, Node.js, and other applications.
@@ -27,9 +27,8 @@ pub fn unmount_essential_filesystems(rootfs: &Path) -> Result<(), String> {
         // Best effort unmount - in PRoot context, this is handled by
         // the proot process exit, so we just ensure directories exist
         if !target.exists() {
-            fs::create_dir_all(target).map_err(|e| {
-                format!("Failed to create {:?}: {}", target, e)
-            })?;
+            fs::create_dir_all(target)
+                .map_err(|e| format!("Failed to create {:?}: {}", target, e))?;
         }
     }
 

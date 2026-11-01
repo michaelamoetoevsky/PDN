@@ -22,6 +22,19 @@ tmp/
 temp/
 *.tmp
 
+# Root scratch/probe artifacts (compiled ELF + syntax probes)
+/test_impl
+/test_impl2
+/test_minimal
+/test_minimal2
+/test_supervisor
+/test_supervisor_structure
+/test_impl.rs
+/test_impl2.rs
+/test_minimal.rs
+/test_minimal2.rs
+/test_supervisor_structure.rs
+
 # Build artifacts
 *.so
 *.dylib
