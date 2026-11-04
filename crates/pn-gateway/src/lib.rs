@@ -5,6 +5,7 @@
 //! It provides fail-safe mechanisms and guardrails for robust operation.
 
 pub mod config;
+pub mod config_loader;
 pub mod fail_safe;
 pub mod gateway;
 pub mod guardrails;
@@ -15,6 +16,7 @@ pub use config::{
     CircuitBreakerState, FailSafeAction, FailSafeConfig, GatewayConfig, GatewayConfigBuilder,
     GatewayState, GuardrailConfig, GuardrailRule, HealthConfig, MetricsConfig, MetricsExporter,
 };
+pub use config_loader::ConfigError;
 pub use fail_safe::FailSafeManager;
 pub use gateway::PnGateway;
 pub use guardrails::GuardrailManager;
