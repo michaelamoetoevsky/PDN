@@ -2155,6 +2155,14 @@ async fn build_local_image(
     let mut workdir: Option<String> = None;
     let mut cmd: Vec<String> = Vec::new();
     let mut labels: Vec<(String, String)> = Vec::new();
+    // EXPOSE/USER are image metadata, not filesystem changes. `EXPOSE` in Docker
+    // only *documents* a port (it never binds one) and this runtime has no host
+    // port-forwarding daemon, so recording it is the faithful behaviour. `USER`
+    // is recorded but not enforced: proot's rootless model maps every guest id
+    // to the single host uid and `ContainerConfig` carries no user/uid field
+    // (adding one means changing the shared crate, outside this branch's scope).
+    let mut exposed_ports: Vec<u16> = Vec::new();
+    let mut user: Option<String> = None;
     // Constructed lazily: only RUN needs the proot engine, which needs a
     // multi-thread runtime. A metadata-only (scratch) build must not require it.
     let mut mgr: Option<proot_distro_core::ContainerManager> = None;
@@ -2211,7 +2219,19 @@ async fn build_local_image(
                 labels.retain(|(k, _)| k != key);
                 labels.push((key.clone(), value.clone()));
             }
-            Instr::Expose(_) | Instr::User(_) => {}
+            Instr::Expose(port) => {
+                if !exposed_ports.contains(port) {
+                    println!("Expose: {}", port);
+                    exposed_ports.push(*port);
+                }
+            }
+            Instr::User(u) => {
+                let u = u.trim().to_string();
+                if !u.is_empty() {
+                    println!("User: {}", u);
+                    user = Some(u);
+                }
+            }
         }
     }
 
@@ -2227,6 +2247,8 @@ async fn build_local_image(
         "env": env.iter().cloned().collect::<HashMap<_, _>>(),
         "working_dir": workdir,
         "labels": labels.iter().cloned().collect::<HashMap<_, _>>(),
+        "exposed_ports": exposed_ports,
+        "user": user,
     });
     std::fs::write(
         container_dir.join("metadata.json"),
@@ -2980,5 +3002,67 @@ mod build_local_tests {
             serde_json::from_str(&std::fs::read_to_string(dir.join("metadata.json")).unwrap())
                 .unwrap();
         assert_eq!(meta["name"], "bse-scratch:latest");
+    }
+
+    // Residual gap 2 (#30): `EXPOSE`/`USER` were parsed and then dropped. They are
+    // image metadata (Docker's EXPOSE never binds a port), so the fix records them
+    // in `metadata.json` where `run`/inspection can see what was built. Duplicate
+    // EXPOSE of the same port is collapsed; `EXPOSE 8080/tcp` keeps the port only.
+    // `FROM scratch` keeps this offline.
+    #[tokio::test]
+    async fn expose_and_user_are_recorded_in_metadata() {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::write(
+            ctx.path().join("Dockerfile"),
+            "FROM scratch\nEXPOSE 8080\nEXPOSE 8080/tcp\nEXPOSE 443\nUSER nobody\n",
+        )
+        .unwrap();
+        let store = tempfile::tempdir().unwrap();
+
+        let dir = build_local_image(
+            "c2-meta:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(meta["exposed_ports"], serde_json::json!([8080, 443]));
+        assert_eq!(meta["user"], "nobody");
+    }
+
+    // Residual gap 1 (#30) is fixed at `run`, which reinstates ENV/WORKDIR read
+    // back from this file (`native::apply_image_runtime_config`). This asserts the
+    // build half of that contract: the values must be present and named exactly
+    // as the run path reads them.
+    #[tokio::test]
+    async fn env_and_workdir_are_recorded_for_the_run_path() {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::write(
+            ctx.path().join("Dockerfile"),
+            "FROM scratch\nENV GREETING=hello-from-image\nENV APP_MODE=prod\nWORKDIR /srv/app\n",
+        )
+        .unwrap();
+        let store = tempfile::tempdir().unwrap();
+
+        let dir = build_local_image(
+            "c2-env:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(meta["env"]["GREETING"], "hello-from-image");
+        assert_eq!(meta["env"]["APP_MODE"], "prod");
+        assert_eq!(meta["working_dir"], "/srv/app");
     }
 }
