@@ -2267,18 +2267,48 @@ async fn build_local_image(
 
 /// Copy a build-context path into the image rootfs (Dockerfile COPY/ADD).
 ///
-/// Handles a single source path (file or directory), which is what the parser
-/// produces; globs and `--from=` stage copies are not supported.
+/// Handles a single source path (file or directory) and, since a wildcard in the
+/// source is a common Dockerfile idiom, `*`/`?` globs expanded against the build
+/// context. `--from=` stage copies are still not supported.
 fn copy_into_rootfs(
     ctx: &std::path::Path,
     src: &str,
     dest: &str,
     rootfs: &std::path::Path,
 ) -> Result<()> {
+    if src.contains('*') || src.contains('?') {
+        // ponytail: `*`/`?` within a path component only — no `**`, `[...]`
+        // classes or brace expansion. Add when a real Dockerfile needs them.
+        let mut matched = expand_glob(ctx, src)?;
+        if matched.is_empty() {
+            bail!(
+                "COPY/ADD source '{}' matched no files in the build context",
+                src
+            );
+        }
+        let dest_is_dir = dest.ends_with('/') || dest == "." || dest == "/";
+        if matched.len() > 1 && !dest_is_dir {
+            bail!(
+                "COPY/ADD with multiple sources needs a directory destination ending in '/', got '{}'",
+                dest
+            );
+        }
+        matched.sort();
+        for path in matched {
+            copy_one(&path, dest, rootfs)?;
+        }
+        return Ok(());
+    }
+
     let src_path = ctx.join(src);
     if !src_path.exists() {
         bail!("COPY/ADD source '{}' not found in build context", src);
     }
+    copy_one(&src_path, dest, rootfs)
+}
+
+/// Copy one already-resolved source path into the rootfs.
+fn copy_one(src_path: &std::path::Path, dest: &str, rootfs: &std::path::Path) -> Result<()> {
     let mut dest_path = if let Some(stripped) = dest.strip_prefix('/') {
         rootfs.join(stripped)
     } else {
@@ -2288,19 +2318,82 @@ fn copy_into_rootfs(
     if dest.ends_with('/') || dest == "." || dest == "/" {
         let base = src_path
             .file_name()
-            .ok_or_else(|| anyhow::anyhow!("invalid COPY/ADD source '{}'", src))?;
+            .ok_or_else(|| anyhow::anyhow!("invalid COPY/ADD source '{}'", src_path.display()))?;
         dest_path = dest_path.join(base);
     }
     if src_path.is_dir() {
-        copy_dir_all(&src_path, &dest_path)
+        copy_dir_all(src_path, &dest_path)
     } else {
         if let Some(parent) = dest_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(&src_path, &dest_path)
-            .with_context(|| format!("failed to copy '{}' into image", src))?;
+        std::fs::copy(src_path, &dest_path)
+            .with_context(|| format!("failed to copy '{}' into image", src_path.display()))?;
         Ok(())
     }
+}
+
+/// Expand a COPY/ADD source pattern against the build context.
+///
+/// Components without a wildcard must exist literally; wildcard components are
+/// matched against the directory listing. Returns the accumulated matches (empty
+/// when nothing matches).
+fn expand_glob(ctx: &std::path::Path, pattern: &str) -> Result<Vec<std::path::PathBuf>> {
+    let mut current = vec![ctx.to_path_buf()];
+    for comp in pattern.split('/').filter(|c| !c.is_empty() && *c != ".") {
+        let mut next = Vec::new();
+        if comp.contains('*') || comp.contains('?') {
+            for dir in &current {
+                let Ok(entries) = std::fs::read_dir(dir) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if glob_match(comp, &name) {
+                        next.push(entry.path());
+                    }
+                }
+            }
+        } else {
+            for dir in &current {
+                let path = dir.join(comp);
+                if path.exists() {
+                    next.push(path);
+                }
+            }
+        }
+        next.sort();
+        current = next;
+    }
+    Ok(current)
+}
+
+/// `*` matches any run of characters, `?` exactly one; no `[...]` classes.
+fn glob_match(pattern: &str, name: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = name.chars().collect();
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let (mut star, mut mark) = (None::<usize>, 0usize);
+    while ti < txt.len() {
+        if pi < pat.len() && (pat[pi] == '?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == '*' {
+            star = Some(pi);
+            mark = ti;
+            pi += 1;
+        } else if let Some(s) = star {
+            pi = s + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    while pi < pat.len() && pat[pi] == '*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
 
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
@@ -3064,5 +3157,80 @@ mod build_local_tests {
         assert_eq!(meta["env"]["GREETING"], "hello-from-image");
         assert_eq!(meta["env"]["APP_MODE"], "prod");
         assert_eq!(meta["working_dir"], "/srv/app");
+    }
+
+    // Residual gap 3 (#30), wildcard slice: `COPY src/*.rs` was unsupported.
+    #[test]
+    fn glob_match_handles_star_and_question() {
+        assert!(glob_match("*.rs", "main.rs"));
+        assert!(!glob_match("*.rs", "main.txt"));
+        assert!(glob_match("a?c", "abc"));
+        assert!(!glob_match("a?c", "abbc"));
+        assert!(glob_match(".*", ".env"));
+        assert!(glob_match("*", "anything"));
+        assert!(!glob_match("src/*.rs", "main.rs"));
+    }
+
+    #[tokio::test]
+    async fn copy_wildcard_copies_every_match_into_a_directory() {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ctx.path().join("src")).unwrap();
+        std::fs::write(
+            ctx.path().join("Dockerfile"),
+            "FROM scratch\nCOPY src/*.rs /opt/app/\n",
+        )
+        .unwrap();
+        std::fs::write(ctx.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(ctx.path().join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+        std::fs::write(ctx.path().join("src/notes.txt"), "not rust\n").unwrap();
+        let store = tempfile::tempdir().unwrap();
+
+        let dir = build_local_image(
+            "c2-glob:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("rootfs/opt/app/main.rs")).unwrap(),
+            "fn main() {}\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("rootfs/opt/app/lib.rs")).unwrap(),
+            "pub fn f() {}\n"
+        );
+        assert!(
+            !dir.join("rootfs/opt/app/notes.txt").exists(),
+            "the wildcard must only match *.rs"
+        );
+    }
+
+    // A wildcard that matches nothing is an error, not a silent no-op.
+    #[tokio::test]
+    async fn copy_wildcard_with_no_match_is_an_error() {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ctx.path().join("src")).unwrap();
+        std::fs::write(
+            ctx.path().join("Dockerfile"),
+            "FROM scratch\nCOPY src/*.rs /src/\n",
+        )
+        .unwrap();
+        let store = tempfile::tempdir().unwrap();
+
+        let err = build_local_image(
+            "c2-glob-miss:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .expect_err("a wildcard matching nothing must fail the build");
+        assert!(
+            err.to_string().contains("matched no files"),
+            "unexpected error: {err}"
+        );
     }
 }
