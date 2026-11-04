@@ -706,6 +706,11 @@ enum ImageCommands {
         format: OutputFormat,
     },
     /// List images
+    // `docs/src/cli-reference.md` documents `podnext image list`, which did not
+    // exist: the documented command failed with "unrecognized subcommand 'list'".
+    // The alias makes the documented form work instead of changing the doc to
+    // match a name nobody types.
+    #[command(visible_alias = "list")]
     Ls {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]

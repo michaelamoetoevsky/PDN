@@ -281,13 +281,18 @@ podnext search alpine --limit 10
 podnext search nginx --registry ghcr.io
 ```
 
-### `podnext image list`
+### `podnext image ls`
 
-List local images.
+List local images (`list` is accepted as an alias).
 
 ```bash
+podnext image ls [OPTIONS]
 podnext image list [OPTIONS]
 ```
+
+Lists what `~/.podnext/images` holds. An image produced by `podnext build local` lives in the
+container store instead (see [`podnext build local`](#podnext-build-local)) and does not appear here;
+`podnext image inspect <tag>` does read it.
 
 ### `podnext build local`
 
@@ -337,6 +342,20 @@ Reads the file with the same loader the gateway uses. A valid file prints the re
 exits 0; an invalid one names the offending key with its line and column and exits 2. Without a
 `PATH` argument the file is taken from `PN_GATEWAY_CONFIG`; if neither is given the command fails,
 because there is no implicit search path.
+
+### `podnext image inspect`
+
+```bash
+podnext image inspect <IMAGE>... [--format table|json|yaml|text]
+```
+
+Reports a pulled image from `~/.podnext/images`, or a locally built one from the container store —
+accepting either the tag (`myapp:latest`) or the store key (`myapp`). A built image is reported with
+its base image, creation time, working dir, command, and its `EXPOSE`/`USER` values labelled as
+recorded rather than enforced.
+
+A reference that neither source knows is an error naming both locations, rather than an empty result
+with a successful exit status.
 
 ### `podnext image remove`
 
