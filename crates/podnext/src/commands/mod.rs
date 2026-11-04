@@ -2101,6 +2101,10 @@ async fn build_local_image(
             println!("Build arg: {}={}", name, value);
         }
     }
+    // Before parsing: the parser drops `--` flags and uses only the last FROM, so
+    // a multi-stage Dockerfile would build something subtly different without
+    // saying so. Refuse those shapes by name.
+    refuse_unsupported_build_features(&content)?;
     let instructions = proot_distro_core::dockerfile::parse_dockerfile(&content)?;
     println!("Parsed {} instruction(s):", instructions.len());
     for (idx, inst) in instructions.iter().enumerate() {
@@ -2184,7 +2188,10 @@ async fn build_local_image(
         std::fs::create_dir_all(&rootfs)?;
     } else {
         println!("Pulling base image '{}'...", base_image);
-        crate::native::install_image_native(&base_image, tag, true, Some(rootfs.clone())).await?;
+        // `key`, not `tag`: this installs the base INTO the container directory
+        // that `podnext run <key>` will resolve, and a colon in that name would
+        // put a colon in every bind path derived from it (#35).
+        crate::native::install_image_native(&base_image, &key, true, Some(rootfs.clone())).await?;
     }
 
     // Apply the Dockerfile on top of the base rootfs, in order. `env` and
@@ -2233,7 +2240,7 @@ async fn build_local_image(
                     mgr = Some(proot_distro_core::ContainerManager::new()?);
                 }
                 let mgr = mgr.as_ref().unwrap();
-                let mut c = mgr.get(tag).await?;
+                let mut c = mgr.get(&key).await?;
                 c.config.env_vars = env.clone();
                 if let Some(wd) = &workdir {
                     c.config.working_dir = Some(wd.clone());
@@ -2259,14 +2266,28 @@ async fn build_local_image(
             }
             Instr::Expose(port) => {
                 if !exposed_ports.contains(port) {
-                    println!("Expose: {}", port);
+                    println!("Expose: {} (recorded in the image metadata)", port);
+                    if exposed_ports.is_empty() {
+                        // Docker's EXPOSE only documents a port; this runtime has
+                        // no port-forwarding daemon, so say so rather than let a
+                        // reader assume traffic will arrive.
+                        println!(
+                            "NOTE: EXPOSE is metadata here. This runtime does not forward host \
+                             ports, so publishing them is a no-op."
+                        );
+                    }
                     exposed_ports.push(*port);
                 }
             }
             Instr::User(u) => {
                 let u = u.trim().to_string();
                 if !u.is_empty() {
-                    println!("User: {}", u);
+                    println!("User: {} (recorded in the image metadata)", u);
+                    println!(
+                        "NOTE: USER is not enforced here. PRoot maps every guest id to the single \
+                         host uid, so RUN and `podnext run` both execute as the host user. Do not \
+                         rely on this image's USER for privilege separation."
+                    );
                     user = Some(u);
                 }
             }
@@ -2371,6 +2392,44 @@ fn copy_one(src_path: &std::path::Path, dest: &str, rootfs: &std::path::Path) ->
     }
 }
 
+/// Refuse Dockerfile shapes this builder cannot honour.
+///
+/// Both cases below would otherwise build something other than what the file
+/// asks for: the parser drops every `--` flag (so `COPY --from=` would copy from
+/// the context instead of a stage) and only the last `FROM` supplies the base
+/// (so earlier stages vanish). A loud refusal is the only honest option until
+/// per-stage rootfs support exists.
+fn refuse_unsupported_build_features(content: &str) -> Result<()> {
+    let mut stages = 0usize;
+    for (idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let upper = trimmed.to_ascii_uppercase();
+        if upper.starts_with("FROM ") || upper == "FROM" {
+            stages += 1;
+        }
+        if (upper.starts_with("COPY ") || upper.starts_with("ADD ")) && trimmed.contains("--from=")
+        {
+            bail!(
+                "line {}: 'COPY/ADD --from=' (multi-stage copy) is not supported: only the last \
+                 FROM is used as the base and there is no per-stage rootfs. Build each stage \
+                 separately, or copy the files from the build context",
+                idx + 1
+            );
+        }
+    }
+    if stages > 1 {
+        bail!(
+            "this Dockerfile declares {stages} FROM stages, which this builder cannot honour: \
+             only the last FROM becomes the base and the earlier stages are discarded. Build \
+             each stage separately or remove the unused stages"
+        );
+    }
+    Ok(())
+}
+
 /// Expand a COPY/ADD source pattern against the build context.
 ///
 /// Components without a wildcard must exist literally; wildcard components are
@@ -2379,8 +2438,15 @@ fn copy_one(src_path: &std::path::Path, dest: &str, rootfs: &std::path::Path) ->
 fn expand_glob(ctx: &std::path::Path, pattern: &str) -> Result<Vec<std::path::PathBuf>> {
     let mut current = vec![ctx.to_path_buf()];
     for comp in pattern.split('/').filter(|c| !c.is_empty() && *c != ".") {
+        if comp == "**" {
+            bail!(
+                "'**' is not supported in a COPY/ADD source ('{pattern}'): this builder matches \
+                 one path component at a time, so '**' would silently match nothing. List the \
+                 files explicitly or use '*' once per component"
+            );
+        }
         let mut next = Vec::new();
-        if comp.contains('*') || comp.contains('?') {
+        if comp.contains('*') || comp.contains('?') || comp.contains('[') {
             for dir in &current {
                 let Ok(entries) = std::fs::read_dir(dir) else {
                     continue;
@@ -2406,32 +2472,68 @@ fn expand_glob(ctx: &std::path::Path, pattern: &str) -> Result<Vec<std::path::Pa
     Ok(current)
 }
 
-/// `*` matches any run of characters, `?` exactly one; no `[...]` classes.
+/// `*` matches any run of characters, `?` exactly one, `[...]` one character from
+/// a set or range (`[abc]`, `[a-z]`, `[!0-9]`). `**` is handled (refused) by
+/// [`expand_glob`] before reaching here, because it is a path-level feature.
 fn glob_match(pattern: &str, name: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
     let txt: Vec<char> = name.chars().collect();
-    let (mut pi, mut ti) = (0usize, 0usize);
-    let (mut star, mut mark) = (None::<usize>, 0usize);
-    while ti < txt.len() {
-        if pi < pat.len() && (pat[pi] == '?' || pat[pi] == txt[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == '*' {
-            star = Some(pi);
-            mark = ti;
-            pi += 1;
-        } else if let Some(s) = star {
-            pi = s + 1;
-            mark += 1;
-            ti = mark;
-        } else {
-            return false;
+    matches_from(&pat, &txt)
+}
+
+fn matches_from(pat: &[char], txt: &[char]) -> bool {
+    let Some(&head) = pat.first() else {
+        return txt.is_empty();
+    };
+    match head {
+        '*' => (0..=txt.len()).any(|n| matches_from(&pat[1..], &txt[n..])),
+        '?' => !txt.is_empty() && matches_from(&pat[1..], &txt[1..]),
+        '[' => {
+            if txt.is_empty() {
+                return false;
+            }
+            match parse_class(pat) {
+                // A malformed class is a literal '[' - the shell behaviour, and
+                // the least surprising thing for a COPY pattern.
+                Some((set, negated, rest)) => {
+                    (set.contains(&txt[0]) != negated) && matches_from(rest, &txt[1..])
+                }
+                None => txt[0] == '[' && matches_from(&pat[1..], &txt[1..]),
+            }
         }
+        c => !txt.is_empty() && txt[0] == c && matches_from(&pat[1..], &txt[1..]),
     }
-    while pi < pat.len() && pat[pi] == '*' {
-        pi += 1;
+}
+
+/// Parse a `[...]` class at the start of `pat`, returning its characters, whether
+/// it is negated (`[!...]` or `[^...]`) and the pattern after the class.
+fn parse_class(pat: &[char]) -> Option<(Vec<char>, bool, &[char])> {
+    let mut i = 1;
+    let negated = matches!(pat.get(i), Some('!') | Some('^'));
+    if negated {
+        i += 1;
     }
-    pi == pat.len()
+    let mut set = Vec::new();
+    let mut at_start = true;
+    loop {
+        let c = *pat.get(i)?;
+        if c == ']' && !at_start {
+            return Some((set, negated, &pat[i + 1..]));
+        }
+        // `a-z` is a range; a '-' first or last inside the class is literal.
+        if pat.get(i + 1) == Some(&'-') && !matches!(pat.get(i + 2), None | Some(&']')) {
+            let hi = *pat.get(i + 2)?;
+            if c > hi {
+                return None;
+            }
+            set.extend(c..=hi);
+            i += 3;
+        } else {
+            set.push(c);
+            i += 1;
+        }
+        at_start = false;
+    }
 }
 
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
@@ -3209,6 +3311,83 @@ mod build_local_tests {
     }
 
     // Residual gap 3 (#30), wildcard slice: `COPY src/*.rs` was unsupported.
+    /// The glob matcher gained `[...]` classes; `**` stays unsupported but is now
+    /// refused with a message instead of silently matching nothing.
+    #[test]
+    fn glob_match_handles_character_classes() {
+        assert!(glob_match("file[0-9].txt", "file7.txt"));
+        assert!(!glob_match("file[0-9].txt", "filex.txt"));
+        assert!(glob_match("[abc]x", "bx"));
+        assert!(!glob_match("[abc]x", "dx"));
+        assert!(glob_match("v[!0-9]", "vx"));
+        assert!(!glob_match("v[!0-9]", "v1"));
+        assert!(glob_match("v[^0-9]", "vy"));
+        assert!(glob_match("[a-c]1", "b1"));
+        assert!(!glob_match("[a-c]1", "e1"));
+        // A ']' as the first character of a class is literal, as in the shell.
+        assert!(glob_match("[]]", "]"));
+
+        // `*` and `?` keep working, including a match that needs backtracking.
+        assert!(glob_match("*[0-9]", "abc7"));
+        assert!(glob_match("a*z[0-9]", "abcz4"));
+        assert!(glob_match("?[a-z]", "xq"));
+        assert!(!glob_match("?[a-z]", "x1"));
+    }
+
+    #[test]
+    fn double_star_is_refused_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = expand_glob(tmp.path(), "src/**/*.rs")
+            .expect_err("'**' must be refused, not silently match nothing");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("**"),
+            "error must show the offending token: {msg}"
+        );
+        assert!(msg.contains("not supported"), "error must say so: {msg}");
+    }
+
+    /// Multi-stage and `--from=` would build something other than what the file
+    /// asks for, so both are refused before any work happens.
+    #[test]
+    fn unsupported_dockerfile_shapes_are_refused() {
+        let ok = "FROM scratch\nCOPY a /a\nRUN echo hi\n";
+        assert!(refuse_unsupported_build_features(ok).is_ok());
+        assert!(refuse_unsupported_build_features("FROM alpine:3.19 AS build\nRUN true\n").is_ok());
+
+        // Two stages with no stage copy: refused on the stage count.
+        let two_stages = "FROM alpine:3.19 AS build\nRUN true\nFROM scratch\nCOPY a /a\n";
+        let err = refuse_unsupported_build_features(two_stages)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("2 FROM stages"), "unexpected error: {err}");
+
+        // Two stages *with* a stage copy: the more specific refusal wins, because it
+        // names the line the reader has to look at.
+        let both = "FROM alpine:3.19 AS build\nRUN true\nFROM scratch\nCOPY --from=build /x /x\n";
+        let err = refuse_unsupported_build_features(both)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--from="), "unexpected error: {err}");
+        assert!(
+            err.contains("line 4"),
+            "error should point at the line: {err}"
+        );
+
+        let stage_copy = "FROM alpine:3.19\nCOPY --from=builder /app /app\n";
+        let err = refuse_unsupported_build_features(stage_copy)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--from="), "unexpected error: {err}");
+        assert!(
+            err.contains("line 2"),
+            "error should point at the line: {err}"
+        );
+
+        // A comment mentioning the feature must not trigger the refusal.
+        assert!(refuse_unsupported_build_features("# COPY --from=x /a /b\nFROM scratch\n").is_ok());
+    }
+
     #[test]
     fn glob_match_handles_star_and_question() {
         assert!(glob_match("*.rs", "main.rs"));
