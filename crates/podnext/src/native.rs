@@ -574,6 +574,48 @@ fn forward_to_guest(sig: i32) {
     }
 }
 
+/// Reinstate the environment and working directory an image was built with.
+///
+/// `podnext build local` records `env`/`working_dir` in the image's
+/// `metadata.json` (#29), but `ContainerManager::load_containers` keys a
+/// container's config off its directory name and `os-release` only and leaves
+/// `env_vars`/`working_dir` at their defaults. A later `podnext run` therefore
+/// started with an empty environment and `cwd=/`, so the image did not behave as
+/// built. Re-apply the recorded values here, immediately before the backend
+/// builds the proot command (`proot-distro-core/src/runtime.rs` reads exactly
+/// these two fields). Values already set on the container win, so a caller
+/// override is never clobbered.
+fn apply_image_runtime_config(container: &mut proot_distro_core::Container) {
+    let Some(dir) = container.rootfs_path.parent() else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(dir.join("metadata.json")) else {
+        return;
+    };
+    let Ok(meta) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+
+    if container.config.env_vars.is_empty() {
+        if let Some(env) = meta.get("env").and_then(|v| v.as_object()) {
+            let mut vars: Vec<(String, String)> = env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                .collect();
+            // JSON objects carry no order; sort so repeated runs are identical.
+            vars.sort();
+            container.config.env_vars = vars;
+        }
+    }
+    if container.config.working_dir.is_none() {
+        if let Some(wd) = meta.get("working_dir").and_then(|v| v.as_str()) {
+            if !wd.is_empty() {
+                container.config.working_dir = Some(wd.to_string());
+            }
+        }
+    }
+}
+
 pub async fn run_container_native(
     container_name: &str,
     command: Vec<String>,
@@ -581,6 +623,9 @@ pub async fn run_container_native(
 ) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     let mut container = container_mgr.get(container_name).await?;
+    // The loader does not carry the image's recorded ENV/WORKDIR; reinstate them
+    // so `podnext run` behaves as the image was built (#30 residual gap 1).
+    apply_image_runtime_config(&mut container);
     if isolated {
         container.config.isolated = true;
     }
@@ -683,6 +728,85 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
 
     println!("Container '{}' removed.", name);
     Ok(())
+}
+
+/// `podnext run` must behave as the image was built: the ENV/WORKDIR recorded in
+/// the image's `metadata.json` must reach the container's runtime config. These
+/// exercise the loader gap directly (offline, no proot).
+#[cfg(test)]
+mod image_runtime_config_tests {
+    use super::*;
+    use proot_distro_core::{Container, ContainerConfig};
+
+    fn container_at(rootfs: PathBuf) -> Container {
+        let config = ContainerConfig {
+            name: "img:latest".to_string(),
+            rootfs_path: Some(rootfs),
+            ..Default::default()
+        };
+        Container::new("img:latest".to_string(), config).expect("container")
+    }
+
+    fn scratch_dir(metadata: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = tmp.path().join("rootfs");
+        std::fs::create_dir_all(&rootfs).unwrap();
+        std::fs::write(tmp.path().join("metadata.json"), metadata).unwrap();
+        (tmp, rootfs)
+    }
+
+    #[test]
+    fn run_reinstates_env_and_working_dir_from_metadata() {
+        let (_tmp, rootfs) = scratch_dir(
+            r#"{"name":"img:latest","env":{"GREETING":"hello-from-image","APP_MODE":"prod"},"working_dir":"/srv/app"}"#,
+        );
+        let mut c = container_at(rootfs);
+        assert!(
+            c.config.env_vars.is_empty() && c.config.working_dir.is_none(),
+            "the loader must leave these unset, which is the bug"
+        );
+
+        apply_image_runtime_config(&mut c);
+
+        assert_eq!(
+            c.config.env_vars,
+            vec![
+                ("APP_MODE".to_string(), "prod".to_string()),
+                ("GREETING".to_string(), "hello-from-image".to_string()),
+            ]
+        );
+        assert_eq!(c.config.working_dir.as_deref(), Some("/srv/app"));
+    }
+
+    #[test]
+    fn explicit_config_is_not_clobbered_by_metadata() {
+        let (_tmp, rootfs) =
+            scratch_dir(r#"{"env":{"FROM_IMAGE":"1"},"working_dir":"/from/image"}"#);
+        let mut c = container_at(rootfs);
+        c.config.env_vars = vec![("EXPLICIT".to_string(), "1".to_string())];
+        c.config.working_dir = Some("/explicit".to_string());
+
+        apply_image_runtime_config(&mut c);
+
+        assert_eq!(
+            c.config.env_vars,
+            vec![("EXPLICIT".to_string(), "1".to_string())]
+        );
+        assert_eq!(c.config.working_dir.as_deref(), Some("/explicit"));
+    }
+
+    #[test]
+    fn missing_metadata_is_a_no_op() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = tmp.path().join("rootfs");
+        std::fs::create_dir_all(&rootfs).unwrap();
+        let mut c = container_at(rootfs);
+
+        apply_image_runtime_config(&mut c);
+
+        assert!(c.config.env_vars.is_empty());
+        assert!(c.config.working_dir.is_none());
+    }
 }
 
 #[cfg(all(test, unix))]
