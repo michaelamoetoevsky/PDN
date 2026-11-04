@@ -1,0 +1,49 @@
+#!/bin/sh
+# PDN pre-commit gate.
+#
+# Installed by scripts/install-hooks.sh (sets core.hooksPath=.githooks, which is
+# shared by every git worktree of this repository, so worktree-based workflows get
+# it too). POSIX sh only: Termux /bin/sh is dash.
+#
+# Why this exists: unformatted Rust has reached CI twice and failed there at the
+# `Run cargo fmt check` step (run 41841064043, and the department round integrated
+# as 7c04739), each time burning a whole CI cycle on a defect `cargo fmt` fixes in
+# about a second. Catching it at commit time is strictly cheaper.
+#
+# Only Rust files trigger the check, so doc-only or script-only commits are not
+# slowed down. Bypass for a genuine emergency with:
+#     PDN_SKIP_HOOKS=1 git commit ...
+set -e
+
+[ "${PDN_SKIP_HOOKS:-}" = "1" ] && exit 0
+
+staged_rs=$(git diff --cached --name-only --diff-filter=ACM -- '*.rs' || true)
+[ -n "$staged_rs" ] || exit 0
+
+command -v cargo >/dev/null 2>&1 || {
+    echo "pre-commit: cargo not found; skipping the fmt gate" >&2
+    exit 0
+}
+
+# Android has no writable /tmp (Termux keeps its own under $PREFIX/tmp, exposed as
+# $TMPDIR), so never hardcode /tmp here.
+fmt_log=$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/pdn-fmt-check.$$")
+
+# The Termux TUI redirects LD_LIBRARY_PATH and cargo/rustc inherit it; clear it for
+# this process so the check behaves the same here as it does in CI.
+unset LD_LIBRARY_PATH
+
+if ! cargo fmt --all -- --check >"$fmt_log" 2>&1; then
+    echo "pre-commit: rustfmt found unformatted code - commit blocked." >&2
+    echo "" >&2
+    sed -n '1,40p' "$fmt_log" >&2
+    rm -f "$fmt_log"
+    echo "" >&2
+    echo "Fix with:  cargo fmt --all" >&2
+    echo "Re-run:    cargo fmt --all -- --check" >&2
+    echo "This is the step that failed CI runs 41841064043 and 7c04739." >&2
+    echo "Emergency bypass: PDN_SKIP_HOOKS=1 git commit ..." >&2
+    exit 1
+fi
+rm -f "$fmt_log"
+exit 0

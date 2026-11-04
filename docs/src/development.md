@@ -126,6 +126,22 @@ cargo bench --package pn-gateway guardrails
 
 ## Code Quality
 
+### Catch formatting at commit time, not in CI
+
+CI fails a whole cycle on unformatted Rust (`Run cargo fmt check`). The same gate
+runs locally before every commit once you install the repository hooks:
+
+```bash
+sh scripts/install-hooks.sh          # sets core.hooksPath=.githooks
+sh scripts/install-hooks.sh --check  # verify, change nothing
+```
+
+`core.hooksPath` lives in the shared `.git/config`, so `git worktree add` clones
+inherit the hook too — parallel work in worktrees cannot commit unformatted code
+that later breaks CI. Only staged `*.rs` files trigger the check, so doc-only
+commits are unaffected. Bypass a single commit with `PDN_SKIP_HOOKS=1 git commit …`
+when the formatting fix genuinely belongs in a later commit.
+
 ### Formatting
 
 ```bash
