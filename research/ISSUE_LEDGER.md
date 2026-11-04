@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 21:35:04Z from `54b072a` (test(ledger): predicate for #34 and #35 so the gate protects these fix).
+Generated 2026-11-04 22:01:10Z from `e111232` (test(ledger): predicate for #38 (store visibility)).
 
 ## Why this exists
 
@@ -17,7 +17,7 @@ silently-regressed fix shows up as a FAIL in a document rather than as a surpris
 | **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
 | **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
 
-**Coverage: 50 checks PASS by direct observation · 0 FAIL · 1 SKIPPED**, across 51 checks covering 23 of 34 issues (11 issues have no automated check).
+**Coverage: 54 checks PASS by direct observation · 0 FAIL · 1 SKIPPED**, across 55 checks covering 24 of 36 issues (12 issues have no automated check).
 
 **A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the 1 SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this
 device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind
@@ -61,7 +61,7 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:23:37Z
 
 - [PASS] install validates the container name before creating anything
   - `grep -nF 'validate_container_name' crates/podnext/src/main.rs`
-  - → `2024:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 3059:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;`
+  - → `2029:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 2713:            .validate_container_name(&candidate) | 3237:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;`
 
 **#12 [BUG-C2] backup delete deadlocks permanently (tokio RwLock read guard held across write)**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T04:23:41Z
@@ -108,7 +108,7 @@ _state_: CLOSED  ·  _labels_: performance  ·  _closed_: 2026-11-04T11:04:51Z
   - → `crates/proot-distro-core/tests/deep_fs_recursion.rs`
 - [PASS] the deep-recursion test passes
   - `cargo test -p proot-distro-core --test deep_fs_recursion --locked`
-  - → `memguard: env-u-LD pid=11137 pgid=11137 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T213230Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=595MB dur=29s`
+  - → `memguard: env-u-LD pid=15786 pgid=15786 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T215924Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=90MB dur=4s`
 
 **#17 [BUG-L1] podnext build local rejects ARG, skips RUN, and produces no usable OCI image**  
 _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T11:04:52Z
@@ -131,13 +131,13 @@ _state_: CLOSED  ·  _labels_: bug, performance  ·  _closed_: 2026-11-04T11:04:
 
 - [PASS] sparse copies probe holes with SEEK_DATA/SEEK_HOLE
   - `grep -nF 'libc::SEEK_DATA' crates/podnext/src/main.rs`
-  - → `3562:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
+  - → `3583:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
 - [PASS] the sparse-copy regression test exists
   - `grep -nF 'fn copy_keeps_sparse_files_sparse' crates/podnext/src/main.rs`
-  - → `4112:    fn copy_keeps_sparse_files_sparse() {`
+  - → `4133:    fn copy_keeps_sparse_files_sparse() {`
 - [PASS] the sparse-copy unit test passes
   - `cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked`
-  - → `memguard: env-u-LD pid=7223 pgid=7223 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T213136Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1775MB dur=53s`
+  - → `memguard: env-u-LD pid=11510 pgid=11510 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T215832Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1415MB dur=52s`
 
 **#19 [CI-1] test_restart_policy_unless_stopped fails: explicit stop loses to restart policy**  
 _state_: CLOSED  ·  _labels_: bug, ci  ·  _closed_: 2026-11-04T04:23:51Z
@@ -158,7 +158,7 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:24:00Z
 
 - [PASS] direct-execution detection only fires when -r/--rootfs precedes the command
   - `grep -nF 'pre_dashdash_args' crates/podnext/src/main.rs | head -4`
-  - → `1454:    let pre_dashdash_args = &raw_args[..dashdash_idx]; | 1489:    let has_subcommand = pre_dashdash_args | 1494:        && pre_dashdash_args`
+  - → `1459:    let pre_dashdash_args = &raw_args[..dashdash_idx]; | 1494:    let has_subcommand = pre_dashdash_args | 1499:        && pre_dashdash_args`
 
 **#22 [CI-2] dependency-updates workflow references a nonexistent action (peter-evans/update-github-actions 404s)**  
 _state_: CLOSED  ·  _labels_: bug, github-actions, ci  ·  _closed_: 2026-11-04T04:24:05Z
@@ -189,9 +189,9 @@ _state_: CLOSED  ·  _labels_: bug, ci, performance  ·  _closed_: 2026-11-04T10
   - → `103:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 108:          cargo bench --workspace --bench benchmarks --locked -- \ | 130:          cargo bench --workspace --bench benchmarks --locked -- \`
 - [SKIPPED] the benchmark targets compile (the false-green defect)
   - `cargo bench -p pn-next --no-run --locked`
-  - → `memguard: env-u-LD pid=28311 pgid=28311 budget=2000MB min_avail=700MB
-memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T212715Z-env-u-LD.log
-memguard: group RSS 2071MB over bu`
+  - → `memguard: env-u-LD pid=7853 pgid=7853 budget=2000MB min_avail=700MB
+memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T215701Z-env-u-LD.log
+memguard: group RSS 2034MB over budg`
 
 **#30 [CI-5] Benchmark job is unpredictable: 25.7 min then 43+ min, and a baseline step killed with SIGTERM**  
 _state_: CLOSED  ·  _labels_: ci, performance  ·  _closed_: 2026-11-04T15:35:42Z
@@ -214,7 +214,7 @@ _state_: CLOSED  ·  _labels_: ci, flaky-test  ·  _closed_: 2026-11-04T14:30:47
   - → `25:const DEADLINE: Duration = Duration::from_secs(30);`
 - [PASS] the abnormal-restart test passes
   - `cargo test -p pn-next --test supervisor_e2e test_restart_policy_on_abnormal --locked`
-  - → `memguard: env-u-LD pid=12178 pgid=12178 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T213259Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1388MB dur=125s`
+  - → `memguard: env-u-LD pid=16182 pgid=16182 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261104T215928Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1254MB dur=102s`
 
 **#32 Signal lifecycle: stopping a PDN process orphans the guest, and podnext-daemon ignores SIGTERM**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:18Z
@@ -243,7 +243,7 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:39Z
   - → `478:fn rotate_log_if_needed(path: &Path, cfg: &LogRotationConfig) -> std::io::Result<()> {`
 
 **#34 pn-gateway: documented duration form ("60s") cannot be loaded by the new TOML loader**  
-_state_: OPEN  ·  _labels_: bug, documentation  ·  _closed_: —
+_state_: CLOSED  ·  _labels_: bug, documentation  ·  _closed_: 2026-11-04T21:44:02Z
 
 - [PASS] documented durations ("60s", "500ms", "2m") parse
   - `grep -nF 'pub fn parse_duration' crates/pn-gateway/src/duration_fmt.rs`
@@ -259,7 +259,7 @@ _state_: OPEN  ·  _labels_: bug, documentation  ·  _closed_: —
   - → `73:    pub fn to_toml_str(&self) -> Result<String, ConfigError> {`
 
 **#35 podnext: a tag containing ':' silently leaves /dev/shm and the /proc stubs unbound**  
-_state_: OPEN  ·  _labels_: bug  ·  _closed_: —
+_state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T21:44:04Z
 
 - [PASS] one shared rule turns a reference into a store key
   - `grep -nF 'pub fn store_key' crates/proot-distro-core/src/names.rs`
@@ -280,6 +280,22 @@ _state_: OPEN  ·  _labels_: bug  ·  _closed_: —
   - `grep -nF 'a_colon_tag_builds_under_a_colon_free_store_key' crates/podnext/src/commands/mod.rs`
   - → `3478:    async fn a_colon_tag_builds_under_a_colon_free_store_key() {`
 
+**#38 A FROM scratch image is unreachable by run/list/remove after a successful build**  
+_state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T21:56:44Z
+
+- [PASS] container detection is metadata-based, not an etc/bin/usr guess
+  - `grep -nF 'pub fn is_container_dir' crates/proot-distro-core/src/container.rs`
+  - → `829:pub fn is_container_dir(dir: &std::path::Path) -> bool {`
+- [PASS] load_containers uses the metadata-based check
+  - `grep -nF 'is_container_dir(&entry.path())' crates/proot-distro-core/src/container.rs`
+  - → `65:            if !is_container_dir(&entry.path()) {`
+- [PASS] the etc/bin/usr probe is not the container test any more
+  - `grep -nF 'let is_valid_rootfs' crates/proot-distro-core/src/container.rs`
+  - → ``
+- [PASS] a scratch image with metadata is tested as a container
+  - `grep -nF 'a_scratch_image_with_metadata_is_a_container' crates/proot-distro-core/src/container.rs`
+  - → `851:    fn a_scratch_image_with_metadata_is_a_container() {`
+
 ## Issues with no automated check (the honest gap)
 
 Listed rather than omitted, so the coverage gap is visible. Each has a reason. These are open
@@ -299,6 +315,7 @@ container and therefore belongs in CI.
 | 27 | CLOSED | defect: documented [gateway.fail_safe] (bulkhead/retry_policy) absent from pn-gateway; no fix landed, so a fix-present predicate has nothing to assert. | [BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy |
 | 28 | CLOSED | defect: empty command yields a null Compose service in export_to_compose; no fix landed. | Compose export: empty command emits an invalid service; follow-ups fro |
 | 29 | CLOSED | defect: podnext build local reports success without an image; no fix landed. | podnext build local computes a layer diff but produces no image |
+| 37 | OPEN | no honest source-level predicate identified. | build local: locally built images are invisible to 'image ls' and 'ima |
 
 ## How to re-run this (CI-friendly)
 
