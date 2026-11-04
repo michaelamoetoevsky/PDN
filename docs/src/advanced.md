@@ -175,6 +175,8 @@ podnext restore checkpoint-1 --name myapp-copy --config new-config.toml
 ### Configuration
 
 ```toml
+# not-pdn-config: checkpoint/restore is not implemented; this sketch uses OCI
+# runtime-spec field names.
 [container.checkpoint]
 enabled = true
 interval = "30m"              # Auto-checkpoint interval
@@ -241,6 +243,9 @@ podnext info --gpu
 ### Configuration
 
 ```toml
+# not-pdn-config: GPU passthrough example using OCI runtime-spec field names
+# (egl_platforms, icd_paths, privileged_without_host_devices); no [container.gpu]
+# table exists in this crate.
 [container.gpu]
 enabled = true
 devices = [
@@ -338,6 +343,7 @@ podnext build --platform linux/arm64,linux/amd64 -t myorg/myimage:tag .
 ### Platform-Specific Configuration
 
 ```toml
+# not-pdn-config: OCI image-layout example (layers, config), not PDN config.
 [container]
 image = "docker.io/library/ubuntu:22.04"
 
@@ -441,6 +447,7 @@ chmod +x ~/.config/pn-next/cni/bin/my-cni-plugin
 ### Envoy Integration (Planned)
 
 ```toml
+# not-pdn-config: service-mesh sketch, no backing table in this crate.
 [container.network.service_mesh]
 enabled = true
 sidecar = "envoy"
@@ -600,6 +607,8 @@ containerRuntimeEndpoint: unix:///run/pdn-cri.sock
 ### Containerd Integration
 
 ```toml
+# not-pdn-config: this is containerd's own config file, shown so the runtime
+# entry can be registered; the keys below belong to containerd, not to PDN.
 # /etc/containerd/config.toml
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.pdn]
   runtime_type = "io.containerd.pdn.v1"

@@ -115,6 +115,8 @@ TARBALL_SHA256["aarch64"]="..."
 **PDN (TOML configuration):**
 
 ```toml
+# not-pdn-config: the previous pn-next schema, shown as the "before" of the
+# migration; these keys are what is being migrated away from.
 # ~/.config/pn-next/containers/ubuntu.toml
 [container]
 name = "ubuntu"
@@ -198,6 +200,8 @@ podnext run ubuntu -b /sdcard:/sdcard -b /data/data/com.termux/files/home:/home/
 ### PDN Security Profiles
 
 ```toml
+# not-pdn-config: the previous pn-next schema, shown as the "before" of the
+# migration.
 # ~/.config/pn-next/security/default.toml
 [profile]
 name = "default"
@@ -249,6 +253,7 @@ podnext run ubuntu --security-profile my-custom -- cmd
 **PDN:** Native pod/stack support (planned)
 
 ```toml
+# not-pdn-config: the previous pod manifest format from migrator tooling.
 # pod.toml
 [pod]
 name = "web-stack"
@@ -288,6 +293,7 @@ podnext restore checkpoint-1 --name ubuntu-restored
 **PDN:**
 
 ```toml
+# not-pdn-config: OCI runtime-spec GPU example.
 [container.gpu]
 enabled = true
 devices = ["/dev/dri/renderD128", "/dev/dri/card0"]
@@ -314,6 +320,7 @@ podnext run ubuntu --security-profile unconfined -- /bin/bash
 **Check:** Path translation in config
 
 ```toml
+# not-pdn-config: the previous pn-next path-translation schema.
 [container.config.path_translation]
 host_prefix = "/data/data/com.termux/files/home/.config/pn-next/rootfs"
 guest_prefix = "/"

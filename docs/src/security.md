@@ -451,6 +451,9 @@ podnext run ubuntu --no-new-privileges -- cmd
 Map container UID/GID to unprivileged host UID/GID:
 
 ```toml
+# planned: uid_map, gid_map, allowed, blocked, burst, requests_per_minute,
+# planned: containers_per_user, cpu_per_user, memory_per_user, memory_swappiness,
+# planned: networks_per_user, volumes_per_user
 [container.security]
 user_namespace = true
 uid_map = "0:100000:65536"

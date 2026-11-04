@@ -2,17 +2,20 @@
 //!
 //! ## Scope (honest, read this)
 //!
-//! This test scans the fenced ```toml blocks of the documentation files listed
-//! in [`DOC_FILES`]. It does **not** scan every file under `docs/src/` — only
-//! the files reconciled by the doc-drift round-2 increment (see
-//! `research/DOCS_DRIFT_ROUND2.md`). A doc file that is not in `DOC_FILES` is
-//! not checked.
+//! This test scans the fenced ```toml blocks of **every** documentation file
+//! listed in [`DOC_FILES`], which is every file under `docs/src/` that contains a
+//! TOML block. A doc file that is not in `DOC_FILES` is not checked, so adding a
+//! new file with TOML blocks means adding it there.
 //!
 //! `docs/src/architecture.md` contains no ```toml blocks (its config sketches
 //! are ```rust), so it contributes zero keys here. Its prose and type-sketch
 //! reconciliation was done by hand and is **not** covered by this guard.
 //!
 //! ## What counts as a "documented key"
+//!
+//! A block that documents another tool's configuration (containerd, an OCI
+//! runtime spec, the previous pn-next schema) carries a ``# not-pdn-config:``
+//! comment and is skipped entirely: its keys are not this crate's to own.
 //!
 //! A bare `key = ...` assignment inside a fenced ```toml block — quoted keys
 //! (`"org.pdn.type" = ...`) are dynamic map entries, not config field names.
@@ -47,6 +50,14 @@ const DOC_FILES: &[&str] = &[
     "docs/src/configuration.md",
     "docs/src/architecture.md",
     "docs/src/cli-reference.md",
+    // Added so the guard covers every documentation file that contains a TOML
+    // block, not just the three reconciled by the round-2 increment. A file left
+    // out of this list is a file whose drift nobody notices.
+    "docs/src/advanced.md",
+    "docs/src/api-reference.md",
+    "docs/src/migration-guide.md",
+    "docs/src/security.md",
+    "docs/src/troubleshooting.md",
 ];
 
 /// Tables whose entries are dynamic map keys (env vars, labels, syscall names,
@@ -181,6 +192,19 @@ const PLANNED: &[(&str, &str)] = &[
     ("updated", "container metadata, not a ContainerConfig field (real: name, distro, version, arch)"),
     ("user", "no [container.config] table exists; the real ContainerConfig is flat"),
     ("uts_mode", "no field on container NetworkConfig (real: mode, bridge, ip_address, gateway, dns_servers, port_mappings)"),
+    // security.md security/quota controls: documented surface, not implemented.
+    ("allowed", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("blocked", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("burst", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("containers_per_user", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("cpu_per_user", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("gid_map", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("memory_per_user", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("memory_swappiness", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("networks_per_user", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("requests_per_minute", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("uid_map", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
+    ("volumes_per_user", "documented security/quota control with no backing field (issue #27; planned, not implemented)"),
 ];
 
 #[test]
@@ -261,6 +285,11 @@ fn extract_keys(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut active = BTreeSet::new();
     let mut planned = BTreeSet::new();
     let mut in_toml = false;
+    // A block that documents *another* tool's configuration is marked with a
+    // `# not-pdn-config:` comment: its keys are not PDN keys and must not be
+    // reported (a containerd `config.toml` example has `runtime_type` and
+    // `BinaryName`, neither of which this crate can ever own).
+    let mut skip_block = false;
     let mut sections: Vec<String> = Vec::new();
 
     for raw in text.lines() {
@@ -271,11 +300,16 @@ fn extract_keys(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
             } else {
                 in_toml = rest.trim().eq_ignore_ascii_case("toml");
             }
+            skip_block = false;
             sections.clear();
             continue;
         }
         if !in_toml || t.is_empty() || t.starts_with('#') {
             if in_toml {
+                if t.starts_with("# not-pdn-config") {
+                    skip_block = true;
+                    continue;
+                }
                 if let Some(rest) = t.strip_prefix("# planned:") {
                     for k in rest.split(',') {
                         let k = k.trim();
@@ -285,6 +319,9 @@ fn extract_keys(text: &str) -> (BTreeSet<String>, BTreeSet<String>) {
                     }
                 }
             }
+            continue;
+        }
+        if skip_block {
             continue;
         }
         if t.starts_with('[') {

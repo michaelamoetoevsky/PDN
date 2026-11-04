@@ -351,3 +351,23 @@ Raw transcripts:
 * `~/.hermes/logs/heavy/20261104T192841Z-de-docdrift-green1.log` (guard green)
 * `~/.hermes/logs/heavy/20261104T192901Z-de-docdrift-alltests.log` (full crate suite green)
 * `~/.hermes/logs/heavy/20261104T192941Z-de-docdrift-NEGATIVE.log` (negative control FAIL, exit 101)
+
+## Follow-up (this increment)
+
+The gap named in the scope section ("drift left explicitly untouched") is now bounded by the guard
+itself rather than by prose. `crates/pn-gateway/tests/doc_key_drift.rs` scans **every** `docs/src/*.md`
+file that contains a TOML block (8 files, was 3), so drift in `security.md`, `advanced.md`,
+`migration-guide.md`, `api-reference.md` and `troubleshooting.md` fails CI instead of going unseen.
+
+Two mechanisms keep that honest instead of inventing configuration:
+
+* `# not-pdn-config:` inside a block marks documentation of *another* tool's file (a containerd
+  `config.toml`, an OCI runtime-spec or image-layout example, the previous pn-next schema). Those
+  blocks are skipped entirely: `BinaryName`, `runtime_type` and `layers` are not this crate's keys.
+* `# planned: k1, k2` declares documented keys with no backing field; each is listed in `PLANNED`
+  with its reason. The security/quota controls in `security.md` (`uid_map`, `gid_map`, `allowed`,
+  `blocked`, `burst`, `requests_per_minute`, `containers_per_user`, `cpu_per_user`, `memory_per_user`,
+  `memory_swappiness`, `networks_per_user`, `volumes_per_user`) are pinned that way: documented,
+  not implemented, and visible as such.
+
+Both guard tests pass: `cargo test -p pn-gateway --locked --test doc_key_drift` -> `2 passed; 0 failed`.

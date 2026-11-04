@@ -510,6 +510,7 @@ service RuntimeService {
 ### Usage with Containerd
 
 ```toml
+# not-pdn-config: containerd's config file, not PDN configuration.
 # /etc/containerd/config.toml
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.pdn]
   runtime_type = "io.containerd.pdn.v1"

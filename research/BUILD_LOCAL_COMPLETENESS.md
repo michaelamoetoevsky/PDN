@@ -354,3 +354,26 @@ flock ... -c '... heavy ... cargo test -p podnext --locked'
 
 Raw transcripts: `$HOME/.hermes/cache/scratch/c2/{before-build,before-run,after-build,after-run,after-glob}.log`
 and the memory-guard logs under `$HOME/.hermes/logs/heavy/`.
+
+## Follow-up (this increment)
+
+Items 2-5 of the list above changed; re-measured against commit `b818e3b`:
+
+| # | Before | Now |
+|---|---|---|
+| 1 | multi-stage / `--from=` silently ignored | **refused** by name and line before any work: the parser drops `--` flags, so `COPY --from=` would have copied from the context |
+| 2 | only `*` and `?`; `**` matched nothing | `[...]` classes and ranges implemented (`[abc]`, `[a-z]`, `[!0-9]`); `**` refused with the token named |
+| 3 | USER recorded, applied silently | recorded, and the build prints that it is **not enforced** (PRoot maps every guest id to one host uid) |
+| 4 | EXPOSE recorded, applied silently | recorded, and the build prints that no host port forwarding exists |
+| 5 | `:` tag characterised only | **fixed**: store keys are colon-free (`names::store_key`), a different tag mapping onto the same key is refused rather than overwriting an image, and a colon bind source is a hard error. Reported as #35, closed by `546bf24` + `b818e3b` |
+| 6 | no OCI manifest / `~/.podnext/images` entry | unchanged (the runnable store is still the container directory, #29) |
+| 7 | `image inspect` reads `ImageManager`, not `metadata.json` | unchanged |
+
+A defect introduced by item 5's fix was found and closed in the same commit: the base-image install
+and the `RUN` container lookup still used the raw tag, which cannot resolve a colon tag.
+
+Verification: `cargo test -p podnext --locked` -> `26 passed; 0 failed` plus `2 passed` (the two new
+tests are `glob_match_handles_character_classes`, `double_star_is_refused_by_name`,
+`unsupported_dockerfile_shapes_are_refused`). End-to-end `RUN` with a colon tag is **not** covered by
+an offline test (it needs a real base image); the two call sites now share the single `key` variable,
+which is what the tests pin.
