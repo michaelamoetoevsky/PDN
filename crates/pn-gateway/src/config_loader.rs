@@ -8,6 +8,11 @@
 //! [`crate::config`] is `#[serde(deny_unknown_fields)]`, so an unknown key
 //! anywhere under `[gateway]` is rejected with the offending key and its
 //! line/column named.
+//!
+//! Durations are written as strings (`"30s"`, `"500ms"`, `"2m"`) by way of
+//! [`crate::duration_fmt`], which also keeps the native `{ secs, nanos }` table
+//! and bare integer seconds loadable. [`GatewayConfig::to_toml_str`] writes the
+//! same form back out, so a loaded configuration round-trips.
 
 use crate::config::GatewayConfig;
 use std::path::{Path, PathBuf};
@@ -29,13 +34,15 @@ pub enum ConfigError {
     },
     #[error("cannot parse gateway configuration: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("cannot serialise gateway configuration: {0}")]
+    Serialize(#[from] toml::ser::Error),
 }
 
 /// The slice of a PDN config file that the gateway reads.
 ///
 /// This wrapper is intentionally NOT `deny_unknown_fields`: sibling top-level
 /// sections belong to other subsystems and must not block gateway loading.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct GatewaySection {
     gateway: GatewayConfig,
 }
@@ -47,6 +54,19 @@ impl GatewayConfig {
     /// offending key and its line/column.
     pub fn from_toml_str(s: &str) -> Result<Self, ConfigError> {
         Ok(toml::from_str::<GatewaySection>(s)?.gateway)
+    }
+
+    /// Render this configuration back into the documented TOML shape.
+    ///
+    /// Symmetric with [`GatewayConfig::from_toml_str`]: the result nests the
+    /// settings under `[gateway]` exactly as the loader expects, and durations
+    /// are written in the documented string form (`"60s"`). Round-tripping is
+    /// asserted by `tests/config_loader.rs`, so `include`-style tools and
+    /// generated config can be trusted to reload.
+    pub fn to_toml_str(&self) -> Result<String, ConfigError> {
+        Ok(toml::to_string(&GatewaySection {
+            gateway: self.clone(),
+        })?)
     }
 
     /// Load the `[gateway]` table of a PDN config file from an explicit path.

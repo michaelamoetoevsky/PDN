@@ -151,6 +151,14 @@ The documented fail-safe fields populate the struct:
    anywhere in the tree, and inventing one risks colliding with
    `PN_CONFIG_DIR`). An env-var convenience can be added once a name is agreed.
 
+### Resolved (follow-up commit)
+
+The duration question was decided in favour of the documentation: `crates/pn-gateway/src/duration_fmt.rs`
+parses `"30s"` / `"500ms"` / `"2m"` / `"1h"` / `"1d"`, still accepts bare integer seconds and the
+native `{ secs, nanos }` table, and rejects an unknown unit with the offending value named.
+`GatewayConfig::to_toml_str` writes the same form back, so `docs/src/configuration.md` values now
+load, round-trip, and are asserted by four integration tests in `crates/pn-gateway/tests/config_loader.rs`.
+
 ## 5. Residual gaps
 
 - No serializer (`to_toml_str`); the "round-trip" covered is file→struct. Adding

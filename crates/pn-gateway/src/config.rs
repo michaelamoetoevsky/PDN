@@ -51,6 +51,7 @@ pub struct ProotConfig {
     pub seccomp_enabled: bool,
     pub syscall_trace: bool,
     pub max_tracees: usize,
+    #[serde(with = "crate::duration_fmt")]
     pub timeout: Duration,
 }
 
@@ -197,6 +198,7 @@ impl Default for CompatConfig {
 pub struct FailSafeConfig {
     pub enabled: bool,
     pub max_retries: u32,
+    #[serde(with = "crate::duration_fmt")]
     pub retry_delay: Duration,
     pub fallback_actions: Vec<FailSafeAction>,
     pub circuit_breaker: CircuitBreakerConfig,
@@ -225,6 +227,7 @@ impl Default for FailSafeConfig {
 pub struct CircuitBreakerConfig {
     pub enabled: bool,
     pub failure_threshold: u32,
+    #[serde(with = "crate::duration_fmt")]
     pub timeout: Duration,
     pub half_open_requests: u32,
 }
@@ -350,6 +353,7 @@ pub enum Severity {
 #[serde(deny_unknown_fields)]
 pub struct HealthConfig {
     pub enabled: bool,
+    #[serde(with = "crate::duration_fmt")]
     pub check_interval: Duration,
     pub checks: Vec<HealthCheck>,
     pub unhealthy_threshold: u32,
@@ -421,7 +425,9 @@ pub struct HealthCheck {
     pub name: String,
     pub check_type: HealthCheckType,
     pub target: String,
+    #[serde(with = "crate::duration_fmt")]
     pub interval: Duration,
+    #[serde(with = "crate::duration_fmt")]
     pub timeout: Duration,
 }
 
@@ -448,7 +454,9 @@ pub enum RecoveryAction {
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     pub enabled: bool,
+    #[serde(with = "crate::duration_fmt")]
     pub interval: Duration,
+    #[serde(with = "crate::duration_fmt")]
     pub retention: Duration,
     pub exporters: Vec<MetricsExporter>,
 }
@@ -507,8 +515,10 @@ pub struct PortMapping {
 pub struct StorageConfig {
     pub root_dir: std::path::PathBuf,
     pub max_size: u64,
+    #[serde(with = "crate::duration_fmt")]
     pub cleanup_interval: Duration,
     pub backup_enabled: bool,
+    #[serde(with = "crate::duration_fmt")]
     pub backup_interval: Duration,
     pub backup_retention: u32,
 }

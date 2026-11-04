@@ -175,6 +175,36 @@ allow_unsigned = false
 max_plugins = 20
 ```
 
+## Duration values
+
+Durations are strings with a unit:
+
+```toml
+gateway_timeout = "30s"
+retry_delay = "500ms"
+check_interval = "2m"
+```
+
+| unit | meaning |
+|---|---|
+| `ms` | milliseconds |
+| `s` | seconds |
+| `m` | minutes |
+| `h` | hours |
+| `d` | days |
+
+Long forms (`"30 seconds"`, `"2 minutes"`) are accepted as well. A bare number is read as
+seconds (`timeout = 30`), and the native `{ secs = 30, nanos = 0 }` table still loads, so
+configuration written before the string form existed keeps working.
+
+An unknown unit is a load error that names the offending value, for example
+`unknown duration unit "parsecs" in "5 parsecs"`. That is deliberate: falling back to zero
+would turn a typo into a disabled timeout.
+
+When PDN writes a configuration back out, durations are rendered in this string form using
+the largest exact unit, so `300s` is written as `"5m"`.
+
+
 ## Container Configuration
 
 ### `~/.config/pn-next/containers/<name>.toml`

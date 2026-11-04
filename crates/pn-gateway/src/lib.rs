@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod config_loader;
+pub mod duration_fmt;
 pub mod fail_safe;
 pub mod gateway;
 pub mod guardrails;
