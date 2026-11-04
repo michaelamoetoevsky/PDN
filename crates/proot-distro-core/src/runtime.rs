@@ -114,18 +114,16 @@ impl RuntimeBackend for ProotBackend {
             .config
             .bind_mounts
             .iter()
-            .map(|b| {
-                format!(
-                    "{}:{}:{}",
-                    b.source,
-                    b.target,
-                    if b.readonly { "ro" } else { "rw" }
-                )
-            })
-            .collect();
+            // See `BindMount::to_argument`: refuses a source PRoot cannot
+            // express instead of emitting a string it silently drops (#35).
+            .map(|b| b.to_argument())
+            .collect::<anyhow::Result<Vec<String>>>()?;
 
         // Synthetic /proc entries and guest runtime directories
         if let Some(container_dir) = container.rootfs_path.parent() {
+            // Derived binds below: a colon in this directory silently loses
+            // /dev/shm and the /proc stubs (#35).
+            crate::bindings::ensure_bindable(&container_dir.to_string_lossy())?;
             if crate::sysdata::ensure(container_dir).is_ok() {
                 engine_guard
                     .config

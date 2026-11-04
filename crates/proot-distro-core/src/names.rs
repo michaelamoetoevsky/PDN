@@ -132,3 +132,60 @@ impl Default for NameValidator {
         Self::new()
     }
 }
+
+/// Directory component that stores an image or container reference.
+///
+/// A reference carries a registry host, a port, a namespace and a tag
+/// (`ghcr.io:5000/acme/web:1.2`), none of which may reach the filesystem: the
+/// store directory is a single path component under `~/.podnext/containers/`,
+/// and `/` would nest it while `:` would make PRoot unable to bind anything
+/// under it - the bind syntax is `source:target[:mode]` (issue #35).
+///
+/// The rule is the one `podnext install` has always used: keep the last path
+/// component and drop everything from the first colon.
+///
+/// ```
+/// # use proot_distro_core::names::store_key;
+/// assert_eq!(store_key("debian:13"), "debian");
+/// assert_eq!(store_key("ghcr.io:5000/acme/web:1.2"), "web");
+/// assert_eq!(store_key("custom:latest"), "custom");
+/// assert_eq!(store_key("alpine"), "alpine");
+/// ```
+pub fn store_key(reference: &str) -> String {
+    let last = reference.rsplit('/').next().unwrap_or(reference);
+    last.split(':').next().unwrap_or(last).to_string()
+}
+
+#[cfg(test)]
+mod store_key_tests {
+    use super::store_key;
+
+    #[test]
+    fn keeps_only_the_last_component_and_drops_the_tag() {
+        assert_eq!(store_key("debian:13"), "debian");
+        assert_eq!(store_key("ghcr.io:5000/acme/web:1.2"), "web");
+        assert_eq!(store_key("custom:latest"), "custom");
+        assert_eq!(store_key("alpine"), "alpine");
+    }
+
+    #[test]
+    fn the_result_never_contains_a_colon_or_a_slash() {
+        for reference in [
+            "c2env:latest",
+            "ghcr.io:5000/acme/web:1.2",
+            "/abs/path/img:tag",
+            "localhost:5000/ns/name:tag",
+            "custom:latest",
+        ] {
+            let key = store_key(reference);
+            assert!(
+                !key.contains(':') && !key.contains('/'),
+                "store_key({reference:?}) = {key:?} must be a single colon-free component"
+            );
+            assert!(
+                !key.is_empty(),
+                "store_key({reference:?}) must not be empty"
+            );
+        }
+    }
+}

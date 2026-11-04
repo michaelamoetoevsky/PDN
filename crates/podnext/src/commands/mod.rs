@@ -2043,16 +2043,23 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
     // "Successfully built" is now always backed by a real image (#29).
     let image_dir = build_local_image(&target_tag, file, &path, None).await?;
 
+    // The runnable name is the store key, not the tag: `NameValidator` rejects a
+    // colon, so the advice for `custom:latest` used to be a command that could
+    // never work.
+    let key = proot_distro_core::names::store_key(&target_tag);
     println!("\nSuccessfully built image '{}'", target_tag);
     println!("  Image stored at {}", image_dir.display());
-    println!("  Run it with: podnext run {}", target_tag);
+    if key != target_tag {
+        println!("  Stored as container '{key}' (a tag is not a path component)");
+    }
+    println!("  Run it with: podnext run {key}");
     Ok(())
 }
 
 /// Materialise a Dockerfile build into the runtime's image store.
 ///
 /// A "built image" in this runtime *is* a container directory under
-/// `~/.podnext/containers/<tag>/rootfs` — what `ContainerManager::load_containers`
+/// `~/.podnext/containers/<store-key>/rootfs` — what `ContainerManager::load_containers`
 /// scans, and what `podnext run <tag>` / `podnext image ls` read. This function
 /// produces exactly that and returns its directory, so a returned `Ok` means the
 /// image is really runnable. `containers_dir` overrides the store root for tests.
@@ -2125,12 +2132,43 @@ async fn build_local_image(
             .join(".podnext")
             .join("containers")
     });
-    // The tag is the store key so `podnext run <tag>` finds the result. A tag
-    // like `my-app:latest` is a valid directory name.
-    let container_dir = containers_dir.join(tag);
+    // The store key is derived, never the raw tag. `c2env:latest` is a legal
+    // directory name, but it puts a colon in the host path and PRoot splits bind
+    // arguments on ':' - the container then silently loses /dev/shm and the /proc
+    // stubs (#35). `store_key` is the rule `podnext install` already used, and
+    // `podnext run <store_key>` resolves the result.
+    let key = proot_distro_core::names::store_key(tag);
+    // An empty or otherwise unusable key would mean a container the CLI can never
+    // address. Fail here rather than create it.
+    proot_distro_core::NameValidator::new()
+        .validate_container_name(&key)
+        .with_context(|| {
+            format!("tag '{tag}' does not yield a usable container name (derived '{key}')")
+        })?;
+    let container_dir = containers_dir.join(&key);
     if container_dir.exists() {
-        // Rebuilding a tag replaces its image; start clean so repeat builds do
-        // not stack layers on the previous result.
+        // Rebuilding the same tag replaces its image, which is what repeat builds
+        // expect. A *different* tag that derives to the same key is not the same
+        // thing: clearing it would destroy an image the user still refers to by
+        // another name (`app:v1` then `app:v2`). The recorded tag is what tells the
+        // two cases apart, so refuse when they disagree instead of deleting.
+        let recorded = std::fs::read_to_string(container_dir.join("metadata.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|meta| {
+                meta.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(str::to_string)
+            });
+        if let Some(recorded) = recorded {
+            if recorded != tag {
+                bail!(
+                    "container '{key}' already holds image '{recorded}' and tag '{tag}' \
+                     derives to the same name; rebuilding would destroy that image. \
+                     Remove it first (podnext remove {key}) or choose another tag"
+                );
+            }
+        }
         std::fs::remove_dir_all(&container_dir).with_context(|| {
             format!(
                 "failed to clear existing image '{}'",
@@ -3058,8 +3096,12 @@ mod build_local_tests {
             "unexpected error: {err}"
         );
         assert!(
-            !store.path().join("bse-missing:latest").exists(),
+            !store.path().join("bse-missing").exists(),
             "a failed build must not register an image"
+        );
+        assert!(
+            !store.path().join("bse-missing:latest").exists(),
+            "the store key must never be the raw tag (#35)"
         );
     }
 
@@ -3086,7 +3128,14 @@ mod build_local_tests {
         .await
         .unwrap();
 
-        assert_eq!(dir, store.path().join("bse-scratch:latest"));
+        // The store key is the colon-free form of the tag (#35); the tag itself
+        // stays in metadata below, so the image is still identifiable.
+        assert_eq!(dir, store.path().join("bse-scratch"));
+        assert!(
+            !dir.to_string_lossy().contains(':'),
+            "no host path under the store may contain ':': {}",
+            dir.display()
+        );
         assert_eq!(
             std::fs::read_to_string(dir.join("rootfs/app.txt")).unwrap(),
             "static app content\n"
@@ -3232,5 +3281,145 @@ mod build_local_tests {
             err.to_string().contains("matched no files"),
             "unexpected error: {err}"
         );
+    }
+
+    // ── #35: a tag is not a path component ────────────────────────────────────
+
+    fn colon_free_ctx() -> tempfile::TempDir {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::write(ctx.path().join("Dockerfile"), "FROM scratch\nCOPY . /app\n").unwrap();
+        std::fs::write(ctx.path().join("file.txt"), "hi").unwrap();
+        ctx
+    }
+
+    /// A colon tag used to become a colon directory, which put a colon in every
+    /// host path derived from it - and PRoot splits bind arguments on ':', so the
+    /// container silently lost `/dev/shm` and the `/proc` stubs.
+    #[tokio::test]
+    async fn a_colon_tag_builds_under_a_colon_free_store_key() {
+        let ctx = colon_free_ctx();
+        let store = tempfile::tempdir().unwrap();
+
+        let dir = build_local_image(
+            "c2env:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .expect("a colon tag must build, not silently produce an unbindable store");
+
+        assert_eq!(
+            dir.file_name().unwrap(),
+            "c2env",
+            "store key must be the tag with the colon stripped"
+        );
+        assert!(
+            !dir.to_string_lossy().contains(':'),
+            "no host path under the store may contain ':': {}",
+            dir.display()
+        );
+        assert!(!store.path().join("c2env:latest").exists());
+
+        // The original tag stays recorded, so the image can still be identified.
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(meta["name"], "c2env:latest");
+
+        // And the binds derived from that directory are expressible: exactly one
+        // ':' per argument, which is the separator PRoot splits on.
+        let container_dir = dir.parent().unwrap();
+        let shm = proot_distro_core::guestdirs::ensure(container_dir).unwrap();
+        assert_eq!(shm.parent().unwrap(), container_dir);
+        let binds = proot_distro_core::guestdirs::bindings(container_dir);
+        assert!(!binds.is_empty(), "the shared-memory bind must exist");
+        for b in &binds {
+            assert_eq!(
+                b.matches(':').count(),
+                1,
+                "bind '{b}' must be <source>:<target> with no colon in the source"
+            );
+            assert!(b.ends_with(":/dev/shm"), "unexpected bind: {b}");
+        }
+        if let Ok(_sys) = proot_distro_core::sysdata::ensure(container_dir) {
+            for b in proot_distro_core::sysdata::bindings(container_dir) {
+                assert_eq!(b.matches(':').count(), 1, "unexpressible bind: {b}");
+            }
+        }
+    }
+
+    /// Two tags that derive to the same key must not silently overwrite each
+    /// other: rebuilding `app:v2` over `app:v1` would destroy an image the user
+    /// still refers to by name.
+    #[tokio::test]
+    async fn a_different_tag_deriving_to_the_same_key_is_refused() {
+        let ctx = colon_free_ctx();
+        let store = tempfile::tempdir().unwrap();
+        let store_path = store.path().to_path_buf();
+
+        build_local_image("app:v1", None, ctx.path(), Some(store_path.clone()))
+            .await
+            .expect("first build");
+
+        let err = build_local_image("app:v2", None, ctx.path(), Some(store_path.clone()))
+            .await
+            .expect_err("a second tag mapping onto the same store key must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("app:v1"),
+            "error must name the existing image: {msg}"
+        );
+        assert!(msg.contains("would destroy"), "error must say why: {msg}");
+
+        // The first image is untouched.
+        let meta: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(store_path.join("app").join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(meta["name"], "app:v1");
+    }
+
+    #[tokio::test]
+    async fn rebuilding_the_same_tag_still_replaces_it() {
+        let ctx = colon_free_ctx();
+        let store = tempfile::tempdir().unwrap();
+        let store_path = store.path().to_path_buf();
+
+        let first = build_local_image("app:v1", None, ctx.path(), Some(store_path.clone()))
+            .await
+            .expect("first build");
+        let second = build_local_image("app:v1", None, ctx.path(), Some(store_path))
+            .await
+            .expect("rebuilding the same tag must stay allowed");
+        assert_eq!(first, second);
+        assert!(second.join("rootfs").is_dir());
+    }
+
+    /// The guard for user-configured bind mounts: a colon source cannot be
+    /// expressed, so it must be an error rather than a dropped mount. The
+    /// store-key fix above cannot cover a path the user chose.
+    #[test]
+    fn a_bind_source_with_a_colon_is_refused() {
+        let bad = proot_distro_core::bindings::BindMount {
+            source: "/home/u/.podnext/containers/c2env:latest/shm".to_string(),
+            target: "/dev/shm".to_string(),
+            readonly: false,
+            recursive: false,
+            private: false,
+        };
+        let err = bad
+            .to_argument()
+            .expect_err("a colon source must be refused, not silently dropped");
+        assert!(err.to_string().contains("c2env:latest"));
+
+        let good = proot_distro_core::bindings::BindMount {
+            source: "/srv/data".to_string(),
+            target: "/data".to_string(),
+            readonly: true,
+            recursive: false,
+            private: false,
+        };
+        assert_eq!(good.to_argument().unwrap(), "/srv/data:/data:ro");
     }
 }

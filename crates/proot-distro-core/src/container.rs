@@ -224,18 +224,17 @@ impl ContainerManager {
                 .config
                 .bind_mounts
                 .iter()
-                .map(|b| {
-                    format!(
-                        "{}:{}:{}",
-                        b.source,
-                        b.target,
-                        if b.readonly { "ro" } else { "rw" }
-                    )
-                })
-                .collect();
+                // `to_argument` refuses a source PRoot cannot express, instead of
+                // handing it a string it would silently drop (#35).
+                .map(|b| b.to_argument())
+                .collect::<anyhow::Result<Vec<String>>>()?;
 
             // Same fake /proc stubs as the interactive path (see execute).
             if let Some(container_dir) = container.rootfs_path.parent() {
+                // The synthetic binds below are derived from this directory, so a
+                // colon anywhere in it would silently lose /dev/shm and the /proc
+                // stubs (#35). Fail loudly before that can happen.
+                crate::bindings::ensure_bindable(&container_dir.to_string_lossy())?;
                 if crate::sysdata::ensure(container_dir).is_ok() {
                     engine_guard
                         .config
@@ -404,6 +403,17 @@ pub struct BindMount {
     pub source: String,
     pub target: String,
     pub readonly: bool,
+}
+
+impl BindMount {
+    /// Render this mount as the `--bind` argument PRoot expects.
+    ///
+    /// A source containing ':' cannot be expressed and would be silently dropped
+    /// by PRoot, taking `/dev/shm` and the `/proc` stubs with it (#35), so it is
+    /// an error here rather than a warning nobody reads.
+    pub fn to_argument(&self) -> anyhow::Result<String> {
+        crate::bindings::argument(&self.source, &self.target, self.readonly)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

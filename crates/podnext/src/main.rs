@@ -1934,8 +1934,10 @@ async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result
 /// (`debian`, `web`): a registry host, port, or namespace must never become a
 /// directory component under `~/.podnext/containers/`.
 fn default_container_name(image: &str) -> String {
-    let last = image.rsplit('/').next().unwrap_or(image);
-    last.split(':').next().unwrap_or(last).to_string()
+    // The rule lives in proot-distro-core so build, run and install agree on it;
+    // a divergence here is exactly how `build local` ended up naming a directory
+    // `c2env:latest` and losing /dev/shm (#35).
+    proot_distro_core::names::store_key(image)
 }
 
 async fn cmd_list(all: bool, no_all: bool, format: OutputFormat) -> Result<()> {

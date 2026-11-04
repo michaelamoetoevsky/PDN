@@ -289,6 +289,41 @@ List local images.
 podnext image list [OPTIONS]
 ```
 
+### `podnext build local`
+
+Build an image from a Dockerfile into the local store, without a registry.
+
+```bash
+podnext build local [TAG] [OPTIONS]
+podnext build local -t myapp:latest ./context
+podnext build local --file ./context/Dockerfile.myapp ./context
+```
+
+The build context must exist and must contain a Dockerfile; a missing context is an error that
+writes nothing, and success is reported only after the image is on disk.
+
+**Where the image goes.** A built image *is* a container directory,
+`~/.podnext/containers/<store-key>/rootfs`. The store key is derived from the tag by dropping
+everything from the first colon, so `myapp:latest` is stored as `myapp`:
+
+```bash
+podnext build local -t myapp:latest ./context
+#   Stored as container 'myapp' (a tag is not a path component)
+#   Run it with: podnext run myapp
+```
+
+The tag itself is recorded in the container's `metadata.json`. A tag is not used verbatim as a
+directory name because PRoot splits `--bind` arguments on `:`, so a colon in a host path silently
+drops the binding - a container stored as `myapp:latest` would lose `/dev/shm` and the `/proc`
+stubs, and applications needing shared memory (Chromium, PostgreSQL) would fail with unrelated
+errors. `podnext run` therefore takes the store key, not the tag. A colon anywhere in a bind
+source is now a hard error rather than a silently dropped mount, which also covers bind mounts you
+configure yourself.
+
+Rebuilding the same tag replaces its image. A *different* tag that derives to the same key
+(`myapp:v1` then `myapp:v2`) is refused rather than silently destroying the first image; remove the
+container or choose another tag.
+
 ### `podnext image remove`
 
 Remove local image.
