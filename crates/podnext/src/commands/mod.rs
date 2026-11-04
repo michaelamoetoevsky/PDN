@@ -2132,7 +2132,10 @@ async fn build_local_image(
         // Rebuilding a tag replaces its image; start clean so repeat builds do
         // not stack layers on the previous result.
         std::fs::remove_dir_all(&container_dir).with_context(|| {
-            format!("failed to clear existing image '{}'", container_dir.display())
+            format!(
+                "failed to clear existing image '{}'",
+                container_dir.display()
+            )
         })?;
     }
     let rootfs = container_dir.join("rootfs");
@@ -2232,7 +2235,10 @@ async fn build_local_image(
 
     // Success is claimed only once the image is actually on disk.
     if !rootfs.is_dir() {
-        bail!("build finished but image rootfs '{}' is missing", rootfs.display());
+        bail!(
+            "build finished but image rootfs '{}' is missing",
+            rootfs.display()
+        );
     }
     Ok(container_dir)
 }
@@ -2241,7 +2247,12 @@ async fn build_local_image(
 ///
 /// Handles a single source path (file or directory), which is what the parser
 /// produces; globs and `--from=` stage copies are not supported.
-fn copy_into_rootfs(ctx: &std::path::Path, src: &str, dest: &str, rootfs: &std::path::Path) -> Result<()> {
+fn copy_into_rootfs(
+    ctx: &std::path::Path,
+    src: &str,
+    dest: &str,
+    rootfs: &std::path::Path,
+) -> Result<()> {
     let src_path = ctx.join(src);
     if !src_path.exists() {
         bail!("COPY/ADD source '{}' not found in build context", src);

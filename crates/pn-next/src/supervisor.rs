@@ -2757,7 +2757,10 @@ services:
         assert!(!out.contains("web:\n"), "no bare `web:` null body");
         // parses back as a mapping
         let v: serde_yaml::Value = serde_yaml::from_str(&out).unwrap();
-        assert_eq!(v["services"]["web"], serde_yaml::Value::Mapping(Default::default()));
+        assert_eq!(
+            v["services"]["web"],
+            serde_yaml::Value::Mapping(Default::default())
+        );
     }
 
     /// A service with a command but the default (OnFailure) restart policy still
@@ -2860,5 +2863,3 @@ services:
         assert!(!out.contains("/srv\n"), "service working_dir not used");
     }
 }
-
-
