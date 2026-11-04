@@ -135,7 +135,7 @@ Termux/Android compatibility providing:
 **Location:** `crates/pn-gateway`
 
 Gateway layer providing:
-- **FailSafeManager**: Circuit breakers, retry policies, bulkheads
+- **FailSafeManager**: Circuit breakers, fixed retries (no backoff/bulkhead yet &mdash; see #27)
 - **GuardrailsEngine**: Policy enforcement, resource quotas, rate limiting
 - **HealthMonitor**: Liveness/readiness probes, dependency checks
 - **MetricsCollector**: Prometheus metrics, structured logging
@@ -173,12 +173,17 @@ The gateway (`pn-gateway`) sits between the CLI and the runtime, providing:
 ### Fail-Safe Mechanisms
 
 ```rust
+// Mirrors crates/pn-gateway/src/config.rs (issue #27).
 pub struct FailSafeConfig {
+    pub enabled: bool,
+    pub max_retries: u32,
+    pub retry_delay: Duration,
+    pub fallback_actions: Vec<FailSafeAction>,
     pub circuit_breaker: CircuitBreakerConfig,
-    pub retry_policy: RetryPolicyConfig,
-    pub bulkhead: BulkheadConfig,
-    pub timeout: TimeoutConfig,
+    pub auto_recovery: bool,
 }
+// NOTE: a bulkhead (concurrency limit) and a retry policy with backoff are
+// documented but NOT implemented; `FailSafeConfig` has no such fields (#27).
 ```
 
 ### Guardrails

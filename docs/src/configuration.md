@@ -68,15 +68,19 @@ enable_metrics = true
 enable_tracing = false
 
 [gateway]
+# NOTE: the global config.toml shown in this section is not yet read by any crate
+# (issue #27). The field names below mirror `crates/pn-gateway/src/config.rs` so
+# they are correct for the day a loader exists.
+#
 # Fail-safe configuration
 [gateway.fail_safe]
-circuit_breaker_threshold = 5
-circuit_breaker_timeout = "60s"
-retry_max_attempts = 3
-retry_base_delay = "1s"
-retry_max_delay = "30s"
-bulkhead_max_concurrent = 10
-bulkhead_queue_size = 100
+enabled = true
+max_retries = 3
+retry_delay = "5s"
+fallback_actions = ["Retry", "FallbackToHost", "RestartContainer"]
+auto_recovery = true
+circuit_breaker = { enabled = true, failure_threshold = 5, timeout = "60s", half_open_requests = 3 }
+# planned: bulkhead_max_concurrent, bulkhead_queue_size, retry_base_delay, retry_max_delay
 
 # Guardrails
 [gateway.guardrails]
