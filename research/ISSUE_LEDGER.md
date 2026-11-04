@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 14:29:45Z from `d83b987` (docs(issues): ledger that re-verifies every issue's fix against HEAD).
+Generated 2026-11-04 15:54:24Z from `5df9484` (feat(pn-next): export_to_compose mapping for ServiceConfig (#26)).
 
 ## Why this exists
 
@@ -9,29 +9,67 @@ refactor, a revert, or a merge that resolved a conflict the wrong way can quietl
 ledger pairs every issue with a command that must still succeed against the current code, so a
 silently-regressed fix shows up as a FAIL in a document rather than as a surprise in production.
 
-**19/19 checks pass.** Nothing regressed.
+## Verdict contract
+
+| verdict | meaning | effect on exit status |
+|---|---|---|
+| **PASS** | the exact symbol the fix introduces was found; the fix is present | none |
+| **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
+| **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
+
+**35 PASS · 0 FAIL · 4 SKIPPED** across 39 checks covering 21 of 32 issues (11 issues have no automated check).
 
 ## Checks that FAIL (a fix that is no longer present)
 
 None.
 
+## Checks SKIPPED (no verdict was produced)
+
+- **#25 — the benchmark targets compile (the false-green defect)** — _cargo check gated; re-run with --cargo_
+- **#18 — the sparse-copy unit test passes** — _cargo check gated; re-run with --cargo_
+- **#16 — the deep-recursion test passes** — _cargo check gated; re-run with --cargo_
+- **#31 — the abnormal-restart test passes** — _cargo check gated; re-run with --cargo_
+
 ## Per-issue detail
+
+**#7 Add GitHub Actions workflow for automated dependency updates**  
+_state_: CLOSED  ·  _labels_: good first issue, github-actions, dependabot, security  ·  _closed_: 2026-11-03T19:25:46Z
+
+- [PASS] dependabot.yml declares the cargo ecosystem
+  - `grep -nF 'package-ecosystem: "cargo"' .github/dependabot.yml`
+  - → `4:  - package-ecosystem: "cargo"`
+- [PASS] the dependency-updates workflow file exists
+  - `ls .github/workflows/dependency-updates.yml`
+  - → `.github/workflows/dependency-updates.yml`
+
+**#8 Add benchmark suite with Criterion for performance regression detection**  
+_state_: CLOSED  ·  _labels_: enhancement, good first issue, benchmark, ci, performance  ·  _closed_: 2026-11-03T19:25:49Z
+
+- [PASS] the Criterion bench target is declared
+  - `grep -nF '[[bench]]' crates/pn-next/Cargo.toml`
+  - → `73:[[bench]]`
+- [PASS] the criterion dev-dependency is present
+  - `grep -nF 'criterion' crates/pn-next/Cargo.toml`
+  - → `79:criterion = { version = "0.5", features = ["async_tokio"] }`
+- [PASS] the bench source exists
+  - `ls crates/pn-next/benches/benchmarks.rs`
+  - → `crates/pn-next/benches/benchmarks.rs`
 
 **#11 [BUG-C1] install accepts empty container name and creates an unremovable orphan**  
 _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:23:37Z
 
 - [PASS] install validates the container name before creating anything
-  - `grep -n 'validate_container_name' crates/podnext/src/main.rs`
-  - → `1898:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 2931:    proot_distro_core::NameValidator::new().validate_container_`
+  - `grep -nF 'validate_container_name' crates/podnext/src/main.rs`
+  - → `1898:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 2931:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;`
 
 **#12 [BUG-C2] backup delete deadlocks permanently (tokio RwLock read guard held across write)**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T04:23:41Z
 
 - [PASS] delete_backup drops its read guard before taking the write lock
-  - `grep -n 'contains_key' crates/pn-next/src/backup_restore/mod.rs`
+  - `grep -nF 'contains_key' crates/pn-next/src/backup_restore/mod.rs`
   - → `1115:        let exists = backups.contains_key(backup_id);`
 - [PASS] the deadlock regression test exists
-  - `grep -rn 'test_delete_backup_does_not_deadlock' crates/pn-next/src/backup_restore/mod.rs`
+  - `grep -rnF 'test_delete_backup_does_not_deadlock' crates/pn-next/src/backup_restore/mod.rs`
   - → `1487:    async fn test_delete_backup_does_not_deadlock() {`
 
 **#13 [BUG-C3] reset destroys the container before verifying the image is downloadable**  
@@ -45,35 +83,81 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T10:12:19Z
 _state_: CLOSED  ·  _labels_: bug, cli, monitoring  ·  _closed_: 2026-11-04T04:23:46Z
 
 - [PASS] run sessions are registered so ps can see them
-  - `grep -rn 'register_session' crates/proot-distro-core/src/runtime.rs crates/podnext/src/native.rs`
+  - `grep -rnF 'register_session' crates/proot-distro-core/src/runtime.rs crates/podnext/src/native.rs`
   - → `crates/proot-distro-core/src/runtime.rs:181:        let _session = crate::session::register_session(`
+
+**#15 [BUG-M2] concurrent guest writes to one file clobber each other (4/5)**  
+_state_: CLOSED  ·  _labels_: bug, documentation  ·  _closed_: 2026-11-04T11:08:08Z
+
+- [PASS] the concurrent-write contract is documented for users
+  - `grep -nF 'no atomicity guarantee' docs/src/troubleshooting.md`
+  - → `438:with no atomicity guarantee, and any synchronisation is the workload's own responsibility.`
+- [PASS] the #15 verdict (not a PDN defect, with control) is recorded
+  - `grep -nF 'not a PDN defect' research/issues/concurrency_verdict.md`
+  - → `1:## Verdict: not a PDN defect`
+
+**#16 [BUG-M3] deep tree extraction scales super-linearly and times out past ~200 levels**  
+_state_: CLOSED  ·  _labels_: performance  ·  _closed_: 2026-11-04T11:04:51Z
+
+- [PASS] untar records created dirs instead of re-walking ancestors per entry
+  - `grep -nF 'created: &mut HashSet<PathBuf>' crates/proot-distro-core/src/untar.rs`
+  - → `135:fn ensure_dir(dir: &Path, created: &mut HashSet<PathBuf>) -> io::Result<()> {`
+- [PASS] the deep-recursion regression test exists
+  - `ls crates/proot-distro-core/tests/deep_fs_recursion.rs`
+  - → `crates/proot-distro-core/tests/deep_fs_recursion.rs`
+- [SKIPPED] the deep-recursion test passes
+  - `cargo test -p proot-distro-core --test deep_fs_recursion --locked`
+  - → ``
+
+**#17 [BUG-L1] podnext build local rejects ARG, skips RUN, and produces no usable OCI image**  
+_state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T11:04:52Z
+
+- [PASS] build local consumes ARG before the parser rejects it
+  - `grep -nF 'fn preprocess_build_args' crates/podnext/src/commands/mod.rs`
+  - → `2119:fn preprocess_build_args(content: &str) -> (String, Vec<(String, String)>) {`
+- [PASS] build local actually executes RUN instead of printing it
+  - `grep -nF 'fn execute_run' crates/podnext/src/commands/mod.rs`
+  - → `2203:fn execute_run(cmd: &str, ctx: &std::path::Path) -> Result<()> {`
+
+**#18 [BUG-L2] copy/sync expand sparse files to dense allocation**  
+_state_: CLOSED  ·  _labels_: bug, performance  ·  _closed_: 2026-11-04T11:04:53Z
+
+- [PASS] sparse copies probe holes with SEEK_DATA/SEEK_HOLE
+  - `grep -nF 'libc::SEEK_DATA' crates/podnext/src/main.rs`
+  - → `3277:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
+- [PASS] the sparse-copy regression test exists
+  - `grep -nF 'fn copy_keeps_sparse_files_sparse' crates/podnext/src/main.rs`
+  - → `3827:    fn copy_keeps_sparse_files_sparse() {`
+- [SKIPPED] the sparse-copy unit test passes
+  - `cargo test -p podnext --lib copy_keeps_sparse_files_sparse --locked`
+  - → ``
 
 **#19 [CI-1] test_restart_policy_unless_stopped fails: explicit stop loses to restart policy**  
 _state_: CLOSED  ·  _labels_: bug, ci  ·  _closed_: 2026-11-04T04:23:51Z
 
 - [PASS] the restart path re-checks user_stopped under the same write lock
-  - `grep -n 'user_stopped' crates/pn-next/src/supervisor.rs | head -8`
-  - → `728:    user_stopped: bool, | 850:                            user_stopped: false, | 992:                                if managed.process.is_none() && !managed.us`
+  - `grep -nF 'user_stopped' crates/pn-next/src/supervisor.rs | head -8`
+  - → `728:    user_stopped: bool, | 850:                            user_stopped: false, | 992:                                if managed.process.is_none() && !managed.user_stopped && matches!(managed.status.state, ServiceState::Restarting | ServiceS`
 
 **#20 [BUG-C4] FileLock::lock flocks fd 0 (stdin) and then panics on a None field**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T04:23:55Z
 
 - [PASS] FileLock no longer flocks fd 0
-  - `grep -rn 'fd 0\|stdin\|FileLock' crates/proot-distro-core/src/locking.rs | head -6`
-  - → `65:pub struct FileLock { | 70:impl FileLock { | 86:        // i.e. file descriptor 0 (stdin), and then panicked unwrapping that same | 109:impl Drop for FileLock { | 24`
+  - `grep -rnF 'FileLock' crates/proot-distro-core/src/locking.rs | head -6`
+  - → `65:pub struct FileLock { | 70:impl FileLock { | 109:impl Drop for FileLock { | 247:        let mut first = FileLock::new(&path); | 251:        let mut second = FileLock::new(&path);`
 
 **#21 [BUG-C5] a guest command containing -r aborts with 'rootfs is required for direct execution mode'**  
 _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:24:00Z
 
 - [PASS] direct-execution detection only fires when -r/--rootfs precedes the command
-  - `grep -n 'SUBCOMMANDS\|pre_dashdash_args' crates/podnext/src/main.rs | head -4`
-  - → `1410:    let pre_dashdash_args = &raw_args[..dashdash_idx]; | 1412:    const SUBCOMMANDS: &[&str] = &[ | 1445:    let has_subcommand = pre_dashdash_args | 1448:      `
+  - `grep -nF 'pre_dashdash_args' crates/podnext/src/main.rs | head -4`
+  - → `1410:    let pre_dashdash_args = &raw_args[..dashdash_idx]; | 1445:    let has_subcommand = pre_dashdash_args | 1450:        && pre_dashdash_args`
 
 **#22 [CI-2] dependency-updates workflow references a nonexistent action (peter-evans/update-github-actions 404s)**  
 _state_: CLOSED  ·  _labels_: bug, github-actions, ci  ·  _closed_: 2026-11-04T04:24:05Z
 
 - [PASS] the self-audit job that replaces the nonexistent action exists
-  - `grep -n 'name: Audit GitHub Actions pins' .github/workflows/dependency-updates.yml`
+  - `grep -nF 'name: Audit GitHub Actions pins' .github/workflows/dependency-updates.yml`
   - → `98:      - name: Audit GitHub Actions pins`
 
 **#23 [CI-3] Cargo.lock is gitignored in an application workspace, so --locked was impossible**  
@@ -86,78 +170,101 @@ _state_: CLOSED  ·  _labels_: bug, ci  ·  _closed_: 2026-11-04T04:24:09Z
 **#24 [SEC-1] 35 advisories in the dependency tree: inventory, exposure analysis and remediation plan**  
 _state_: CLOSED  ·  _labels_: security, ci  ·  _closed_: 2026-11-04T10:12:17Z
 
-- [PASS] deny.toml encodes the advisory acceptance list (26 entries, string form)
-  - `grep -n '"RUSTSEC-' deny.toml | head -3`
-  - → `70:    "RUSTSEC-2026-0258", # h2: unbounded empty DATA frames | 71:    "RUSTSEC-2026-0346", # rustls: Debug impls expose TLS secrets | 72:    "RUSTSEC-2026-0349", #`
+- [PASS] deny.toml encodes the advisory acceptance list (string form)
+  - `grep -nF '"RUSTSEC-' deny.toml | head -3`
+  - → `70:    "RUSTSEC-2026-0258", # h2: unbounded empty DATA frames | 71:    "RUSTSEC-2026-0346", # rustls: Debug impls expose TLS secrets | 72:    "RUSTSEC-2026-0349", # rustls: unauthenticated ServerHello downgrade`
 
 **#25 [CI-4] Benchmark workflow is a false green: cargo bench fails to compile and the pipe hides it**  
 _state_: CLOSED  ·  _labels_: bug, ci, performance  ·  _closed_: 2026-11-04T10:12:24Z
 
 - [PASS] benchmark workflow enforces the exit status and builds the targets
-  - `grep -n 'set -euo pipefail\|--bench benchmarks' .github/workflows/benchmark.yml | head -4`
-  - → `58:          set -euo pipefail | 96:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 100:          set -euo pipefail | 101:      `
-- [PASS] the benchmark sources compile (the defect behind the false green)
-  - `ls -1 target/release/deps/benchmarks-*.d 2>/dev/null | head -3`
-  - → `target/release/deps/benchmarks-0c4e0ca8eb5c7638.d | target/release/deps/benchmarks-6138274a3283f45c.d | target/release/deps/benchmarks-9bb0347c09149d86.d`
+  - `grep -nF -- '--bench benchmarks' .github/workflows/benchmark.yml | head -4`
+  - → `103:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 108:          cargo bench --workspace --bench benchmarks --locked -- \ | 130:          cargo bench --workspace --bench benchmarks --locked -- \`
+- [SKIPPED] the benchmark targets compile (the false-green defect)
+  - `cargo bench --workspace --no-run --locked`
+  - → ``
+
+**#30 [CI-5] Benchmark job is unpredictable: 25.7 min then 43+ min, and a baseline step killed with SIGTERM**  
+_state_: CLOSED  ·  _labels_: ci, performance  ·  _closed_: 2026-11-04T15:35:42Z
+
+- [PASS] the benchmark job carries a bounded timeout
+  - `grep -nF 'timeout-minutes: 60' .github/workflows/benchmark.yml`
+  - → `30:    timeout-minutes: 60`
+- [PASS] the suite is invoked bounded via --bench benchmarks
+  - `grep -nF -- '--bench benchmarks' .github/workflows/benchmark.yml`
+  - → `103:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 108:          cargo bench --workspace --bench benchmarks --locked -- \ | 130:          cargo bench --workspace --bench benchmarks --locked -- \`
+
+**#31 [CI-6] test_restart_policy_on_abnormal is flaky: assertions bet on wall-clock sleeps**  
+_state_: CLOSED  ·  _labels_: ci, flaky-test  ·  _closed_: 2026-11-04T14:30:47Z
+
+- [PASS] the test asserts on transitions via wait_status, not fixed sleeps
+  - `grep -nF 'async fn wait_status' crates/pn-next/tests/supervisor_e2e.rs`
+  - → `87:async fn wait_status<F>(`
+- [PASS] the test bounds its wait with a DEADLINE
+  - `grep -nF 'const DEADLINE: Duration = Duration::from_secs(30);' crates/pn-next/tests/supervisor_e2e.rs`
+  - → `25:const DEADLINE: Duration = Duration::from_secs(30);`
+- [SKIPPED] the abnormal-restart test passes
+  - `cargo test -p pn-next --test supervisor_e2e test_restart_policy_on_abnormal --locked`
+  - → ``
 
 **#32 Signal lifecycle: stopping a PDN process orphans the guest, and podnext-daemon ignores SIGTERM**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:18Z
 
 - [PASS] spawned proot gets its own process group
-  - `grep -n 'process_group(0)' crates/proot-core/src/lib.rs`
+  - `grep -nF 'process_group(0)' crates/proot-core/src/lib.rs`
   - → `307:        cmd.process_group(0); | 442:            .process_group(0)`
 - [PASS] container stop signals the group and reaps (zombie-aware)
-  - `grep -n 'fn terminate_group\|fn wait_group_gone\|fn live_pgrps' crates/proot-distro-core/src/container.rs`
-  - → `630:async fn terminate_group(pgid: u32, timeout: u64) -> Result<()> { | 646:async fn wait_group_gone(pgid: u32, timeout: u64) -> bool { | 668:fn live_pgrps() -> Vec`
+  - `grep -nF 'async fn terminate_group' crates/proot-distro-core/src/container.rs`
+  - → `630:async fn terminate_group(pgid: u32, timeout: u64) -> Result<()> {`
 - [PASS] podnext run forwards signals to the guest group
-  - `grep -n 'fn forward_to_guest\|SignalKind' crates/podnext/src/native.rs | head -3`
-  - → `30:use tokio::signal::unix::{signal, SignalKind}; | 566:fn forward_to_guest(sig: i32) { | 593:    let mut sigterm = signal(SignalKind::terminate())?;`
+  - `grep -nF 'fn forward_to_guest' crates/podnext/src/native.rs | head -3`
+  - → `566:fn forward_to_guest(sig: i32) { | 712:    fn forward_to_guest_terminates_child_group() {`
 - [PASS] the daemon handles SIGTERM, not only Ctrl-C
-  - `grep -n 'SignalKind::terminate' crates/podnext/src/daemon.rs`
-  - → `70:    if kind == SignalKind::terminate() || kind == SignalKind::interrupt() { | 136:    let mut sigterm = signal(SignalKind::terminate()).context("install SIGTER`
+  - `grep -nF 'SignalKind::terminate' crates/podnext/src/daemon.rs`
+  - → `70:    if kind == SignalKind::terminate() || kind == SignalKind::interrupt() { | 136:    let mut sigterm = signal(SignalKind::terminate()).context("install SIGTERM handler")?; | 143:                _ = sigterm.recv() => SignalKind::terminate(),`
 
 **#33 Session files and service logs grow without bound (46 dead session files measured)**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:39Z
 
 - [PASS] the session record is unlinked on exit via a guard
-  - `grep -n 'impl Drop for SessionGuard' crates/proot-distro-core/src/session.rs`
+  - `grep -nF 'impl Drop for SessionGuard' crates/proot-distro-core/src/session.rs`
   - → `67:impl Drop for SessionGuard {`
 - [PASS] log rotation has a consumer
-  - `grep -n 'fn rotate_log_if_needed' crates/pn-next/src/supervisor.rs`
+  - `grep -nF 'fn rotate_log_if_needed' crates/pn-next/src/supervisor.rs`
   - → `478:fn rotate_log_if_needed(path: &Path, cfg: &LogRotationConfig) -> std::io::Result<()> {`
 
-## Issues with no automated check here
+## Issues with no automated check (the honest gap)
 
-Listed rather than omitted, so the coverage gap is visible. These are either upstream feature
-requests, or defects whose verification needs a live container and therefore belongs in CI.
+Listed rather than omitted, so the coverage gap is visible. Each has a reason. These are open
+feature requests, open defects with no landed fix, or anything whose verification needs a live
+container and therefore belongs in CI.
 
-| # | state | title |
-|---|---|---|
-| 1 | OPEN | Add shell completion for PowerShell |
-| 2 | OPEN | Add example service configurations for common applications |
-| 3 | OPEN | Create tutorial: Running a full-stack development environment in PDN |
-| 4 | OPEN | Add VS Code Dev Container support |
-| 5 | OPEN | Add systemd service unit generator for Linux hosts |
-| 6 | OPEN | Add Docker Compose export for PDN services |
-| 7 | CLOSED | Add GitHub Actions workflow for automated dependency updates |
-| 8 | CLOSED | Add benchmark suite with Criterion for performance regression detection |
-| 9 | OPEN | Add Prometheus metrics exporter for PDN services |
-| 10 | OPEN | Add WebSocket support for real-time service events |
-| 15 | CLOSED | [BUG-M2] concurrent guest writes to one file clobber each other (4/5) |
-| 16 | CLOSED | [BUG-M3] deep tree extraction scales super-linearly and times out past ~200 leve |
-| 17 | CLOSED | [BUG-L1] podnext build local rejects ARG, skips RUN, and produces no usable OCI  |
-| 18 | CLOSED | [BUG-L2] copy/sync expand sparse files to dense allocation |
-| 27 | OPEN | [BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy) does not |
-| 28 | OPEN | Compose export: empty command emits an invalid service; follow-ups from PR #26 |
-| 29 | OPEN | podnext build local computes a layer diff but produces no image |
-| 30 | OPEN | [CI-5] Benchmark job is unpredictable: 25.7 min then 43+ min, and a baseline ste |
-| 31 | OPEN | [CI-6] test_restart_policy_on_abnormal is flaky: assertions bet on wall-clock sl |
+| # | state | reason | title |
+|---|---|---|---|
+| 1 | OPEN | feature request (PowerShell completion) — nothing on the tree to verify. | Add shell completion for PowerShell |
+| 2 | OPEN | documentation task (example service configs) — no code fix to assert. | Add example service configurations for common applications |
+| 3 | OPEN | documentation task (tutorial) — no code fix to assert. | Create tutorial: Running a full-stack development environment in PDN |
+| 4 | OPEN | feature request (VS Code Dev Container) — no landed implementation. | Add VS Code Dev Container support |
+| 5 | OPEN | feature request (systemd unit generator) — no landed implementation. | Add systemd service unit generator for Linux hosts |
+| 6 | OPEN | feature request (Docker Compose export) — partially landed via PR #26; see #28. | Add Docker Compose export for PDN services |
+| 9 | OPEN | feature request (Prometheus exporter) — no landed implementation. | Add Prometheus metrics exporter for PDN services |
+| 10 | OPEN | feature request (WebSocket events) — no landed implementation. | Add WebSocket support for real-time service events |
+| 27 | OPEN | defect: documented [gateway.fail_safe] (bulkhead/retry_policy) absent from pn-gateway; no fix landed, so a fix-present predicate has nothing to assert. | [BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy |
+| 28 | OPEN | defect: empty command yields a null Compose service in export_to_compose; no fix landed. | Compose export: empty command emits an invalid service; follow-ups fro |
+| 29 | OPEN | defect: podnext build local reports success without an image; no fix landed. | podnext build local computes a layer diff but produces no image |
 
-## How to re-run this
+## How to re-run this (CI-friendly)
 
 ```sh
-env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py   # rewrites this file
+export PATH="$HOME/.hermes/bin:$PATH"
+# source predicates only — fast, read-only, safe on any host including Android:
+env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py
+# machine-readable summary for CI (parse jq .checks.fail; exit status is 1 on any FAIL):
+env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py --json | jq .checks
+# opt-in behaviour checks (build; serialised with flock against concurrent departments):
+env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py --cargo
 ```
 
-Every check is read-only (grep/git/ls). Nothing here builds, so it is safe to run on any host,
-including the Android device, without the memory guard.
+Exit status is **0** when no check FAILs and **1** when any check FAILs, so the ledger doubles as
+a regression gate. `--json` prints `{"checks":{"pass":N,"fail":N,"skipped":N,"total":N}}`.
+This file is regenerated by every run — it cannot drift from the code.
