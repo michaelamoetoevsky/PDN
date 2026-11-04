@@ -5,6 +5,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GatewayConfig {
     pub gateway_id: Uuid,
     pub name: String,
@@ -42,6 +43,7 @@ impl Default for GatewayConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProotConfig {
     pub rootfs: Option<std::path::PathBuf>,
     pub bind_mounts: Vec<BindMount>,
@@ -93,6 +95,7 @@ impl Default for ProotConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BindMount {
     pub source: std::path::PathBuf,
     pub target: std::path::PathBuf,
@@ -100,6 +103,7 @@ pub struct BindMount {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DistroConfig {
     pub default_distro: String,
     pub distro_sources: Vec<DistroSource>,
@@ -141,6 +145,7 @@ impl Default for DistroConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DistroSource {
     pub name: String,
     pub versions: Vec<String>,
@@ -148,6 +153,7 @@ pub struct DistroSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompatConfig {
     pub platform_shim_enabled: bool,
     pub path_translation_enabled: bool,
@@ -187,6 +193,7 @@ impl Default for CompatConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FailSafeConfig {
     pub enabled: bool,
     pub max_retries: u32,
@@ -214,6 +221,7 @@ impl Default for FailSafeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CircuitBreakerConfig {
     pub enabled: bool,
     pub failure_threshold: u32,
@@ -256,6 +264,7 @@ pub enum FailSafeAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GuardrailConfig {
     pub enabled: bool,
     pub rules: Vec<GuardrailRule>,
@@ -311,6 +320,7 @@ impl Default for GuardrailConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GuardrailRule {
     pub name: String,
     pub description: String,
@@ -337,6 +347,7 @@ pub enum Severity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HealthConfig {
     pub enabled: bool,
     pub check_interval: Duration,
@@ -405,6 +416,7 @@ impl Default for HealthConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HealthCheck {
     pub name: String,
     pub check_type: HealthCheckType,
@@ -433,6 +445,7 @@ pub enum RecoveryAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     pub enabled: bool,
     pub interval: Duration,
@@ -460,6 +473,7 @@ pub enum MetricsExporter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
     pub enabled: bool,
     pub bridge_name: String,
@@ -481,6 +495,7 @@ impl Default for NetworkConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortMapping {
     pub host_port: u16,
     pub container_port: u16,
@@ -488,6 +503,7 @@ pub struct PortMapping {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     pub root_dir: std::path::PathBuf,
     pub max_size: u64,
@@ -511,6 +527,7 @@ impl Default for StorageConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
     pub level: String,
     pub format: String,
@@ -530,6 +547,7 @@ impl Default for LoggingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileRotationConfig {
     pub enabled: bool,
     pub max_size: u64,
@@ -640,5 +658,104 @@ impl GatewayConfigBuilder {
 impl Default for GatewayConfigBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #27 — the gateway config must reject unknown keys instead of silently
+    /// ignoring them, so a documented-but-absent key fails loudly at load time.
+    #[test]
+    fn unknown_fields_are_rejected() {
+        // Positive control: the real struct round-trips.
+        let ok = serde_json::to_string(&FailSafeConfig::default()).unwrap();
+        serde_json::from_str::<FailSafeConfig>(&ok).expect("valid FailSafeConfig must parse");
+
+        // A documented-but-nonexistent key must be an error, not silence.
+        let mut v: serde_json::Value = serde_json::from_str(&ok).unwrap();
+        v["bulkhead"] = serde_json::json!(10);
+        let err = serde_json::from_str::<FailSafeConfig>(&v.to_string())
+            .expect_err("unknown key `bulkhead` must be rejected");
+        assert!(
+            err.to_string().contains("bulkhead"),
+            "error must name the offending key, got: {err}"
+        );
+    }
+
+    /// Issue #27 — guard against the documentation drifting away from the code again.
+    /// Real field names are derived from the struct (not hand-copied); the active
+    /// `[gateway.fail_safe]` example may only contain real fields or keys declared
+    /// planned in the same block via a `# planned:` sentinel.
+    #[test]
+    fn documented_fail_safe_keys_are_real_or_declared_planned() {
+        let doc = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/src/configuration.md"),
+        )
+        .expect("docs/src/configuration.md must be readable from the crate");
+
+        let (active, planned) = parse_fail_safe_block(&doc);
+        let real: std::collections::BTreeSet<String> =
+            obj_keys(&FailSafeConfig::default()).into_iter().collect();
+
+        assert!(
+            !active.is_empty(),
+            "no active [gateway.fail_safe] keys found in the docs"
+        );
+        for k in &active {
+            assert!(
+                real.contains(k),
+                "documented key `{k}` is not a real FailSafeConfig field (issue #27): \
+                 implement it or move it to the `# planned:` list"
+            );
+        }
+        for k in &planned {
+            assert!(
+                !real.contains(k),
+                "key `{k}` is declared planned but now exists in code (issue #27): \
+                 move it to the active example"
+            );
+        }
+    }
+
+    fn obj_keys<T: serde::Serialize>(v: &T) -> Vec<String> {
+        match serde_json::to_value(v).unwrap() {
+            serde_json::Value::Object(m) => m.keys().cloned().collect(),
+            other => panic!("expected a JSON object, got {other:?}"),
+        }
+    }
+
+    /// Extract the active keys and the `# planned:` sentinel list from the first
+    /// `[gateway.fail_safe]` block of the document.
+    fn parse_fail_safe_block(doc: &str) -> (Vec<String>, Vec<String>) {
+        let mut lines = doc
+            .lines()
+            .skip_while(|l| l.trim() != "[gateway.fail_safe]");
+        assert!(
+            lines.next().is_some(),
+            "no `[gateway.fail_safe]` section in the docs"
+        );
+        let mut active = Vec::new();
+        let mut planned = Vec::new();
+        for l in lines {
+            let t = l.trim();
+            if t.is_empty() || t.starts_with('[') {
+                break;
+            }
+            if let Some(rest) = t.strip_prefix("# planned:") {
+                planned.extend(
+                    rest.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                );
+            } else if !t.starts_with('#') {
+                if let Some((k, _)) = t.split_once('=') {
+                    active.push(k.trim().to_string());
+                }
+            }
+        }
+        (active, planned)
     }
 }
