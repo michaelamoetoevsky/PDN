@@ -116,6 +116,43 @@ Android 12+ enforces a *Phantom Process Killer* (limiting background child proce
 - **Android WakeLock Engine**: Automated acquisition of `PARTIAL_WAKE_LOCK` while supervised services are running.
 - **Foreground Service Integration**: Integration with Termux:API and Termux:Boot to maintain persistent notifications, preventing Android OOM termination.
 
+### 4.4 Image Store & Registry Transport — planned for the next major version
+
+Planned infrastructure, not implemented. Full analysis, measurements and the reference architecture:
+`research/IMAGE_STORE_AND_PUSH.md`. Tracked by #37 (lookup) and #39 (layer store).
+
+Today an image in PDN **is** its container directory: `build local` writes
+`~/.podnext/containers/<store-key>/rootfs` and the layer blobs are discarded after extraction. That
+model cannot serve `push`, because there is nothing to send — `image push` currently fails with
+`Image '<ref>' not found locally` for an image that is present, and would refuse with *"PDN does not
+retain layer blobs after extraction"* even once the lookup is fixed.
+
+The next major version changes the model rather than patching around it:
+
+- **Images become OCI artifacts** — manifest + config + layer blobs, digest-addressed. Containers
+  become *derived* state, produced by applying layers to a rootfs, instead of being the image.
+- **Layer cache** — one file per blob named by the digest of its content, behind a digest-grammar
+  validator so a crafted digest cannot escape the cache directory (the same trust boundary as #16).
+- **Build emits one layer per instruction** by snapshotting the stage rootfs and diffing, with OCI
+  whiteouts for deletions, and an image-config `history` whose non-empty entry count matches the
+  layer count. Multi-stage (`COPY --from=<stage>`, per-stage `ENV`/`ARG`/`WORKDIR`/`USER`) is part of
+  the same step.
+- **Registry transport** (Docker Registry v2) — push skips blobs the registry already has (HEAD),
+  streams the missing ones, then PUTs the manifest; credentials are scoped to the registry's own
+  origin and stripped on cross-origin redirects; 401/403 and rate limits get named errors. `pull` is
+  the same path in reverse, and `install` works offline from a cached manifest.
+- **Local OCI layout archives** — install from an image-layout archive, with blobs verified against
+  the digests the archive names and bounded reads, because an archive is untrusted input.
+
+Cost, measured on this device (Termux aarch64): the snapshot/diff work is in the 0.1–0.25 s band per
+build (rootfs walk measured at 105 ms / 575 entries, 229 ms / 6,188, 214 ms / 11,641), paid at build
+time. The alternative — no artifact store, tar the rootfs at push time — costs ≈0.35 s raw /
+≈2.1 s gzip per 307 MB image and produces a single opaque layer with no build history; it is the
+intermediate option, not the target.
+
+Prerequisite: the licence metadata must be consistent before any code is compared against the
+GPL-3.0 reference (#40).
+
 ---
 
 ## 5. Architectural Design
