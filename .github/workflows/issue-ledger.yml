@@ -1,22 +1,23 @@
 # Issue ledger gate.
 #
-# Re-runs every issue's verification predicate against the pushed tree. The point is
-# regression detection: closing an issue records an intention, so a later refactor,
-# revert, or a conflict resolved the wrong way can quietly undo a fix. A silently
-# regressed fix should fail here, in a five-second job, rather than turn up later.
+# Re-runs every issue's verification predicate against the pushed tree, including the gated
+# behaviour checks, so a silently regressed fix fails here instead of turning up later. Closing an
+# issue records an intention; a refactor, a revert, or a conflict resolved the wrong way can quietly
+# undo it.
 #
-# Deliberately separate from ci.yml: ci.yml filters on crates/**, tests/**,
-# Cargo.*, deny.toml and .github/workflows/**, so it never runs for changes under
-# scripts/ or docs/. That is how an unverified predicate change reached master
-# unnoticed - the gate itself was outside the paths that trigger CI. This workflow
-# therefore has NO path filter: it runs on every push and pull request to these
-# branches, so a change to a predicate is always exercised against the tree it
-# claims to verify.
+# Deliberately separate from ci.yml: ci.yml filters on crates/**, tests/**, Cargo.*, deny.toml and
+# .github/workflows/**, so it never runs for changes under scripts/ or docs/. That is how an
+# unverified predicate change reached master unnoticed - the gate itself was outside the paths that
+# trigger CI. This workflow therefore has NO path filter: it runs on every push and pull request to
+# these branches, so a change to a predicate is always exercised against the tree it claims to
+# verify.
 #
-# It costs seconds, not minutes: --offline runs source-level predicates only, never
-# calls gh and never writes the ledger, so the job cannot be failed or silently
-# skipped by a token, a rate limit or a network problem. The toolchain builds are
-# already covered by ci.yml; do not add one here.
+# Only THIS workflow is expected of pull requests: it runs unconditionally, while the other
+# workflows are path-filtered. A required status check that never runs cannot be satisfied, so
+# requiring a path-filtered workflow would block every doc-only pull request forever.
+#
+# --offline keeps the gate independent of gh, tokens, rate limits and the network: no unrelated
+# outage can fail it, or silently skip it.
 
 name: Issue ledger
 
@@ -35,33 +36,55 @@ permissions:
   contents: read
 
 jobs:
-  verify-issue-fixes:
-    name: Re-verify every issue fix against HEAD
+  # The job name IS the status-check name that branch protection matches on, so it is short and
+  # stable on purpose. Renaming it silently invalidates the required check.
+  issue-ledger:
+    name: Issue ledger
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The gated checks compile bench targets and run three test binaries from a cold cache, so the
+    # five-minute source-only budget is not enough. Anything much above this would hide a hang.
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          # Full history: a failing predicate reports the last commit that touched
-          # the file it greps, which is what distinguishes "the fix regressed" from
-          # "the predicate is stale". A shallow clone loses that.
+          # Full history: a failing predicate reports the last commit that touched the file it
+          # greps, which is what distinguishes "the fix regressed" from "the predicate is stale".
           fetch-depth: 0
+
+      - name: Install Rust toolchain
+        # Required by the gated behaviour checks. --cargo runs cargo plainly on a runner: the memory
+        # guard (`heavy`) exists for this project's Android dev device, and the harness detects its
+        # absence instead of invoking a wrapper that does not exist here.
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-ledger-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ledger-cargo-
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.x'
 
-      - name: Run the issue ledger (source predicates only)
-        run: python3 scripts/build_issue_ledger.py --offline
+      # The gate. stdout is the JSON summary (consumed below), stderr is the human table and lands
+      # in the job log. The exit status is recorded rather than propagated so the summary always
+      # prints, and the last step is what actually fails the job.
+      - name: Run the issue ledger (source predicates + gated behaviour checks)
+        run: |
+          python3 scripts/build_issue_ledger.py --offline --cargo --json > ledger.json
+          echo $? > ledger.rc
 
-      - name: Machine-readable summary
-        # Runs even when the gate fails, so the failing check is readable from the
-        # job summary without digging through stdout.
+      - name: Summarise
         if: always()
         run: |
-          python3 scripts/build_issue_ledger.py --offline --json > ledger.json 2>/dev/null || true
           python3 - <<'EOF'
           import json
           try:
@@ -80,3 +103,10 @@ jobs:
           if d["skipped_gated"]:
               print(f"\n{len(d['skipped_gated'])} gated cargo checks were not run (no verdict); a SKIPPED check is not evidence the fix works.")
           EOF
+
+      - name: Fail if the ledger reported a FAIL
+        if: always()
+        run: |
+          rc=$(cat ledger.rc 2>/dev/null || echo 1)
+          echo "ledger exit status: $rc"
+          test "$rc" = "0"

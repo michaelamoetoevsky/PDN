@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -205,15 +206,40 @@ NO_CHECK_REASON = {
 }
 
 
+def _guard_tools() -> tuple[str | None, str | None]:
+    """Where is the memory guard, and is there a lock to serialise with?
+
+    The guard (`heavy` + `memguard.sh`) exists for one reason: on this Android device the
+    low-memory killer ends the session when a cargo job spikes, so heavy jobs are wrapped and
+    serialised. A GitHub runner has no such problem, and `~/.hermes/bin` does not exist there,
+    so hard-coding the wrapper meant the four gated behaviour checks could never produce a
+    verdict anywhere: refused by the guard locally (budget), exit 127 in CI (no `heavy`).
+
+    Rule: use the guard when this host HAS one, run cargo plainly when it does not.
+    """
+    heavy = shutil.which("heavy")
+    if heavy is None:
+        candidate = Path.home() / ".hermes" / "bin" / "heavy"
+        heavy = str(candidate) if candidate.exists() else None
+    return heavy, shutil.which("flock")
+
+
+HEAVY, FLOCK = _guard_tools()
+
+
 def sh(cmd: str, timeout: int = 180, cargo: bool = False) -> tuple[int, str]:
     if cargo:
         inner = cmd.replace("'", "'\\''")
-        cmd = (
-            'export PATH="$HOME/.hermes/bin:$PATH"; '
-            f"flock {CARGO_LOCK} -c '"
-            f"CARGO_TARGET_DIR={CARGO_TARGET} heavy --budget-mb 2000 --min-avail-mb 700 -- "
-            f"env -u LD_LIBRARY_PATH {inner}'"
-        )
+        if HEAVY and FLOCK:
+            cmd = (
+                f"flock {CARGO_LOCK} -c "
+                f"'CARGO_TARGET_DIR={CARGO_TARGET} {HEAVY} --budget-mb 2000 --min-avail-mb 700 -- "
+                f"env -u LD_LIBRARY_PATH {inner}'"
+            )
+        elif HEAVY:
+            cmd = f"CARGO_TARGET_DIR={CARGO_TARGET} {HEAVY} --budget-mb 2000 --min-avail-mb 700 -- env -u LD_LIBRARY_PATH {inner}"
+        else:
+            cmd = f"env -u LD_LIBRARY_PATH {inner}"
     p = subprocess.run(cmd, shell=True, cwd=REPO, capture_output=True, text=True, timeout=timeout)
     return p.returncode, (p.stdout + p.stderr).strip()
 
