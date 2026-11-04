@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 17:06:32Z from `411c49e` (fix(qe): #17 predicate follows the #29 implementation instead of a del).
+Generated 2026-11-04 18:33:04Z from `b389514` (perf(bench): let the command line actually bound the suite).
 
 ## Why this exists
 
@@ -256,12 +256,12 @@ container and therefore belongs in CI.
 | 3 | OPEN | documentation task (tutorial) — no code fix to assert. | Create tutorial: Running a full-stack development environment in PDN |
 | 4 | OPEN | feature request (VS Code Dev Container) — no landed implementation. | Add VS Code Dev Container support |
 | 5 | OPEN | feature request (systemd unit generator) — no landed implementation. | Add systemd service unit generator for Linux hosts |
-| 6 | OPEN | feature request (Docker Compose export) — partially landed via PR #26; see #28. | Add Docker Compose export for PDN services |
+| 6 | CLOSED | feature request (Docker Compose export) — partially landed via PR #26; see #28. | Add Docker Compose export for PDN services |
 | 9 | OPEN | feature request (Prometheus exporter) — no landed implementation. | Add Prometheus metrics exporter for PDN services |
 | 10 | OPEN | feature request (WebSocket events) — no landed implementation. | Add WebSocket support for real-time service events |
-| 27 | OPEN | defect: documented [gateway.fail_safe] (bulkhead/retry_policy) absent from pn-gateway; no fix landed, so a fix-present predicate has nothing to assert. | [BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy |
-| 28 | OPEN | defect: empty command yields a null Compose service in export_to_compose; no fix landed. | Compose export: empty command emits an invalid service; follow-ups fro |
-| 29 | OPEN | defect: podnext build local reports success without an image; no fix landed. | podnext build local computes a layer diff but produces no image |
+| 27 | CLOSED | defect: documented [gateway.fail_safe] (bulkhead/retry_policy) absent from pn-gateway; no fix landed, so a fix-present predicate has nothing to assert. | [BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy |
+| 28 | CLOSED | defect: empty command yields a null Compose service in export_to_compose; no fix landed. | Compose export: empty command emits an invalid service; follow-ups fro |
+| 29 | CLOSED | defect: podnext build local reports success without an image; no fix landed. | podnext build local computes a layer diff but produces no image |
 
 ## How to re-run this (CI-friendly)
 
