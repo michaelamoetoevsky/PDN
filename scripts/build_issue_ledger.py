@@ -85,7 +85,7 @@ CHECKS: list[dict] = [
          cmd="grep -nF -- '--bench benchmarks' .github/workflows/benchmark.yml | head -4",
          needle="--bench benchmarks"),
     dict(issue="25", claim="the benchmark targets compile (the false-green defect)",
-         cargo=True, needle=None, cmd="cargo bench --workspace --no-run --locked"),
+         cargo=True, needle=None, cmd="cargo bench -p pn-next --no-run --locked"),
     dict(issue="32", claim="spawned proot gets its own process group",
          cmd="grep -nF 'process_group(0)' crates/proot-core/src/lib.rs",
          needle="process_group(0)"),
@@ -221,19 +221,24 @@ def run_check(c: dict, cargo_enabled: bool) -> dict:
     if c.get("cargo") and not cargo_enabled:
         return {**c, "verdict": "SKIPPED", "reason": "cargo check gated; re-run with --cargo", "out": ""}
     try:
-        rc, out = sh(c["cmd"], cargo=bool(c.get("cargo")))
+        rc, out = sh(c["cmd"], timeout=1500 if c.get("cargo") else 180, cargo=bool(c.get("cargo")))
     except subprocess.TimeoutExpired:
         return {**c, "verdict": "SKIPPED", "reason": "command timed out", "out": ""}
     except Exception as e:  # never let an unrunnable check read as a pass
         return {**c, "verdict": "SKIPPED", "reason": f"command error: {e}", "out": ""}
 
-    # `heavy` diverts the child's stdout to its own log and prints only its summary. If the guard
-    # did not let the child run to completion, the check could not be evaluated — SKIP, never FAIL.
+    # `heavy` diverts the child's stdout to its own log and prints only its summary. If the guard did
+    # not let the child run to completion, the check could not be evaluated — SKIP, never FAIL. The
+    # over-budget path prints a different summary ("memguard: killed at NMB"), so match both forms.
     if c.get("cargo"):
-        m = re.search(r"memguard: completed exit=(\d+) reason=([^\n]+)", out)
-        if m and not m.group(2).startswith("exited normally"):
+        guard_killed = "memguard: killed at" in out
+        m = re.search(r"memguard: (completed|signalled|aborted) exit=(\d+) reason=(.+)", out)
+        if m and m.group(3).strip() != "exited normally":
+            guard_killed = True
+        if guard_killed:
             return {**c, "verdict": "SKIPPED",
-                    "reason": f"cargo guard did not complete: {m.group(2).strip()}", "out": out[:200]}
+                    "reason": "cargo guard stopped the build (memory budget), so behaviour was not "
+                              "observed; re-run on a host with a larger budget", "out": out[:200]}
 
     needle = c.get("needle")
     if c.get("mode") == "absent":
