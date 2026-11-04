@@ -169,7 +169,7 @@ CHECKS: list[dict] = [
     # ── GATED cargo checks: behaviour a source predicate cannot prove ──────────
     # Run only with --cargo (they build; three departments share this host). Default = SKIPPED.
     dict(issue="18", claim="the sparse-copy unit test passes", cargo=True, needle=None,
-         cmd="cargo test -p podnext --lib copy_keeps_sparse_files_sparse --locked"),
+         cmd="cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked"),
     dict(issue="16", claim="the deep-recursion test passes", cargo=True, needle=None,
          cmd="cargo test -p proot-distro-core --test deep_fs_recursion --locked"),
     dict(issue="31", claim="the abnormal-restart test passes", cargo=True, needle=None,
@@ -229,11 +229,12 @@ def run_check(c: dict, cargo_enabled: bool) -> dict:
 
     # `heavy` diverts the child's stdout to its own log and prints only its summary. If the guard did
     # not let the child run to completion, the check could not be evaluated — SKIP, never FAIL. The
+    # summary appends " peak=NMB dur=Ns" to the reason, so match the prefix, not the whole string; the
     # over-budget path prints a different summary ("memguard: killed at NMB"), so match both forms.
     if c.get("cargo"):
         guard_killed = "memguard: killed at" in out
         m = re.search(r"memguard: (completed|signalled|aborted) exit=(\d+) reason=(.+)", out)
-        if m and m.group(3).strip() != "exited normally":
+        if m and not m.group(3).strip().startswith("exited normally"):
             guard_killed = True
         if guard_killed:
             return {**c, "verdict": "SKIPPED",
@@ -314,9 +315,14 @@ def main() -> int:
         "| **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |",
         "| **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |",
         "",
-        f"**{npass} PASS · {nfail} FAIL · {nskip} SKIPPED** across {len(results)} checks "
-        f"covering {len(checked)} of {len(issues)} issues "
+        f"**Coverage: {npass} checks PASS by direct observation · {nfail} FAIL · {nskip} SKIPPED**, "
+        f"across {len(results)} checks covering {len(checked)} of {len(issues)} issues "
         f"({len(uncovered)} issues have no automated check).",
+        "",
+        "**A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the "
+        f"{nskip} SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this",
+        "device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind",
+        "them was not observed in the committed run. Do not read the PASS count as full verification.",
         "",
         "## Checks that FAIL (a fix that is no longer present)",
         "",

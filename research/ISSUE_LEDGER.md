@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 15:54:24Z from `5df9484` (feat(pn-next): export_to_compose mapping for ServiceConfig (#26)).
+Generated 2026-11-04 16:33:16Z from `0ad8639` (fix(qe): stop gated checks reporting a guard kill as FAIL, allow long ).
 
 ## Why this exists
 
@@ -17,7 +17,11 @@ silently-regressed fix shows up as a FAIL in a document rather than as a surpris
 | **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
 | **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
 
-**35 PASS · 0 FAIL · 4 SKIPPED** across 39 checks covering 21 of 32 issues (11 issues have no automated check).
+**Coverage: 35 checks PASS by direct observation · 0 FAIL · 4 SKIPPED**, across 39 checks covering 21 of 32 issues (11 issues have no automated check).
+
+**A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the 4 SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this
+device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind
+them was not observed in the committed run. Do not read the PASS count as full verification.
 
 ## Checks that FAIL (a fix that is no longer present)
 
@@ -129,7 +133,7 @@ _state_: CLOSED  ·  _labels_: bug, performance  ·  _closed_: 2026-11-04T11:04:
   - `grep -nF 'fn copy_keeps_sparse_files_sparse' crates/podnext/src/main.rs`
   - → `3827:    fn copy_keeps_sparse_files_sparse() {`
 - [SKIPPED] the sparse-copy unit test passes
-  - `cargo test -p podnext --lib copy_keeps_sparse_files_sparse --locked`
+  - `cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked`
   - → ``
 
 **#19 [CI-1] test_restart_policy_unless_stopped fails: explicit stop loses to restart policy**  
@@ -181,7 +185,7 @@ _state_: CLOSED  ·  _labels_: bug, ci, performance  ·  _closed_: 2026-11-04T10
   - `grep -nF -- '--bench benchmarks' .github/workflows/benchmark.yml | head -4`
   - → `103:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 108:          cargo bench --workspace --bench benchmarks --locked -- \ | 130:          cargo bench --workspace --bench benchmarks --locked -- \`
 - [SKIPPED] the benchmark targets compile (the false-green defect)
-  - `cargo bench --workspace --no-run --locked`
+  - `cargo bench -p pn-next --no-run --locked`
   - → ``
 
 **#30 [CI-5] Benchmark job is unpredictable: 25.7 min then 43+ min, and a baseline step killed with SIGTERM**  
