@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 16:33:16Z from `0ad8639` (fix(qe): stop gated checks reporting a guard kill as FAIL, allow long ).
+Generated 2026-11-04 16:35:52Z from `868612a` (docs(qe): report coverage statement, gated guard reasons, isolation no).
 
 ## Why this exists
 

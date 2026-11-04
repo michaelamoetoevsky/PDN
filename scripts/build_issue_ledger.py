@@ -270,11 +270,13 @@ def main() -> int:
     nskip = sum(r["verdict"] == "SKIPPED" for r in results)
     fails = [r for r in results if r["verdict"] == "FAIL"]
 
-    print(f"{'issue':6} {'check':74} verdict")
-    print("-" * 96)
+    # With --json, the human table goes to stderr so stdout stays pure JSON for `| jq`.
+    tbl = sys.stderr if args.json else sys.stdout
+    print(f"{'issue':6} {'check':74} verdict", file=tbl)
+    print("-" * 96, file=tbl)
     for r in results:
-        print(f"#{r['issue']:5} {r['claim'][:72]:74} {r['verdict']}")
-    print(f"\nchecks: {npass} PASS, {nfail} FAIL, {nskip} SKIPPED (of {len(results)})")
+        print(f"#{r['issue']:5} {r['claim'][:72]:74} {r['verdict']}", file=tbl)
+    print(f"\nchecks: {npass} PASS, {nfail} FAIL, {nskip} SKIPPED (of {len(results)})", file=tbl)
 
     per_issue: dict[str, list] = {}
     for r in results:
@@ -400,7 +402,7 @@ def main() -> int:
 
     if not args.no_write:
         OUT.write_text("\n".join(lines))
-        print(f"\nwritten: {OUT}")
+        print(f"\nwritten: {OUT}", file=(sys.stderr if args.json else sys.stdout))
     if args.json:
         print(json.dumps(summary, indent=2, sort_keys=True))
     return 1 if nfail else 0
