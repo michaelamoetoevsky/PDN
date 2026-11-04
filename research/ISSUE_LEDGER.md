@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 16:50:49Z from `710eda4` (fix(qe): --json must emit pure JSON on stdout for '| jq').
+Generated 2026-11-04 17:06:32Z from `411c49e` (fix(qe): #17 predicate follows the #29 implementation instead of a del).
 
 ## Why this exists
 

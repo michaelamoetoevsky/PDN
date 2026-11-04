@@ -260,7 +260,34 @@ def run_check(c: dict, cargo_enabled: bool) -> dict:
         ok = rc == 0
     else:
         ok = rc == 0 and needle in out
-    return {**c, "verdict": "PASS" if ok else "FAIL", "reason": "", "out": out[:240].replace("\n", " | ")}
+    reason = "" if ok else _predicate_context(c)
+    return {**c, "verdict": "PASS" if ok else "FAIL", "reason": reason,
+            "out": out[:240].replace("\n", " | ")}
+
+
+def _predicate_context(c: dict) -> str:
+    """Explain a FAIL, so a stale predicate cannot be mistaken for a broken fix.
+
+    Learned the hard way: after the #29 fix deleted `fn execute_run` (the defective
+    function itself), the #17 check that grepped for that symbol reported FAIL on a
+    tree where the behaviour had just been fixed and covered. The FAIL was true as
+    written and useless as a signal. Naming the file and its most recent commit is
+    what turns "check failed" into "either the fix regressed or the predicate is
+    stale", which is the decision a reader actually has to make.
+    """
+    needle = c.get("needle")
+    if not needle:
+        return ""
+    m = re.search(r"(?:^|\s)([A-Za-z0-9_./-]*\.(?:rs|py|toml|yml|yaml|md|lock))", c.get("cmd", ""))
+    if not m:
+        return ""
+    target = m.group(1)
+    if not (REPO / target).exists():
+        return f" predicate target `{target}` does not exist - the predicate is stale or misplaced"
+    rc, out = sh(f"git log -1 --format='%h %s' -- {target}")
+    last = out.strip().splitlines()[0] if rc == 0 and out.strip() else "unknown"
+    return (f" needle {needle!r} not found in `{target}`; last change to that file: {last}"
+            " - if a refactor removed the symbol the predicate is stale, not the fix")
 
 
 def main() -> int:
@@ -344,7 +371,10 @@ def main() -> int:
     if fails:
         for r in fails:
             lines += [f"- **#{r['issue']} — {r['claim']}**", f"  - `{r['cmd']}`",
-                      f"  - output: `{r['out']}`", ""]
+                      f"  - output: `{r['out']}`"]
+            if r.get("reason"):
+                lines += [f"  - why it failed: {r['reason'].strip()}"]
+            lines += [""]
     else:
         lines += ["None.", ""]
 
@@ -406,7 +436,8 @@ def main() -> int:
         "checks": {"pass": npass, "fail": nfail, "skipped": nskip, "total": len(results)},
         "issues": {"total": len(issues), "covered": len(checked), "uncovered": len(uncovered),
                    "uncovered_open": len(uncovered_open)},
-        "failures": [{"issue": r["issue"], "claim": r["claim"], "cmd": r["cmd"]} for r in fails],
+        "failures": [{"issue": r["issue"], "claim": r["claim"], "cmd": r["cmd"],
+                      "reason": r["reason"], "out": r["out"]} for r in fails],
         "skipped_gated": [{"issue": r["issue"], "claim": r["claim"], "reason": r["reason"]}
                           for r in skipped if r["reason"].startswith("cargo")],
         "cargo_enabled": args.cargo,
