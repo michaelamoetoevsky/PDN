@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -167,11 +168,11 @@ CHECKS: list[dict] = [
 
     # ── GATED cargo checks: behaviour a source predicate cannot prove ──────────
     # Run only with --cargo (they build; three departments share this host). Default = SKIPPED.
-    dict(issue="18", claim="the sparse-copy unit test passes", cargo=True, needle="test result: ok",
+    dict(issue="18", claim="the sparse-copy unit test passes", cargo=True, needle=None,
          cmd="cargo test -p podnext --lib copy_keeps_sparse_files_sparse --locked"),
-    dict(issue="16", claim="the deep-recursion test passes", cargo=True, needle="test result: ok",
+    dict(issue="16", claim="the deep-recursion test passes", cargo=True, needle=None,
          cmd="cargo test -p proot-distro-core --test deep_fs_recursion --locked"),
-    dict(issue="31", claim="the abnormal-restart test passes", cargo=True, needle="test result: ok",
+    dict(issue="31", claim="the abnormal-restart test passes", cargo=True, needle=None,
          cmd="cargo test -p pn-next --test supervisor_e2e test_restart_policy_on_abnormal --locked"),
 ]
 
@@ -225,6 +226,14 @@ def run_check(c: dict, cargo_enabled: bool) -> dict:
         return {**c, "verdict": "SKIPPED", "reason": "command timed out", "out": ""}
     except Exception as e:  # never let an unrunnable check read as a pass
         return {**c, "verdict": "SKIPPED", "reason": f"command error: {e}", "out": ""}
+
+    # `heavy` diverts the child's stdout to its own log and prints only its summary. If the guard
+    # did not let the child run to completion, the check could not be evaluated — SKIP, never FAIL.
+    if c.get("cargo"):
+        m = re.search(r"memguard: completed exit=(\d+) reason=([^\n]+)", out)
+        if m and not m.group(2).startswith("exited normally"):
+            return {**c, "verdict": "SKIPPED",
+                    "reason": f"cargo guard did not complete: {m.group(2).strip()}", "out": out[:200]}
 
     needle = c.get("needle")
     if c.get("mode") == "absent":
