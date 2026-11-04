@@ -69,6 +69,9 @@ use tokio::net::UnixStream;
 
 use crate::utils::format_size;
 
+mod compose;
+pub use compose::execute_compose_command;
+
 // Daemon socket path
 const DAEMON_SOCKET: &str = "/data/data/com.termux/files/home/.local/run/pn-next/daemon.sock";
 

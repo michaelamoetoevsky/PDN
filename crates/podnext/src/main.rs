@@ -611,6 +611,28 @@ enum Commands {
         args: Vec<String>,
     },
 
+    /// [Interop] Export PDN service configuration to a Docker Compose file
+    #[command(
+        long_about = "Export one or more PDN service definition files to a single Docker Compose document.\n\n\
+        EXAMPLES:\n  \
+        podnext compose svc.toml\n  \
+        podnext compose svc-a.toml svc-b.toml -o compose.yml\n  \
+        podnext compose svc.toml --image my-app:latest"
+    )]
+    Compose {
+        /// Service definition file(s) to export (TOML, as the supervisor loads)
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+
+        /// Image for the exported service(s); Compose needs an image or a build context
+        #[arg(short, long)]
+        image: Option<String>,
+
+        /// Write to this file instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// [Core] Generate shell completions
     Completion {
         /// Shell to generate completions for
@@ -1863,6 +1885,11 @@ async fn execute_command(cmd: Commands) -> Result<()> {
         Commands::Gitops(cmd) => execute_gitops_command(cmd).await,
         Commands::Dashboard(cmd) => execute_dashboard_command(cmd).await,
         Commands::Docker { container, args } => cmd_docker(container, args).await,
+        Commands::Compose {
+            files,
+            image,
+            output,
+        } => execute_compose_command(files, image, output).await,
 
         // Utilities
         Commands::Completion { shell } => cmd_completion(shell).await,
