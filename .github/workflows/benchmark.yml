@@ -28,13 +28,13 @@ jobs:
     name: Run Benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # `pull-requests: write` lets the result-comment step post on same-repo PRs.
-    # Fork PRs still get a read-only token, so that step is `continue-on-error`
-    # below: a missing comment must never turn a green benchmark run red.
+    # Fork-safe reporting lives in `benchmark-report.yml`, a separate
+    # `workflow_run`-triggered workflow that posts the PR comment with a
+    # base-repo write token and never touches fork code. This job therefore
+    # needs no write scopes at all: the comment step was removed here so the PR
+    # is commented exactly once, from the one path that also works for forks.
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -143,25 +143,3 @@ jobs:
             benchmark-output.txt
             benchmark-baseline.txt
           retention-days: 30
-
-      - name: Comment benchmark results on PR
-        if: github.event_name == 'pull_request'
-        # Observed failure (run 41848512267, job 126638857856): HTTP 403
-        # "Resource not accessible by integration" from the createComment call.
-        # The benchmark itself had already passed; the missing comment must not
-        # mark the job failed, so this step is explicitly non-fatal.
-        continue-on-error: true
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            if (fs.existsSync('benchmark-output.txt')) {
-              const output = fs.readFileSync('benchmark-output.txt', 'utf8');
-              const body = `## Benchmark Results\n\n\`\`\`\n${output.slice(-2000)}\n\`\`\`\n\nFull results available in workflow artifacts.`;
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: body
-              });
-            }

@@ -1,0 +1,112 @@
+name: Benchmark Report
+
+# Fork-safe benchmark reporting.
+#
+# WHY THIS WORKFLOW EXISTS
+# On a `pull_request` run originating from a fork, GITHUB_TOKEN is read-only no
+# matter which scopes the job requests. Verified on run 41848512267 / job
+# 126638857856 (Benchmark on PR #26 by @gabm0932, head repo gabm0932/PDN):
+#
+#   POST /repos/michaelamoetoevsky/PDN/issues/26/comments - 403 with id A800:...
+#   RequestError [HttpError]: Resource not accessible by integration
+#   'x-accepted-github-permissions': 'issues=write; pull_requests=write'
+#
+# A `workflow_run` workflow is dispatched by the BASE repository on its default
+# branch, so the token is a normal repo-scoped token with the write permissions
+# declared below - and the workflow runs in the base repo's context, not the
+# fork's.
+#
+# WHY IT IS SAFE AGAINST FORK CODE (load-bearing - do not "simplify")
+# This workflow never checks out the repository and never executes anything the
+# fork produced. It reads exactly two things:
+#   1. the triggering run's metadata (id, event, head_sha) via the API, and
+#   2. the `benchmark-results` artifact that the base repo's own Benchmark
+#      workflow uploads (fixed path list: benchmark-output.txt,
+#      benchmark-baseline.txt).
+# The artifact's TEXT is untrusted (it quotes fork-controlled benchmark output)
+# and is only ever embedded inside a fenced code block in a comment body. It is
+# never sourced, eval'd, or run, and no file from the fork's tree is fetched or
+# interpreted. No `actions/checkout` step may ever be added here.
+on:
+  workflow_run:
+    workflows: ["Benchmark"]
+    types: [completed]
+
+permissions:
+  actions: read          # download the run's artifact
+  pull-requests: write   # resolve the comment target / comment on the PR
+  issues: write          # create the issue-comment (comments live on the issues API)
+
+jobs:
+  report:
+    name: Report benchmark results on PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download benchmark results artifact
+        # Skipped for push/workflow_dispatch runs; the script below still runs
+        # and logs the no-op line, so master runs stay unchanged.
+        if: github.event.workflow_run.event == 'pull_request'
+        uses: actions/download-artifact@v8
+        with:
+          name: benchmark-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post benchmark summary comment
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const run = context.payload.workflow_run;
+            core.info(`Benchmark run ${run.id}: event=${run.event} head_sha=${run.head_sha}`);
+
+            // Master/develop pushes (and manual runs) have no PR to report on.
+            if (run.event !== 'pull_request') {
+              core.info(`Event is '${run.event}', not 'pull_request' - nothing to comment; no-op.`);
+              return;
+            }
+
+            // `workflow_run.pull_requests` is EMPTY for fork-PR runs (observed on
+            // run 41848512267: "pull_requests": []), so it cannot be the only
+            // lookup. Fall back to the commit -> PR association API, which did
+            // resolve that same run to PR #26.
+            let pr = (run.pull_requests || [])[0];
+            if (!pr) {
+              const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: run.head_sha,
+              });
+              core.info(`workflow_run.pull_requests was empty; commit ${run.head_sha} -> ${data.length} PR(s)`);
+              pr = data.find(p => p.state === 'open') || data[0];
+            }
+            if (!pr) {
+              core.warning(`No pull request associated with Benchmark run ${run.id}; nothing to comment.`);
+              return;
+            }
+
+            if (!fs.existsSync('benchmark-output.txt')) {
+              core.warning(`benchmark-output.txt not present for run ${run.id}; skipping comment.`);
+              return;
+            }
+
+            const output = fs.readFileSync('benchmark-output.txt', 'utf8');
+            const body = [
+              '## Benchmark Results',
+              '',
+              '```',
+              output.slice(-2000),
+              '```',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`,
+              'Full results are attached to that run as the `benchmark-results` artifact.',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body,
+            });
+            core.info(`Posted benchmark summary to PR #${pr.number}.`);
