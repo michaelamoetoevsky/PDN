@@ -295,13 +295,23 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="print a machine-readable summary to stdout")
     ap.add_argument("--cargo", action="store_true", help="also run the gated cargo/behaviour checks")
     ap.add_argument("--no-write", action="store_true", help="do not rewrite ISSUE_LEDGER.md")
+    ap.add_argument("--offline", action="store_true",
+                    help="CI gate: run the source predicates, never call gh and never write the ledger")
     args = ap.parse_args()
 
-    issues = gh_json("gh issue list --state all --limit 100 --json number,title,state,labels,closedAt,author")
-    if issues is None:
-        print("could not fetch issues (gh returned nothing) — refusing to write a ledger", file=sys.stderr)
-        return 2
-    by_num = {i["number"]: i for i in issues}
+    if args.offline:
+        # CI gate mode. The verdicts below never consult GitHub, so the gate must not
+        # depend on a token, a rate limit or a network round trip - an unrelated
+        # outage must not be able to fail, or silently skip, this job. Coverage
+        # tables need issue state, so this mode runs the checks and exits.
+        issues, by_num, write_ledger = [], {}, False
+    else:
+        issues = gh_json("gh issue list --state all --limit 100 --json number,title,state,labels,closedAt,author")
+        if issues is None:
+            print("could not fetch issues (gh returned nothing) — refusing to write a ledger", file=sys.stderr)
+            return 2
+        by_num = {i["number"]: i for i in issues}
+        write_ledger = not args.no_write
 
     results = [run_check(c, args.cargo) for c in CHECKS]
     npass = sum(r["verdict"] == "PASS" for r in results)
@@ -443,7 +453,7 @@ def main() -> int:
         "cargo_enabled": args.cargo,
     }
 
-    if not args.no_write:
+    if write_ledger:
         OUT.write_text("\n".join(lines))
         print(f"\nwritten: {OUT}", file=(sys.stderr if args.json else sys.stdout))
     if args.json:

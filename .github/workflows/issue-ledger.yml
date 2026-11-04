@@ -1,0 +1,82 @@
+# Issue ledger gate.
+#
+# Re-runs every issue's verification predicate against the pushed tree. The point is
+# regression detection: closing an issue records an intention, so a later refactor,
+# revert, or a conflict resolved the wrong way can quietly undo a fix. A silently
+# regressed fix should fail here, in a five-second job, rather than turn up later.
+#
+# Deliberately separate from ci.yml: ci.yml filters on crates/**, tests/**,
+# Cargo.*, deny.toml and .github/workflows/**, so it never runs for changes under
+# scripts/ or docs/. That is how an unverified predicate change reached master
+# unnoticed - the gate itself was outside the paths that trigger CI. This workflow
+# therefore has NO path filter: it runs on every push and pull request to these
+# branches, so a change to a predicate is always exercised against the tree it
+# claims to verify.
+#
+# It costs seconds, not minutes: --offline runs source-level predicates only, never
+# calls gh and never writes the ledger, so the job cannot be failed or silently
+# skipped by a token, a rate limit or a network problem. The toolchain builds are
+# already covered by ci.yml; do not add one here.
+
+name: Issue ledger
+
+on:
+  push:
+    branches: [master, main, develop]
+  pull_request:
+    branches: [master, main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-issue-fixes:
+    name: Re-verify every issue fix against HEAD
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # Full history: a failing predicate reports the last commit that touched
+          # the file it greps, which is what distinguishes "the fix regressed" from
+          # "the predicate is stale". A shallow clone loses that.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Run the issue ledger (source predicates only)
+        run: python3 scripts/build_issue_ledger.py --offline
+
+      - name: Machine-readable summary
+        # Runs even when the gate fails, so the failing check is readable from the
+        # job summary without digging through stdout.
+        if: always()
+        run: |
+          python3 scripts/build_issue_ledger.py --offline --json > ledger.json 2>/dev/null || true
+          python3 - <<'EOF'
+          import json
+          try:
+              d = json.load(open("ledger.json"))
+          except Exception as e:
+              print(f"could not read ledger.json: {e}")
+              raise SystemExit(0)
+          c = d["checks"]
+          print(f"checks: {c['pass']} PASS, {c['fail']} FAIL, {c['skipped']} SKIPPED (of {c['total']})")
+          print(f"head: {d['head']}  cargo_enabled: {d['cargo_enabled']}")
+          if d["failures"]:
+              print("\nfailures:")
+              for f in d["failures"]:
+                  print(f"  #{f['issue']} {f['claim']}")
+                  print(f"    {f.get('reason') or 'no reason recorded'}")
+          if d["skipped_gated"]:
+              print(f"\n{len(d['skipped_gated'])} gated cargo checks were not run (no verdict); a SKIPPED check is not evidence the fix works.")
+          EOF
