@@ -58,11 +58,11 @@ impl ContainerManager {
                 continue;
             }
 
-            // Only consider directories that have a usable rootfs
-            let is_valid_rootfs = rootfs_path.join("etc").exists()
-                || rootfs_path.join("bin").exists()
-                || rootfs_path.join("usr").exists();
-            if !is_valid_rootfs {
+            // Only consider directories that describe a container (see
+            // `is_container_dir`: probing for etc/bin/usr alone missed every
+            // legitimate `FROM scratch` image a build had just reported as
+            // runnable, so `run`/`list`/`remove` could not see it at all).
+            if !is_container_dir(&entry.path()) {
                 continue;
             }
 
@@ -810,5 +810,70 @@ mod tests {
             "zombie pid {pid}: old kill(pid,0) loop = {old_elapsed:?} (full {timeout}s timeout), new predicate = {new_elapsed:?}"
         );
         let _ = child.wait();
+    }
+}
+
+/// Whether a directory in the container store describes a container.
+///
+/// The store is keyed by directory, and a directory is only a container if it has
+/// a rootfs. The original test for that was "has `etc`, `bin` or `usr`", which is
+/// a guess about the *contents* of an image and is wrong for a legitimate
+/// `FROM scratch` build: `podnext build local` reported success, printed
+/// "Run it with: podnext run <name>", and then `run`, `list` and `remove` could
+/// not find the container at all, because its rootfs held none of those three
+/// directories.
+///
+/// A successful build records `metadata.json`, so that file is the marker. The
+/// old probe is kept as a fallback for containers that predate it or were placed
+/// there by other means.
+pub fn is_container_dir(dir: &std::path::Path) -> bool {
+    let rootfs = dir.join("rootfs");
+    if !rootfs.is_dir() {
+        return false;
+    }
+    if dir.join("metadata.json").is_file() {
+        return true;
+    }
+    rootfs.join("etc").exists() || rootfs.join("bin").exists() || rootfs.join("usr").exists()
+}
+
+#[cfg(test)]
+mod is_container_dir_tests {
+    use super::is_container_dir;
+
+    fn dir_with(name: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(name).join("rootfs")).unwrap();
+        tmp
+    }
+
+    #[test]
+    fn a_scratch_image_with_metadata_is_a_container() {
+        // Exactly the shape `podnext build local` produces from `FROM scratch`.
+        let tmp = dir_with("demo");
+        let dir = tmp.path().join("demo");
+        std::fs::write(dir.join("rootfs/app.txt"), "hi").unwrap();
+        std::fs::write(dir.join("metadata.json"), r#"{"name":"demo:latest"}"#).unwrap();
+        assert!(is_container_dir(&dir));
+    }
+
+    #[test]
+    fn a_legacy_container_without_metadata_still_counts() {
+        let tmp = dir_with("legacy");
+        let dir = tmp.path().join("legacy");
+        std::fs::create_dir_all(dir.join("rootfs/etc")).unwrap();
+        assert!(is_container_dir(&dir));
+    }
+
+    #[test]
+    fn a_directory_without_a_rootfs_or_without_any_marker_is_not_a_container() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No rootfs at all.
+        std::fs::create_dir_all(tmp.path().join("junk")).unwrap();
+        assert!(!is_container_dir(&tmp.path().join("junk")));
+
+        // A rootfs, but nothing that identifies it: a half-finished extraction.
+        std::fs::create_dir_all(tmp.path().join("half/rootfs")).unwrap();
+        assert!(!is_container_dir(&tmp.path().join("half")));
     }
 }
