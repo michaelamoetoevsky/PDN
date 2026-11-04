@@ -175,6 +175,26 @@ allow_unsigned = false
 max_plugins = 20
 ```
 
+## Loading and validating
+
+The gateway reads its settings from the `[gateway]` table of a PDN configuration file. The file
+is named explicitly - there is no implicit search path, so a deployment either names its file or
+gets no gateway configuration at all:
+
+```bash
+podnext config validate ./gateway.toml
+PN_GATEWAY_CONFIG=./gateway.toml podnext config validate
+```
+
+`podnext config validate` reads the file with the same loader the gateway uses, so an unknown key,
+a malformed value or an unreadable duration fails here rather than at startup. A valid file prints
+the values it resolves to and exits 0; an invalid one prints the offending key with its line and
+column and exits 2.
+
+Keys under `[gateway]` are strict: an unknown key is always an error, because a typo that is
+silently ignored becomes a setting that silently does not apply. Sections outside `[gateway]`
+(`[general]`, `[grpc]`, `[api]`, ...) belong to other components and are left to them.
+
 ## Duration values
 
 Durations are strings with a unit:

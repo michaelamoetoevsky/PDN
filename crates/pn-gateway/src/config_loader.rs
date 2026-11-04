@@ -56,6 +56,13 @@ impl GatewayConfig {
         Ok(toml::from_str::<GatewaySection>(s)?.gateway)
     }
 
+    /// Environment variable that names the gateway configuration file.
+    ///
+    /// Explicit by design: there is no implicit search path, so a deployment
+    /// either names its file or gets "no configuration" - rather than a
+    /// surprising file being picked up from the working directory.
+    pub const CONFIG_ENV: &'static str = "PN_GATEWAY_CONFIG";
+
     /// Render this configuration back into the documented TOML shape.
     ///
     /// Symmetric with [`GatewayConfig::from_toml_str`]: the result nests the

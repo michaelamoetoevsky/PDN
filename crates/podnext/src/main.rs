@@ -576,6 +576,17 @@ enum Commands {
     /// [Advanced] Multi-arch build service
     #[command(subcommand)]
     Build(BuildCommands),
+    /// Check a gateway configuration file before deploying it
+    #[command(
+        long_about = "Check a pn-gateway configuration file and print what it resolves to.\n\n\
+        The file is read with the same loader the gateway uses, so an unknown key, a malformed \
+        value or an unreadable duration fails here instead of at startup.\n\n\
+        EXAMPLES:\n  \
+        podnext config validate ./gateway.toml\n  \
+        PN_GATEWAY_CONFIG=./gateway.toml podnext config validate"
+    )]
+    #[command(subcommand)]
+    Config(ConfigCommands),
 
     /// [System] GitOps integration (declarative YAML sync & reconciliation)
     #[command(subcommand)]
@@ -1208,6 +1219,17 @@ enum BackupTypeArg {
     Incremental,
     Differential,
     ConfigOnly,
+}
+
+/// Gateway configuration checks
+#[derive(Subcommand, Debug)]
+#[command(rename_all = "lower")]
+enum ConfigCommands {
+    /// Validate a gateway configuration file and print the values it resolves to
+    Validate {
+        /// Configuration file to check (defaults to $PN_GATEWAY_CONFIG)
+        path: Option<PathBuf>,
+    },
 }
 
 /// Multi-arch build service
@@ -1882,6 +1904,7 @@ async fn execute_command(cmd: Commands) -> Result<()> {
         // Phase 7: Platform Maturity commands
         Commands::Backup(cmd) => execute_backup_command(cmd).await,
         Commands::Build(cmd) => execute_build_command(cmd).await,
+        Commands::Config(cmd) => execute_config_command(cmd),
         Commands::Gitops(cmd) => execute_gitops_command(cmd).await,
         Commands::Dashboard(cmd) => execute_dashboard_command(cmd).await,
         Commands::Docker { container, args } => cmd_docker(container, args).await,
@@ -1912,6 +1935,82 @@ fn output_yaml<T: serde::Serialize>(items: &T) -> Result<()> {
 }
 
 // Container command implementations (existing)
+/// `podnext config validate`: the load site for the gateway configuration.
+///
+/// Before this existed the loader was reachable only from tests, so the only way
+/// to discover that a documented value could not be loaded was to read the code.
+/// The command uses the same entry points the gateway will, and exits non-zero on
+/// a configuration the gateway would refuse to start with.
+fn execute_config_command(cmd: ConfigCommands) -> Result<()> {
+    use pn_gateway::config::GatewayConfig;
+
+    match cmd {
+        ConfigCommands::Validate { path } => {
+            let path = match path.or_else(|| {
+                // Same variable the gateway reads, so the check and the start-up
+                // path cannot disagree about which file is in play.
+                std::env::var(GatewayConfig::CONFIG_ENV)
+                    .ok()
+                    .filter(|p| !p.trim().is_empty())
+                    .map(PathBuf::from)
+            }) {
+                Some(path) => path,
+                None => anyhow::bail!(
+                    "no configuration file given: pass a path or set {}",
+                    GatewayConfig::CONFIG_ENV
+                ),
+            };
+
+            let config = match GatewayConfig::from_toml_file(&path) {
+                Ok(config) => config,
+                Err(err) => {
+                    // Exit code 2 keeps "invalid configuration" distinguishable
+                    // from a generic failure in scripts.
+                    eprintln!("invalid gateway configuration: {err}");
+                    std::process::exit(2);
+                }
+            };
+
+            use pn_gateway::duration_fmt::format_duration;
+            println!("{} is valid", path.display());
+            println!("  name                {}", config.name);
+            println!("  id                  {}", config.gateway_id);
+            println!(
+                "  proot timeout       {}",
+                format_duration(config.proot_config.timeout)
+            );
+            println!(
+                "  retries             {} (delay {})",
+                config.fail_safe.max_retries,
+                format_duration(config.fail_safe.retry_delay)
+            );
+            println!(
+                "  circuit breaker     {} (threshold {}, timeout {})",
+                config.fail_safe.circuit_breaker.enabled,
+                config.fail_safe.circuit_breaker.failure_threshold,
+                format_duration(config.fail_safe.circuit_breaker.timeout)
+            );
+            println!(
+                "  health check        {} every {}",
+                config.health.enabled,
+                format_duration(config.health.check_interval)
+            );
+            println!(
+                "  metrics             {} every {}, retained {}",
+                config.metrics.enabled,
+                format_duration(config.metrics.interval),
+                format_duration(config.metrics.retention)
+            );
+            println!(
+                "  storage cleanup     {} / backup {}",
+                format_duration(config.storage.cleanup_interval),
+                format_duration(config.storage.backup_interval)
+            );
+            Ok(())
+        }
+    }
+}
+
 async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result<()> {
     let container_name = match &name {
         Some(explicit) => explicit.clone(),

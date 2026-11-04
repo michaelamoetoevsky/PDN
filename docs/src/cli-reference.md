@@ -324,6 +324,20 @@ Rebuilding the same tag replaces its image. A *different* tag that derives to th
 (`myapp:v1` then `myapp:v2`) is refused rather than silently destroying the first image; remove the
 container or choose another tag.
 
+### `podnext config validate`
+
+Check a gateway configuration file before deploying it.
+
+```bash
+podnext config validate [PATH]
+PN_GATEWAY_CONFIG=./gateway.toml podnext config validate
+```
+
+Reads the file with the same loader the gateway uses. A valid file prints the resolved values and
+exits 0; an invalid one names the offending key with its line and column and exits 2. Without a
+`PATH` argument the file is taken from `PN_GATEWAY_CONFIG`; if neither is given the command fails,
+because there is no implicit search path.
+
 ### `podnext image remove`
 
 Remove local image.
