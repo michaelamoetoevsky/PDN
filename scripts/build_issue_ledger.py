@@ -48,6 +48,19 @@ CARGO_TARGET = "/data/data/com.termux/files/home/workspace/PDN/target"
 # `needle=None`:              PASS on rc == 0 alone (use only where a symbol is not the point).
 # `cargo=True`:               gated; runs only with --cargo, otherwise SKIPPED.
 CHECKS: list[dict] = [
+    # ── #38: a locally built image is visible to run/list/remove ──────────────
+    dict(issue="38", claim="container detection is metadata-based, not an etc/bin/usr guess",
+         cmd="grep -nF 'pub fn is_container_dir' crates/proot-distro-core/src/container.rs",
+         needle="pub fn is_container_dir"),
+    dict(issue="38", claim="load_containers uses the metadata-based check",
+         cmd="grep -nF 'is_container_dir(&entry.path())' crates/proot-distro-core/src/container.rs",
+         needle="is_container_dir(&entry.path())"),
+    dict(issue="38", claim="the etc/bin/usr probe is not the container test any more",
+         cmd="grep -nF 'let is_valid_rootfs' crates/proot-distro-core/src/container.rs",
+         mode="absent", needle="let is_valid_rootfs"),
+    dict(issue="38", claim="a scratch image with metadata is tested as a container",
+         cmd="grep -nF 'a_scratch_image_with_metadata_is_a_container' crates/proot-distro-core/src/container.rs",
+         needle="a_scratch_image_with_metadata_is_a_container"),
     # ── #34: the documented duration form is the loadable form ────────────────
     dict(issue="34", claim="documented durations (\"60s\", \"500ms\", \"2m\") parse",
          cmd="grep -nF 'pub fn parse_duration' crates/pn-gateway/src/duration_fmt.rs",
