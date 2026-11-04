@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-04 16:35:52Z from `868612a` (docs(qe): report coverage statement, gated guard reasons, isolation no).
+Generated 2026-11-04 16:50:49Z from `710eda4` (fix(qe): --json must emit pure JSON on stdout for '| jq').
 
 ## Why this exists
 
@@ -17,7 +17,7 @@ silently-regressed fix shows up as a FAIL in a document rather than as a surpris
 | **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
 | **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
 
-**Coverage: 35 checks PASS by direct observation · 0 FAIL · 4 SKIPPED**, across 39 checks covering 21 of 32 issues (11 issues have no automated check).
+**Coverage: 37 checks PASS by direct observation · 0 FAIL · 4 SKIPPED**, across 41 checks covering 21 of 32 issues (11 issues have no automated check).
 
 **A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the 4 SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this
 device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind
@@ -64,7 +64,7 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:23:37Z
 
 - [PASS] install validates the container name before creating anything
   - `grep -nF 'validate_container_name' crates/podnext/src/main.rs`
-  - → `1898:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 2931:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;`
+  - → `1925:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 2958:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;`
 
 **#12 [BUG-C2] backup delete deadlocks permanently (tokio RwLock read guard held across write)**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T04:23:41Z
@@ -118,20 +118,26 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T11:04:52Z
 
 - [PASS] build local consumes ARG before the parser rejects it
   - `grep -nF 'fn preprocess_build_args' crates/podnext/src/commands/mod.rs`
-  - → `2119:fn preprocess_build_args(content: &str) -> (String, Vec<(String, String)>) {`
-- [PASS] build local actually executes RUN instead of printing it
-  - `grep -nF 'fn execute_run' crates/podnext/src/commands/mod.rs`
-  - → `2203:fn execute_run(cmd: &str, ctx: &std::path::Path) -> Result<()> {`
+  - → `2304:fn preprocess_build_args(content: &str) -> (String, Vec<(String, String)>) {`
+- [PASS] build local matches a RUN instruction instead of printing it
+  - `grep -nF 'Instr::Run(run_cmd)' crates/podnext/src/commands/mod.rs`
+  - → `2184:            Instr::Run(run_cmd) => {`
+- [PASS] build local delegates RUN to the container engine
+  - `grep -nF 'execute_container(' crates/podnext/src/commands/mod.rs`
+  - → `2196:                    .execute_container(`
+- [PASS] build local fails the build when RUN exits non-zero
+  - `grep -nF 'RUN instruction failed (exit' crates/podnext/src/commands/mod.rs`
+  - → `2202:                    bail!("RUN instruction failed (exit {}): '{}'", code, run_cmd);`
 
 **#18 [BUG-L2] copy/sync expand sparse files to dense allocation**  
 _state_: CLOSED  ·  _labels_: bug, performance  ·  _closed_: 2026-11-04T11:04:53Z
 
 - [PASS] sparse copies probe holes with SEEK_DATA/SEEK_HOLE
   - `grep -nF 'libc::SEEK_DATA' crates/podnext/src/main.rs`
-  - → `3277:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
+  - → `3304:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
 - [PASS] the sparse-copy regression test exists
   - `grep -nF 'fn copy_keeps_sparse_files_sparse' crates/podnext/src/main.rs`
-  - → `3827:    fn copy_keeps_sparse_files_sparse() {`
+  - → `3854:    fn copy_keeps_sparse_files_sparse() {`
 - [SKIPPED] the sparse-copy unit test passes
   - `cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked`
   - → ``
@@ -155,7 +161,7 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:24:00Z
 
 - [PASS] direct-execution detection only fires when -r/--rootfs precedes the command
   - `grep -nF 'pre_dashdash_args' crates/podnext/src/main.rs | head -4`
-  - → `1410:    let pre_dashdash_args = &raw_args[..dashdash_idx]; | 1445:    let has_subcommand = pre_dashdash_args | 1450:        && pre_dashdash_args`
+  - → `1432:    let pre_dashdash_args = &raw_args[..dashdash_idx]; | 1467:    let has_subcommand = pre_dashdash_args | 1472:        && pre_dashdash_args`
 
 **#22 [CI-2] dependency-updates workflow references a nonexistent action (peter-evans/update-github-actions 404s)**  
 _state_: CLOSED  ·  _labels_: bug, github-actions, ci  ·  _closed_: 2026-11-04T04:24:05Z

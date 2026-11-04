@@ -141,9 +141,21 @@ CHECKS: list[dict] = [
     dict(issue="17", claim="build local consumes ARG before the parser rejects it",
          cmd="grep -nF 'fn preprocess_build_args' crates/podnext/src/commands/mod.rs",
          needle="fn preprocess_build_args"),
-    dict(issue="17", claim="build local actually executes RUN instead of printing it",
-         cmd="grep -nF 'fn execute_run' crates/podnext/src/commands/mod.rs",
-         needle="fn execute_run"),
+    # #17 predicate revised during integration: the original check asserted on
+    # `fn execute_run`, which the #29 fix DELETED as dead code - that function was
+    # the defect itself (it ran RUN against the build context instead of the
+    # assembled rootfs). Asserting on a removed symbol inverted the check, so it
+    # now asserts the contract: the RUN arm matches an instruction and delegates
+    # to the container engine against the rootfs, and a non-zero RUN propagates.
+    dict(issue="17", claim="build local matches a RUN instruction instead of printing it",
+         cmd="grep -nF 'Instr::Run(run_cmd)' crates/podnext/src/commands/mod.rs",
+         needle="Instr::Run(run_cmd)"),
+    dict(issue="17", claim="build local delegates RUN to the container engine",
+         cmd="grep -nF 'execute_container(' crates/podnext/src/commands/mod.rs",
+         needle="execute_container("),
+    dict(issue="17", claim="build local fails the build when RUN exits non-zero",
+         cmd="grep -nF 'RUN instruction failed (exit' crates/podnext/src/commands/mod.rs",
+         needle="RUN instruction failed (exit"),
     # #18 copy/sync expand sparse files
     dict(issue="18", claim="sparse copies probe holes with SEEK_DATA/SEEK_HOLE",
          cmd="grep -nF 'libc::SEEK_DATA' crates/podnext/src/main.rs",
