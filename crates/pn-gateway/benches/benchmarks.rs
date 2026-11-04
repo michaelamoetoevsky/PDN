@@ -14,8 +14,6 @@ fn bench_guardrails_evaluation(c: &mut Criterion) {
     let guardrails = GuardrailManager::new(GuardrailConfig::default());
 
     let mut group = c.benchmark_group("guardrails_evaluation");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(50);
 
     group.bench_function("evaluate_request", |b| {
         b.to_async(&rt).iter(|| async {
@@ -32,8 +30,6 @@ fn bench_guardrails_batch_evaluation(c: &mut Criterion) {
     let guardrails = Arc::new(GuardrailManager::new(GuardrailConfig::default()));
 
     let mut group = c.benchmark_group("guardrails_batch_evaluation");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(20);
 
     for batch_size in [1, 10, 50, 100].iter() {
         group.throughput(Throughput::Elements(*batch_size));
@@ -63,8 +59,6 @@ fn bench_fail_safe_circuit_breaker(c: &mut Criterion) {
     let fail_safe = FailSafeManager::new(FailSafeConfig::default());
 
     let mut group = c.benchmark_group("fail_safe_circuit_breaker");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(50);
 
     group.bench_function("execute_success", |b| {
         b.to_async(&rt).iter(|| async {
@@ -98,8 +92,6 @@ fn bench_fail_safe_retry_policy(c: &mut Criterion) {
     });
 
     let mut group = c.benchmark_group("fail_safe_retry_policy");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(20);
 
     group.bench_function("retry_on_failure", |b| {
         b.to_async(&rt).iter(|| async {
@@ -126,8 +118,6 @@ fn bench_fail_safe_bulkhead(c: &mut Criterion) {
     let fail_safe = Arc::new(FailSafeManager::new(FailSafeConfig::default()));
 
     let mut group = c.benchmark_group("fail_safe_bulkhead");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(20);
 
     for concurrent in [1, 5, 10, 20].iter() {
         group.throughput(Throughput::Elements(*concurrent));
@@ -176,8 +166,6 @@ fn bench_health_monitor(c: &mut Criterion) {
     });
 
     let mut group = c.benchmark_group("health_monitor");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(50);
 
     group.bench_function("register_check", |b| {
         b.iter(|| {
@@ -204,8 +192,6 @@ fn bench_metrics_collection(c: &mut Criterion) {
     let metrics = MetricsCollector::new(MetricsConfig::default());
 
     let mut group = c.benchmark_group("metrics_collection");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(50);
 
     group.bench_function("record_counter", |b| {
         b.to_async(&rt).iter(|| async {
@@ -235,14 +221,23 @@ fn bench_metrics_collection(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_guardrails_evaluation,
-    bench_guardrails_batch_evaluation,
-    bench_fail_safe_circuit_breaker,
-    bench_fail_safe_retry_policy,
-    bench_fail_safe_bulkhead,
-    bench_health_monitor,
-    bench_metrics_collection,
-);
+criterion_group! {
+    name = benches;
+    // Defaults for a plain local run. `cargo bench -- --sample-size N --measurement-time S`
+    // still wins: criterion_group! applies .configure_from_args() on top of this config.
+    // That is the whole point of the change - the per-group .sample_size()/.measurement_time()
+    // calls that used to live in the benchmark bodies overrode the command line, so the CI
+    // flags bounded nothing and one benchmark could ask for 750s (observed warning:
+    // "Unable to complete 50 samples in 10.0s ... estimated 750.32 s").
+    config = Criterion::default()
+        .sample_size(20)
+        .measurement_time(Duration::from_secs(3));
+    targets = bench_guardrails_evaluation,
+        bench_guardrails_batch_evaluation,
+        bench_fail_safe_circuit_breaker,
+        bench_fail_safe_retry_policy,
+        bench_fail_safe_bulkhead,
+        bench_health_monitor,
+        bench_metrics_collection,
+}
 criterion_main!(benches);
