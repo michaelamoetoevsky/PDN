@@ -4,6 +4,20 @@
 **Branch:** `dept/qa-ledger` (base `5df9484`)
 **Artifacts:** `scripts/build_issue_ledger.py`, `research/ISSUE_LEDGER.md`, this report.
 
+## 0. Coverage statement (read this first)
+
+From the committed run (source predicates only — `env -u LD_LIBRARY_PATH python3
+scripts/build_issue_ledger.py`, exit 0):
+
+- **(a) PASS by direct observation: 35** — every one executed its predicate against this tree.
+- **(b) SKIPPED (no verdict produced): 4** — the `--cargo` gated behaviour checks, which are not
+  enabled by default and, on this device, cannot run to completion under the memory guard.
+- **(c) FAIL: 0.**
+
+**A SKIPPED check is not evidence the fix works.** Four checks covering four issue-claims returned no
+verdict whatsoever; do not read "35 PASS" as "39 verified". The four that produced no verdict and the
+guard's own reason are in §6.
+
 ## 1. What the mission was
 
 The ledger at `5df9484` claimed *"19 checks PASS, 0 FAIL out of 19 automated checks"* and *"19 issues
@@ -24,9 +38,8 @@ listed as `OPEN` in the committed ledger while GitHub had since closed them.
 | `--json` | no | yes |
 
 New checks were added for the previously-unchecked **closed** issues **#7, #8, #15, #16, #17, #18,
-#30, #31** (16 new source predicates in total). Every one is a real assertion on an exact symbol in
-the current tree — `grep -nF '<exact symbol>'`, a path existence probe, or a TOML/workflow literal.
-None echoes a claim or greps for its own name.
+#30, #31** (16 new source predicates). Each is a real assertion on an exact symbol — `grep -nF
+'<exact symbol>'`, a path existence probe, or a workflow literal — never an echo of a claim.
 
 ## 3. Negative controls (the important part)
 
@@ -42,7 +55,7 @@ sed -i '/^criterion = /d' crates/pn-next/Cargo.toml                             
 sed -i 's/created: &mut HashSet<PathBuf>/created: \&mut Vec<PathBuf>/' crates/proot-distro-core/src/untar.rs  # #16
 ```
 
-Raw run with the four fixes absent (`$HOME/.hermes/cache/scratch/qe-negative.log`):
+Raw run with the four fixes absent (`~/.hermes/cache/scratch/qe-negative.log`):
 
 ```
 #8     the criterion dev-dependency is present                                    FAIL
@@ -54,7 +67,7 @@ checks: 31 PASS, 4 FAIL, 4 SKIPPED (of 39)
 HARNESS_EXIT=1
 ```
 
-Raw run after `git checkout --` restored the four files (`$HOME/.hermes/cache/scratch/qe-final.log`):
+Raw run after `git checkout --` restored the four files (`~/.hermes/cache/scratch/qe-final.log`):
 
 ```
 checks: 35 PASS, 0 FAIL, 4 SKIPPED (of 39)
@@ -63,12 +76,11 @@ written: /data/data/com.termux/files/home/.hermes/cache/scratch/wt-dept-qe/resea
 HARNESS_EXIT=0
 ```
 
-**A first attempt at this control caught the exact class of bug the mission warned about.** The `#31`
+**A first attempt at this control caught the exact bug class the mission warned about.** The `#31`
 predicate was `grep -nF 'const DEADLINE'`, and `sed 's/const DEADLINE/const DEADLINE_SAB/'` left the
 substring `const DEADLINE` intact, so the check stayed PASS while the fix was gone — a false green.
-The predicate was hardened to the full declaration
-`const DEADLINE: Duration = Duration::from_secs(30);`, after which the same sabotage produced FAIL.
-This is why every source predicate asserts on a full symbol, never a prefix.
+The predicate was hardened to the full declaration `const DEADLINE: Duration = Duration::from_secs(30);`,
+after which the same sabotage produced FAIL. Every source predicate now asserts on a full symbol.
 
 ## 4. The PASS / FAIL / SKIPPED contract
 
@@ -76,40 +88,45 @@ This is why every source predicate asserts on a full symbol, never a prefix.
 |---|---|---|
 | **PASS** | predicate held — the exact symbol is present | none |
 | **FAIL** | predicate did not hold — a fix that is gone, or a check that could not hold | **1** |
-| **SKIPPED** | no automated check exists (open issue), or a cargo-gated check was not enabled | none — and it is **never** counted as a pass |
+| **SKIPPED** | no automated check exists (open issue), or a cargo-gated check was not enabled | none — **never** a pass |
 
-Implementation guarantees:
-
-- A check is assigned PASS/FAIL/SKIPPED **only after an attempt**. A command that times out or raises
-  is recorded as `SKIPPED` with the reason, never as PASS.
-- Gated `cargo` checks are `SKIPPED` by default and run only under `--cargo`.
-- The process exits `1` when any check is FAIL, otherwise `0`; `2` if issue metadata cannot be read.
+Guarantees: a check is assigned a verdict **only after an attempt**; a command that times out or raises
+is `SKIPPED` with the reason, never PASS; the process exits `1` on any FAIL, else `0` (`2` if issue
+metadata cannot be read).
 
 ## 5. CI usage
 
 ```sh
 export PATH="$HOME/.hermes/bin:$PATH"
-# source predicates only — fast, read-only, safe on Android:
-env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py
-# machine-readable summary; jq .checks.fail is the gate:
+env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py                 # source predicates
 env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py --json | jq .checks
-# opt-in behaviour checks: build, and are flock-serialised against the other departments:
-env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py --cargo
+env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py --cargo         # + gated behaviour checks
 ```
 
 `--json` emits `{"checks":{"pass":N,"fail":N,"skipped":N,"total":N},"issues":{...},"failures":[...]}`.
-Every run rewrites `research/ISSUE_LEDGER.md`, so the document cannot drift from the code or from the
-issue tracker again. The harness resolves the repo from its own path, so it works in a worktree/clone.
+Every run rewrites `research/ISSUE_LEDGER.md`, so the document cannot drift. The harness resolves the
+repo from its own path, so it works in a worktree or clone. Gated cargo checks run under the mandated
+guard (`flock … heavy --budget-mb 2000 --min-avail-mb 700 -- env -u LD_LIBRARY_PATH cargo test …`).
 
-Gated cargo checks run under the mandated guard:
+## 6. Gated (`--cargo`) behaviour checks — observed outcomes and guard reasons
 
-```
-flock $HOME/.hermes/cache/scratch/cargo-mutex.lock -c \
-  'CARGO_TARGET_DIR=/data/data/com.termux/files/home/workspace/PDN/target \
-   heavy --budget-mb 2000 --min-avail-mb 700 -- env -u LD_LIBRARY_PATH cargo test -p <crate> --locked'
-```
+These four run only with `--cargo`; the committed ledger reports them SKIPPED. Their behaviour was
+probed in an experimental run; the raw guard status files are quoted rather than summarised:
 
-## 6. Residual uncovered issues (11) and why each cannot be checked automatically
+| check (issue) | command | observed | guard reason (from `~/.hermes/logs/heavy/*.status`) |
+|---|---|---|---|
+| #16 deep-recursion test | `cargo test -p proot-distro-core --test deep_fs_recursion --locked` | **completed, exit 0** — `test result: ok. 3 passed; 0 failed` | `outcome=completed exit_code=0 reason=exited normally peak_rss_mb=21` |
+| #31 abnormal-restart test | `cargo test -p pn-next --test supervisor_e2e test_restart_policy_on_abnormal --locked` | **completed, exit 0** — `1 passed; 18 filtered out` | `outcome=completed exit_code=0 reason=exited normally peak_rss_mb=1` |
+| #25 bench compile | `cargo bench -p pn-next --no-run --locked` | **not observed** — guard killed it | `outcome=killed exit_code=137 reason=group RSS 2015MB exceeded budget 2000MB` |
+| #18 sparse-copy unit test | `cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked` | **not observed** — target corrected, not re-run | first form `--lib` errored (`error: no library targets found in package podnext`, exit 101); `--bins` form left un-run |
+
+That experimental exercise also exposed two dishonesty paths in my own gated checks, both fixed before
+delivery: the memguard over-budget kill prints `memguard: killed at NMB` (a different summary shape
+than `completed`), which was surfacing as FAIL; and the summary appends ` peak=NMB dur=Ns` to the
+reason, so an exact-equality test wrongly treated every completed run as guard-stopped. Gated checks
+now key on the child's exit status and treat **any** guard stop as SKIPPED with the guard's reason.
+
+## 7. Residual uncovered issues (11) and why each cannot be checked automatically
 
 All eleven are **OPEN**; there is no landed fix, so a fix-present predicate has nothing to assert.
 
@@ -127,17 +144,25 @@ All eleven are **OPEN**; there is no landed fix, so a fix-present predicate has 
 | 28 | Empty command yields a null Compose service in `export_to_compose`; no fix landed. |
 | 29 | `podnext build local` reports success without an image; no fix landed. |
 
-For `#27` a drift check *is* mechanically possible (intersect the keys in `docs/src/configuration.md`
-with `crates/pn-gateway/src/config.rs`); it is deferred rather than faked because there is no fix yet
-whose presence it would assert.
-
-## 7. Proven vs. still unverified
+## 8. Proven vs. still unverified
 
 - **Proven:** the four sabotaged fixes are load-bearing — removing them flips the harness to FAIL and
-  exit 1. The 35 source predicates execute, evaluate, and pass on `5df9484`. The harness emits
-  PASS/FAIL/SKIPPED counts, a non-zero exit on FAIL, and `--json`.
-- **Unverified here:** the four `cargo`-gated behaviour checks (`#16`, `#18`, `#25`, `#31` test
-  binaries) were left `SKIPPED` in the default run because building under the shared memory budget was
-  out of scope for this pass; they are wired and ready under `--cargo`.
-- **Honest limits:** source predicates prove a symbol exists, not that it behaves. The behaviour behind
-  `#16`/`#18`/`#31` is proven by their tests, which is what the gated checks invoke.
+  exit 1; restoring them returns PASS and exit 0. The 35 source predicates execute, evaluate and pass
+  on this tree. The harness emits PASS/FAIL/SKIPPED counts, a non-zero exit on FAIL, and `--json`.
+- **Still unverified (must not be read as verified):** the 4 gated behaviour checks — see §0 and §6.
+  The `#25` bench compile has **no** verdict (guard-killed); `#18`'s sparse test has **no** verdict
+  (target corrected, deliberately not re-run). `#16` and `#31` were observed to pass in the
+  experimental run, but the committed ledger reports them SKIPPED because they did not run in the
+  delivered default invocation.
+- **Honest limits:** a source predicate proves a symbol exists, not that it behaves. The behaviour
+  behind `#16`/`#18`/`#31`/`#25` is what the gated checks exist to prove; on this Android host the
+  memory guard is the binding constraint.
+
+## 9. Isolation note
+
+The mission's very first probe ran the old harness in the **main integration checkout**
+(`~/workspace/PDN`) before this worktree existed, and rewrote `research/ISSUE_LEDGER.md` there
+(mtime 22:42). The Integrator restored that file and kept the stray as
+`~/.hermes/cache/scratch/stray-ledger-from-qe-kickoff.md`. All subsequent work — every write, every
+sabotage, every harness run — happened under `$HOME/.hermes/cache/scratch/wt-dept-qe`. Nothing under
+`~/workspace/PDN` was touched after that first probe.
