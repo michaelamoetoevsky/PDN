@@ -2678,64 +2678,237 @@ async fn cmd_image_history(image: String, no_trunc: bool, format: OutputFormat) 
     Ok(())
 }
 
-async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<()> {
-    eprintln!("Inspecting images: {:?}", images);
-    let image_mgr = proot_distro_core::ImageManager::new()?;
+/// Read the `metadata.json` of a locally built image from the container store.
+///
+/// A built image *is* a container directory (#29), so `image inspect` has to look
+/// there as well as in `~/.podnext/images`; otherwise an image that `build local`
+/// just created is invisible to the command that is supposed to describe it. The
+/// store key is the derived, colon-free name (#35), and the original reference is
+/// recorded inside the metadata.
+fn read_store_metadata(
+    containers_dir: &std::path::Path,
+    reference: &str,
+) -> Option<(std::path::PathBuf, serde_json::Value)> {
+    // An image reference is a name, not a path: `..`, a separator or anything
+    // else path-shaped is refused outright rather than reinterpreted as a store
+    // entry (`demo/../other` must not silently resolve to `other`).
+    if reference.contains('/') || reference.contains('\\') || reference.contains("..") {
+        return None;
+    }
+    // Accept the reference (`app:latest`) or the store key (`app`), so the command
+    // works whichever name the user has in hand.
+    let candidates = [
+        proot_distro_core::names::store_key(reference),
+        reference.to_string(),
+    ];
+    for candidate in candidates {
+        // The same validator the rest of the CLI uses, so `..`, a path or any
+        // other oddity is not silently reinterpreted as a store entry.
+        if proot_distro_core::NameValidator::new()
+            .validate_container_name(&candidate)
+            .is_err()
+        {
+            continue;
+        }
+        let dir = containers_dir.join(&candidate);
+        let Ok(text) = std::fs::read_to_string(dir.join("metadata.json")) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        return Some((dir, json));
+    }
+    None
+}
 
-    let mut results = Vec::new();
+async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<()> {
+    let image_mgr = proot_distro_core::ImageManager::new()?;
+    let containers_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".podnext")
+        .join("containers");
+
+    // Two sources, reported separately because they describe different things:
+    // `~/.podnext/images` holds pulled images, and the container store holds what
+    // `build local` produced (#29). Neither knowing the reference used to print
+    // nothing and exit 0 - a command whose purpose is to report on an image
+    // reported success while reporting nothing.
+    let mut pulled = Vec::new();
+    let mut built: Vec<(PathBuf, serde_json::Value)> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+
     for image_ref in images {
-        match image_mgr.inspect(&image_ref) {
-            Ok(info) => results.push(info),
-            Err(e) => eprintln!("Failed to inspect {}: {}", image_ref, e),
+        if let Ok(info) = image_mgr.inspect(&image_ref) {
+            pulled.push(info);
+            continue;
+        }
+        match read_store_metadata(&containers_dir, &image_ref) {
+            Some(entry) => built.push(entry),
+            None => missing.push(image_ref),
         }
     }
 
-    match format {
-        OutputFormat::Table => {
-            // For table, show summary
-            #[derive(Tabled, Serialize)]
-            struct InspectRow {
-                #[tabled(rename = "IMAGE")]
-                image: String,
-                #[tabled(rename = "ID")]
-                id: String,
-                #[tabled(rename = "CREATED")]
-                created: String,
-                #[tabled(rename = "SIZE")]
-                size: String,
-                #[tabled(rename = "ARCH")]
-                arch: String,
-                #[tabled(rename = "OS")]
-                os: String,
-            }
+    if !missing.is_empty() {
+        bail!(
+            "no such image: {}. Looked in ~/.podnext/images and in the container store \
+             (~/.podnext/containers/<name>), which is where `podnext build local` puts an image",
+            missing.join(", ")
+        );
+    }
 
-            let rows: Vec<InspectRow> = results
-                .iter()
-                .map(|i| InspectRow {
-                    image: i.repo_tags.first().cloned().unwrap_or_default(),
-                    id: format!("{}...", &i.id[..12.min(i.id.len())]),
-                    created: i.created.format("%Y-%m-%d %H:%M:%S").to_string(),
-                    size: format_size(i.size),
-                    arch: i.architecture.clone(),
-                    os: i.os.clone(),
-                })
-                .collect();
-            output_table(&rows);
+    if !built.is_empty() {
+        match format {
+            OutputFormat::Json => {
+                let values: Vec<&serde_json::Value> = built.iter().map(|(_, m)| m).collect();
+                output_json(&values)?;
+            }
+            OutputFormat::Yaml => {
+                for (_, meta) in &built {
+                    output_yaml(meta)?;
+                }
+            }
+            OutputFormat::Table => {
+                #[derive(Tabled, Serialize)]
+                struct BuiltRow {
+                    #[tabled(rename = "IMAGE")]
+                    image: String,
+                    #[tabled(rename = "STORED AS")]
+                    stored_as: String,
+                    #[tabled(rename = "BASE")]
+                    base: String,
+                    #[tabled(rename = "CREATED")]
+                    created: String,
+                }
+                let rows: Vec<BuiltRow> = built
+                    .iter()
+                    .map(|(dir, meta)| BuiltRow {
+                        image: meta
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        stored_as: dir
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                        base: meta
+                            .get("image")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        created: meta
+                            .get("created_at")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                    })
+                    .collect();
+                output_table(&rows);
+            }
+            OutputFormat::Text => {
+                for (dir, meta) in &built {
+                    println!(
+                        "Image: {} (built locally, stored as '{}')",
+                        meta.get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default(),
+                        dir.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    println!("  Stored at: {}", dir.display());
+                    for (label, key) in [
+                        ("Base image", "image"),
+                        ("Created", "created_at"),
+                        ("Working dir", "working_dir"),
+                        ("User (recorded, not enforced)", "user"),
+                    ] {
+                        if let Some(value) = meta.get(key).and_then(|v| v.as_str()) {
+                            if !value.is_empty() {
+                                println!("  {label}: {value}");
+                            }
+                        }
+                    }
+                    if let Some(ports) = meta.get("exposed_ports").and_then(|v| v.as_array()) {
+                        if !ports.is_empty() {
+                            let list = ports
+                                .iter()
+                                .filter_map(|p| p.as_u64())
+                                .map(|p| p.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            println!("  Exposed (recorded, no host forwarding): {list}");
+                        }
+                    }
+                    if let Some(cmd) = meta.get("cmd").and_then(|v| v.as_array()) {
+                        if !cmd.is_empty() {
+                            let list = cmd
+                                .iter()
+                                .filter_map(|c| c.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            println!("  Cmd: {list}");
+                        }
+                    }
+                    println!();
+                }
+            }
         }
-        OutputFormat::Json => output_json(&results)?,
-        OutputFormat::Yaml => output_yaml(&results)?,
-        OutputFormat::Text => {
-            for i in results {
-                println!(
-                    "Image: {}",
-                    i.repo_tags.first().cloned().unwrap_or_default()
-                );
-                println!("  ID: {}", i.id);
-                println!("  Created: {}", i.created.format("%Y-%m-%d %H:%M:%S"));
-                println!("  Size: {}", format_size(i.size));
-                println!("  Architecture: {}", i.architecture);
-                println!("  OS: {}", i.os);
-                println!();
+    }
+
+    // Only when a pulled image was actually found: otherwise the store output
+    // above is the whole answer, and an empty `[]` (or an empty table) after it
+    // would read as a second, contradictory result.
+    if !pulled.is_empty() {
+        match format {
+            OutputFormat::Table => {
+                // For table, show summary
+                #[derive(Tabled, Serialize)]
+                struct InspectRow {
+                    #[tabled(rename = "IMAGE")]
+                    image: String,
+                    #[tabled(rename = "ID")]
+                    id: String,
+                    #[tabled(rename = "CREATED")]
+                    created: String,
+                    #[tabled(rename = "SIZE")]
+                    size: String,
+                    #[tabled(rename = "ARCH")]
+                    arch: String,
+                    #[tabled(rename = "OS")]
+                    os: String,
+                }
+
+                let rows: Vec<InspectRow> = pulled
+                    .iter()
+                    .map(|i| InspectRow {
+                        image: i.repo_tags.first().cloned().unwrap_or_default(),
+                        id: format!("{}...", &i.id[..12.min(i.id.len())]),
+                        created: i.created.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        size: format_size(i.size),
+                        arch: i.architecture.clone(),
+                        os: i.os.clone(),
+                    })
+                    .collect();
+                if !rows.is_empty() {
+                    output_table(&rows);
+                }
+            }
+            OutputFormat::Json => output_json(&pulled)?,
+            OutputFormat::Yaml => output_yaml(&pulled)?,
+            OutputFormat::Text => {
+                for i in pulled {
+                    println!(
+                        "Image: {}",
+                        i.repo_tags.first().cloned().unwrap_or_default()
+                    );
+                    println!("  ID: {}", i.id);
+                    println!("  Created: {}", i.created.format("%Y-%m-%d %H:%M:%S"));
+                    println!("  Size: {}", format_size(i.size));
+                    println!("  Architecture: {}", i.architecture);
+                    println!("  OS: {}", i.os);
+                    println!();
+                }
             }
         }
     }
@@ -4003,5 +4176,40 @@ mod tests {
         // A host path containing a colon must not be read as a container name.
         assert_eq!(split_spec("/data/a:b/c"), (None, "/data/a:b/c"));
         assert_eq!(split_spec("./rel/x"), (None, "./rel/x"));
+    }
+
+    /// `image inspect` must find what `build local`'s store holds, under the tag
+    /// or under the derived store key (#29 / #35), and must not invent an answer
+    /// for a reference neither source knows.
+    #[test]
+    fn store_metadata_lookup_accepts_tag_and_key_and_reports_absence() {
+        let store = tempfile::tempdir().unwrap();
+        let dir = store.path().join("demoinspect");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("metadata.json"),
+            r#"{"name":"demoinspect:latest","image":"scratch","exposed_ports":[8080]}"#,
+        )
+        .unwrap();
+
+        // By tag: the store key is the colon-free form.
+        let (found_dir, meta) = read_store_metadata(store.path(), "demoinspect:latest")
+            .expect("the tag must resolve to its store key");
+        assert_eq!(found_dir.file_name().unwrap(), "demoinspect");
+        assert_eq!(meta["exposed_ports"][0], 8080);
+
+        // By store key.
+        assert!(read_store_metadata(store.path(), "demoinspect").is_some());
+
+        // Unknown reference: nothing, so the caller reports it instead of exiting 0
+        // with no output.
+        assert!(read_store_metadata(store.path(), "nosuchimg").is_none());
+
+        // A reference that could escape the store is not a path lookup.
+        assert!(read_store_metadata(store.path(), "../demoinspect").is_none());
+
+        // A directory without metadata.json is not an image.
+        std::fs::create_dir_all(store.path().join("empty")).unwrap();
+        assert!(read_store_metadata(store.path(), "empty").is_none());
     }
 }
