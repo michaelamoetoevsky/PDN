@@ -2037,9 +2037,48 @@ pub async fn execute_build_command(cmd: crate::BuildCommands) -> Result<()> {
 }
 
 async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathBuf) -> Result<()> {
+    let target_tag = tag.unwrap_or_else(|| "custom:latest".to_string());
+    // `build_local_image` performs the build and only returns once the image is
+    // on disk. The success line below is unreachable on failure, so a printed
+    // "Successfully built" is now always backed by a real image (#29).
+    let image_dir = build_local_image(&target_tag, file, &path, None).await?;
+
+    println!("\nSuccessfully built image '{}'", target_tag);
+    println!("  Image stored at {}", image_dir.display());
+    println!("  Run it with: podnext run {}", target_tag);
+    Ok(())
+}
+
+/// Materialise a Dockerfile build into the runtime's image store.
+///
+/// A "built image" in this runtime *is* a container directory under
+/// `~/.podnext/containers/<tag>/rootfs` — what `ContainerManager::load_containers`
+/// scans, and what `podnext run <tag>` / `podnext image ls` read. This function
+/// produces exactly that and returns its directory, so a returned `Ok` means the
+/// image is really runnable. `containers_dir` overrides the store root for tests.
+///
+/// The previous implementation diffed the raw build context against an empty
+/// base, printed the blob digest, deleted the blob and then claimed success while
+/// writing nothing — a silent false success. It also printed that success line
+/// even when the context path did not exist, i.e. after doing no work at all.
+async fn build_local_image(
+    tag: &str,
+    file: Option<PathBuf>,
+    path: &std::path::Path,
+    containers_dir: Option<PathBuf>,
+) -> Result<PathBuf> {
     let dockerfile_path = file.unwrap_or_else(|| path.join("Dockerfile"));
+    // The old code guarded the only work it did with `if path.exists()` and then
+    // printed success regardless; a missing context must be a hard error. Checked
+    // first so it is reported ahead of the derived Dockerfile path.
+    if !path.exists() {
+        bail!(
+            "build context '{}' does not exist; pass a directory containing the Dockerfile",
+            path.display()
+        );
+    }
     if !dockerfile_path.exists() {
-        anyhow::bail!("Dockerfile not found at '{}'", dockerfile_path.display());
+        bail!("Dockerfile not found at '{}'", dockerfile_path.display());
     }
 
     println!("Parsing Dockerfile: {}", dockerfile_path.display());
@@ -2057,59 +2096,191 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
     }
     let instructions = proot_distro_core::dockerfile::parse_dockerfile(&content)?;
     println!("Parsed {} instruction(s):", instructions.len());
-
-    let mut base_image = String::new();
     for (idx, inst) in instructions.iter().enumerate() {
         println!("  [{}/{}] {:?}", idx + 1, instructions.len(), inst);
-        if let proot_distro_core::dockerfile::DockerfileInstruction::From { image, tag, .. } = inst
-        {
-            base_image = if let Some(t) = tag {
-                format!("{}:{}", image, t)
-            } else {
-                image.clone()
-            };
-        }
     }
 
-    let target_tag = tag.unwrap_or_else(|| "custom:latest".to_string());
-    println!("\nTarget image tag: {}", target_tag);
-    if !base_image.is_empty() {
-        println!("Base image: {}", base_image);
-    }
+    // Resolve the base image from the last FROM. Without one there is nothing to
+    // build on, so refuse rather than fabricate a result.
+    let base_image = instructions
+        .iter()
+        .rev()
+        .find_map(|inst| match inst {
+            proot_distro_core::dockerfile::DockerfileInstruction::From { image, tag, .. } => {
+                Some(match tag {
+                    Some(t) if !t.is_empty() => format!("{}:{}", image, t),
+                    _ => image.clone(),
+                })
+            }
+            _ => None,
+        })
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Dockerfile has no FROM instruction; cannot build"))?;
+    println!("\nTarget image tag: {}", tag);
+    println!("Base image: {}", base_image);
 
-    // RUN instructions execute with `sh -c` in the build context. ENV/WORKDIR
-    // are not applied here: there is no assembled rootfs to apply them to.
-    let ctx = if path.exists() {
-        path.as_path()
+    let containers_dir = containers_dir.unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".podnext")
+            .join("containers")
+    });
+    // The tag is the store key so `podnext run <tag>` finds the result. A tag
+    // like `my-app:latest` is a valid directory name.
+    let container_dir = containers_dir.join(tag);
+    if container_dir.exists() {
+        // Rebuilding a tag replaces its image; start clean so repeat builds do
+        // not stack layers on the previous result.
+        std::fs::remove_dir_all(&container_dir).with_context(|| {
+            format!("failed to clear existing image '{}'", container_dir.display())
+        })?;
+    }
+    let rootfs = container_dir.join("rootfs");
+
+    if base_image == "scratch" {
+        // `FROM scratch` is Docker's empty base: the Dockerfile supplies the
+        // whole filesystem. No registry pull (and, as in Docker, no shell for RUN).
+        std::fs::create_dir_all(&rootfs)?;
     } else {
-        std::path::Path::new(".")
-    };
+        println!("Pulling base image '{}'...", base_image);
+        crate::native::install_image_native(&base_image, tag, true, Some(rootfs.clone())).await?;
+    }
+
+    // Apply the Dockerfile on top of the base rootfs, in order. `env` and
+    // `workdir` accumulate the way Docker scopes them for later RUNs.
+    let mut env: Vec<(String, String)> = Vec::new();
+    let mut workdir: Option<String> = None;
+    let mut cmd: Vec<String> = Vec::new();
+    let mut labels: Vec<(String, String)> = Vec::new();
+    // Constructed lazily: only RUN needs the proot engine, which needs a
+    // multi-thread runtime. A metadata-only (scratch) build must not require it.
+    let mut mgr: Option<proot_distro_core::ContainerManager> = None;
+
     for inst in &instructions {
-        if let proot_distro_core::dockerfile::DockerfileInstruction::Run(cmd) = inst {
-            execute_run(cmd, ctx)?;
+        use proot_distro_core::dockerfile::DockerfileInstruction as Instr;
+        match inst {
+            Instr::From { .. } => {}
+            Instr::Copy { src, dest } | Instr::Add { src, dest } => {
+                println!("Copy {} -> {}", src, dest);
+                copy_into_rootfs(path, src, dest, &rootfs)?;
+            }
+            Instr::Env { key, value } => {
+                env.retain(|(k, _)| k != key);
+                env.push((key.clone(), value.clone()));
+            }
+            Instr::Workdir(dir) => {
+                let dir = dir.trim_matches('"').to_string();
+                let abs = if dir.starts_with('/') {
+                    dir
+                } else {
+                    format!("/{}", dir)
+                };
+                std::fs::create_dir_all(rootfs.join(abs.trim_start_matches('/')))?;
+                workdir = Some(abs);
+            }
+            Instr::Run(run_cmd) => {
+                println!("Running: {}", run_cmd);
+                if mgr.is_none() {
+                    mgr = Some(proot_distro_core::ContainerManager::new()?);
+                }
+                let mgr = mgr.as_ref().unwrap();
+                let mut c = mgr.get(tag).await?;
+                c.config.env_vars = env.clone();
+                if let Some(wd) = &workdir {
+                    c.config.working_dir = Some(wd.clone());
+                }
+                let code = mgr
+                    .execute_container(
+                        &c,
+                        vec!["/bin/sh".to_string(), "-c".to_string(), run_cmd.clone()],
+                    )
+                    .await?;
+                if code != 0 {
+                    bail!("RUN instruction failed (exit {}): '{}'", code, run_cmd);
+                }
+            }
+            Instr::Cmd(args) | Instr::Entrypoint(args) => {
+                if !args.is_empty() {
+                    cmd = args.clone();
+                }
+            }
+            Instr::Label { key, value } => {
+                labels.retain(|(k, _)| k != key);
+                labels.push((key.clone(), value.clone()));
+            }
+            Instr::Expose(_) | Instr::User(_) => {}
         }
     }
 
-    let scratch_dir = proot_distro_core::paths::temp_base();
-    let out_layer_tar = scratch_dir.join(format!("build_layer_{}.tar.gz", uuid::Uuid::new_v4()));
+    // Record image metadata so `podnext image ls` / `inspect` can see the result.
+    let metadata = serde_json::json!({
+        "name": tag,
+        "image": base_image,
+        "tag": tag.rsplit(':').next().unwrap_or(tag),
+        "rootfs": rootfs.to_string_lossy(),
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "status": "Stopped",
+        "cmd": cmd,
+        "env": env.iter().cloned().collect::<HashMap<_, _>>(),
+        "working_dir": workdir,
+        "labels": labels.iter().cloned().collect::<HashMap<_, _>>(),
+    });
+    std::fs::write(
+        container_dir.join("metadata.json"),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
 
-    if path.exists() {
-        let dummy_base = tempfile::tempdir()?;
-        let (digest, size) = proot_distro_core::layer_diff::compute_layer_diff(
-            dummy_base.path(),
-            &path,
-            &out_layer_tar,
-        )?;
-        println!(
-            "Generated layer blob: digest={}, size={} bytes",
-            digest, size
-        );
-        if out_layer_tar.exists() {
-            let _ = std::fs::remove_file(out_layer_tar);
+    // Success is claimed only once the image is actually on disk.
+    if !rootfs.is_dir() {
+        bail!("build finished but image rootfs '{}' is missing", rootfs.display());
+    }
+    Ok(container_dir)
+}
+
+/// Copy a build-context path into the image rootfs (Dockerfile COPY/ADD).
+///
+/// Handles a single source path (file or directory), which is what the parser
+/// produces; globs and `--from=` stage copies are not supported.
+fn copy_into_rootfs(ctx: &std::path::Path, src: &str, dest: &str, rootfs: &std::path::Path) -> Result<()> {
+    let src_path = ctx.join(src);
+    if !src_path.exists() {
+        bail!("COPY/ADD source '{}' not found in build context", src);
+    }
+    let mut dest_path = if let Some(stripped) = dest.strip_prefix('/') {
+        rootfs.join(stripped)
+    } else {
+        rootfs.join(dest)
+    };
+    // A directory (or `.`/`/`) destination means "keep the source's name".
+    if dest.ends_with('/') || dest == "." || dest == "/" {
+        let base = src_path
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("invalid COPY/ADD source '{}'", src))?;
+        dest_path = dest_path.join(base);
+    }
+    if src_path.is_dir() {
+        copy_dir_all(&src_path, &dest_path)
+    } else {
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&src_path, &dest_path)
+            .with_context(|| format!("failed to copy '{}' into image", src))?;
+        Ok(())
+    }
+}
+
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), &to)?;
         }
     }
-
-    println!("\nSuccessfully built image '{}'", target_tag);
     Ok(())
 }
 
@@ -2200,21 +2371,6 @@ fn substitute_build_args(content: &str, args: &[(String, String)]) -> String {
         i += ch.len_utf8();
     }
     out
-}
-
-/// Execute one `RUN` instruction with `sh -c` in the build context directory.
-fn execute_run(cmd: &str, ctx: &std::path::Path) -> Result<()> {
-    println!("Running: {}", cmd);
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(ctx)
-        .status()
-        .with_context(|| format!("failed to execute RUN instruction '{}'", cmd))?;
-    if !status.success() {
-        bail!("RUN instruction failed ({}): '{}'", status, cmd);
-    }
-    Ok(())
 }
 
 async fn cmd_build_submit(spec: PathBuf, _format: crate::OutputFormat) -> Result<()> {
@@ -2751,25 +2907,67 @@ mod build_local_tests {
         assert_eq!(cmds, vec!["echo".to_string()]);
     }
 
-    #[test]
-    fn run_instructions_execute_in_order_in_context() {
-        let ctx = tempfile::tempdir().unwrap();
-        let content = "FROM alpine\nRUN echo one > a.txt\nRUN echo two >> a.txt\n";
-        let (cmds, _) = run_plan(content);
-        for c in &cmds {
-            execute_run(c, ctx.path()).unwrap();
-        }
-        let got = std::fs::read_to_string(ctx.path().join("a.txt")).unwrap();
-        assert_eq!(got, "one\ntwo\n");
-    }
-
-    #[test]
-    fn failing_run_propagates() {
-        let ctx = tempfile::tempdir().unwrap();
-        let err = execute_run("exit 7", ctx.path()).unwrap_err();
+    // Regression for #29: a missing build context must fail hard and write
+    // nothing. Before the fix `cmd_build_local` guarded all real work behind
+    // `if path.exists()`, skipped it, printed "Successfully built image" and
+    // exited 0. The contract asserted here is "Err returned AND the store is
+    // untouched" — not one exact diagnostic string ("context missing" and
+    // "Dockerfile missing" are both acceptable hard errors).
+    #[tokio::test]
+    async fn missing_context_is_a_hard_error_and_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("no-such-context");
+        let result = build_local_image(
+            "bse-missing:latest",
+            None,
+            &missing,
+            Some(store.path().to_path_buf()),
+        )
+        .await;
+        let err = result.expect_err("missing context must be an error, not a success");
         assert!(
-            err.to_string().contains("RUN instruction failed"),
+            err.to_string().contains("does not exist")
+                || err.to_string().contains("Dockerfile not found"),
             "unexpected error: {err}"
         );
+        assert!(
+            !store.path().join("bse-missing:latest").exists(),
+            "a failed build must not register an image"
+        );
+    }
+
+    // Regression for #29: on success the built image must actually be present in
+    // the image store as a runnable container (a container dir with a rootfs and
+    // metadata.json) — not merely reported. `FROM scratch` keeps this offline.
+    #[tokio::test]
+    async fn successful_build_registers_a_runnable_image() {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::write(
+            ctx.path().join("Dockerfile"),
+            "FROM scratch\nCOPY app.txt /app.txt\n",
+        )
+        .unwrap();
+        std::fs::write(ctx.path().join("app.txt"), "static app content\n").unwrap();
+        let store = tempfile::tempdir().unwrap();
+
+        let dir = build_local_image(
+            "bse-scratch:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(dir, store.path().join("bse-scratch:latest"));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("rootfs/app.txt")).unwrap(),
+            "static app content\n"
+        );
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(meta["name"], "bse-scratch:latest");
     }
 }
