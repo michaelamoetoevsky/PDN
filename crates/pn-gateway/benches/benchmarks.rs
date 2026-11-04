@@ -221,6 +221,12 @@ fn bench_metrics_collection(c: &mut Criterion) {
     group.finish();
 }
 
+// The CI job bounds these runs with `--sample-size` and `--measurement-time`
+// (see `.github/workflows/benchmark.yml`); the measured JSON is uploaded as an
+// artifact named `benchmark-results`, which `.github/workflows/benchmark-report.yml`
+// downloads by run id and posts back onto the pull request. Both halves of that
+// handshake have to agree on the artifact name and the run id, so a rename on one
+// side silently produces a report with nothing in it.
 criterion_group! {
     name = benches;
     // Defaults for a plain local run. `cargo bench -- --sample-size N --measurement-time S`
