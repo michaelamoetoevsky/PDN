@@ -48,6 +48,38 @@ CARGO_TARGET = "/data/data/com.termux/files/home/workspace/PDN/target"
 # `needle=None`:              PASS on rc == 0 alone (use only where a symbol is not the point).
 # `cargo=True`:               gated; runs only with --cargo, otherwise SKIPPED.
 CHECKS: list[dict] = [
+    # ── #34: the documented duration form is the loadable form ────────────────
+    dict(issue="34", claim="documented durations (\"60s\", \"500ms\", \"2m\") parse",
+         cmd="grep -nF 'pub fn parse_duration' crates/pn-gateway/src/duration_fmt.rs",
+         needle="pub fn parse_duration"),
+    dict(issue="34", claim="every Duration field uses the documented-form serde adapter",
+         cmd="grep -cF 'serde(with = \"crate::duration_fmt\")' crates/pn-gateway/src/config.rs",
+         needle=None),
+    dict(issue="34", claim="the documented form is tested against a documentation-shaped file",
+         cmd="grep -nF 'documented_duration_strings_load' crates/pn-gateway/tests/config_loader.rs",
+         needle="documented_duration_strings_load"),
+    dict(issue="34", claim="a load/save round-trip exists, so what is written can be read back",
+         cmd="grep -nF 'pub fn to_toml_str' crates/pn-gateway/src/config_loader.rs",
+         needle="pub fn to_toml_str"),
+    # ── #35: a tag is not a path component ────────────────────────────────────
+    dict(issue="35", claim="one shared rule turns a reference into a store key",
+         cmd="grep -nF 'pub fn store_key' crates/proot-distro-core/src/names.rs",
+         needle="pub fn store_key"),
+    dict(issue="35", claim="build local stores under the derived key, not the raw tag",
+         cmd="grep -nF 'names::store_key(tag)' crates/podnext/src/commands/mod.rs",
+         needle="names::store_key(tag)"),
+    dict(issue="35", claim="the raw tag is no longer used as a directory name",
+         cmd="grep -nF 'containers_dir.join(tag)' crates/podnext/src/commands/mod.rs",
+         mode="absent", needle="containers_dir.join(tag)"),
+    dict(issue="35", claim="the RUN/install path resolves the container by the same key",
+         cmd="grep -nF 'mgr.get(&key)' crates/podnext/src/commands/mod.rs",
+         needle="mgr.get(&key)"),
+    dict(issue="35", claim="a colon in a bind source is an error, not a dropped mount",
+         cmd="grep -nF 'pub fn ensure_bindable' crates/proot-distro-core/src/bindings.rs",
+         needle="pub fn ensure_bindable"),
+    dict(issue="35", claim="a colon tag is tested end to end at the store level",
+         cmd="grep -nF 'a_colon_tag_builds_under_a_colon_free_store_key' crates/podnext/src/commands/mod.rs",
+         needle="a_colon_tag_builds_under_a_colon_free_store_key"),
     # ── existing coverage (kept) ──────────────────────────────────────────────
     dict(issue="11", claim="install validates the container name before creating anything",
          cmd="grep -nF 'validate_container_name' crates/podnext/src/main.rs",
