@@ -93,11 +93,13 @@ pub struct ProotEngine {
     vfs: VfsManager,
 }
 
+// proot-core::cli::ProotConfig — the PRoot CLI argument struct, NOT a PDN
+// config-file key (doc-drift round 2).
 pub struct ProotConfig {
-    pub command: Vec<String>,
+    pub rootfs: Option<PathBuf>,
     pub bind: Vec<String>,
+    pub cwd: Option<PathBuf>,
     pub env: Vec<String>,
-    pub rootfs: PathBuf,
     // ...
 }
 ```
@@ -136,7 +138,8 @@ Termux/Android compatibility providing:
 
 Gateway layer providing:
 - **FailSafeManager**: Circuit breakers, fixed retries (no backoff/bulkhead yet &mdash; see #27)
-- **GuardrailsEngine**: Policy enforcement, resource quotas, rate limiting
+- **GuardrailsEngine**: Condition-string policy rules; numeric quotas and rate limiting
+  are not implemented yet (doc-drift round 2, issue #27)
 - **HealthMonitor**: Liveness/readiness probes, dependency checks
 - **MetricsCollector**: Prometheus metrics, structured logging
 
@@ -189,26 +192,28 @@ pub struct FailSafeConfig {
 ### Guardrails
 
 ```rust
-pub struct GuardrailsConfig {
-    pub max_containers: usize,
-    pub max_memory_per_container: ByteSize,
-    pub max_cpu_per_container: f64,
-    pub allowed_images: Vec<String>,
-    pub blocked_syscalls: Vec<String>,
-    pub required_security_profile: String,
+// Mirrors crates/pn-gateway/src/config.rs::GuardrailConfig (doc-drift round 2).
+// The numeric limit fields formerly shown here do not exist: guardrails are stored
+// as condition strings in `rules`. See research/DOCS_DRIFT_ROUND2.md.
+pub struct GuardrailConfig {
+    pub enabled: bool,
+    pub rules: Vec<GuardrailRule>,
+    pub strict_mode: bool,
+    pub audit_log: bool,
 }
 ```
 
 ### Health Monitoring
 
 ```rust
+// Mirrors crates/pn-gateway/src/config.rs::HealthCheck (doc-drift round 2).
+// `healthy_threshold`/`unhealthy_threshold` live on HealthConfig, not here.
 pub struct HealthCheck {
     pub name: String,
     pub check_type: HealthCheckType,
+    pub target: String,
     pub interval: Duration,
     pub timeout: Duration,
-    pub healthy_threshold: u32,
-    pub unhealthy_threshold: u32,
 }
 ```
 

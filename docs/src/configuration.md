@@ -19,6 +19,8 @@ PDN uses a layered configuration system:
 # PDN Global Configuration
 
 [general]
+# planned: data_dir, cache_dir, config_dir, log_dir, log_level, log_format, log_file, log_rotation, log_max_files, gateway_addr, gateway_timeout, gateway_retry_attempts, default_runtime, default_security_profile, default_memory_limit, default_cpu_limit, default_pids_limit, default_network, default_dns, default_dns_search, default_storage_driver, default_volume_driver, default_registry, insecure_registries, image_pull_policy, enable_criu, enable_gpu, enable_plugins, enable_metrics, enable_tracing
+# (no `GeneralConfig` struct exists in any crate; the global config.toml has no loader)
 # Data directories
 data_dir = "~/.local/share/pn-next"
 cache_dir = "~/.cache/pn-next"
@@ -68,9 +70,12 @@ enable_metrics = true
 enable_tracing = false
 
 [gateway]
-# NOTE: the global config.toml shown in this section is not yet read by any crate
-# (issue #27). The field names below mirror `crates/pn-gateway/src/config.rs` so
-# they are correct for the day a loader exists.
+# NOTE (issue #27 + doc-drift round 2): the global config.toml shown in this example
+# is not yet read by any crate (`pn-gateway` has no toml loader), and only the
+# [gateway.fail_safe] fields below mirror a real struct
+# (`crates/pn-gateway/src/config.rs`). Every key marked `# planned:` in this document
+# has no backing field and would be rejected by a deny-unknown-fields loader.
+# See research/DOCS_DRIFT_ROUND2.md.
 #
 # Fail-safe configuration
 [gateway.fail_safe]
@@ -83,6 +88,8 @@ circuit_breaker = { enabled = true, failure_threshold = 5, timeout = "60s", half
 # planned: bulkhead_max_concurrent, bulkhead_queue_size, retry_base_delay, retry_max_delay
 
 # Guardrails
+# planned: max_containers, max_memory_total, max_cpu_total, max_containers_per_user, allowed_images, blocked_images, required_security_profile, blocked_syscalls
+# (real GuardrailConfig = enabled, rules, strict_mode, audit_log)
 [gateway.guardrails]
 max_containers = 50
 max_memory_total = "16G"
@@ -98,20 +105,26 @@ blocked_syscalls = [
 
 # Health checks
 [gateway.health]
+# planned: healthy_threshold
+# (real HealthConfig = enabled, check_interval, checks, unhealthy_threshold, recovery_actions)
 enabled = true
-interval = "30s"
+check_interval = "30s"
 timeout = "10s"
 healthy_threshold = 2
 unhealthy_threshold = 3
 
 # Metrics
 [gateway.metrics]
+# planned: port, path
+# (real MetricsConfig = enabled, interval, retention, exporters)
 enabled = true
+interval = "60s"
 port = 9090
 path = "/metrics"
-interval = "15s"
 
 [grpc]
+# planned: addr, max_recv_msg_size, max_send_msg_size, keepalive_time, keepalive_timeout, keepalive_permit_without_stream
+# (no gRPC config struct exists in pn-gateway)
 # gRPC server configuration
 [grpc.server]
 addr = "127.0.0.1:50051"
@@ -122,11 +135,14 @@ keepalive_timeout = "10s"
 keepalive_permit_without_stream = true
 
 [grpc.client]
+# planned: max_recv_msg_size, max_send_msg_size
 timeout = "30s"
 max_recv_msg_size = 4194304
 max_send_msg_size = 4194304
 
 [api]
+# planned: addr, cors_allowed_origins, cors_allowed_methods, cors_allowed_headers, cors_max_age
+# (no `[api.server]` struct exists in pn-gateway)
 # REST API configuration
 [api.server]
 enabled = true
@@ -137,6 +153,8 @@ cors_allowed_headers = ["*"]
 cors_max_age = 3600
 
 [tracing]
+# planned: type, endpoint, sampling_ratio
+# (no tracing config struct exists in pn-gateway)
 # OpenTelemetry tracing
 [tracing.exporter]
 type = "otlp"           # otlp, jaeger, zipkin, stdout
@@ -144,6 +162,8 @@ endpoint = "http://localhost:4317"
 sampling_ratio = 0.1
 
 [plugin]
+# planned: plugin_dirs, allow_unsigned, max_plugins
+# (no plugin-manager config struct exists in pn-gateway)
 # Plugin system
 [plugin.manager]
 enabled = true
@@ -162,11 +182,15 @@ max_plugins = 20
 ```toml
 [container]
 name = "ubuntu"
-image = "docker.io/library/ubuntu:22.04"
-created = "2024-01-15T10:30:00Z"
-updated = "2024-01-15T10:30:00Z"
+distro = "ubuntu"
+version = "22.04"
+# planned: created, updated
+# (real ContainerConfig uses distro+version, not image; created/updated are metadata)
 
 [container.config]
+# planned: domainname, user, group, groups, entrypoint, cmd, stop_signal, stop_timeout
+# (the real ContainerConfig is FLAT — there is no [container.config] table; hostname and
+#  working_dir are top-level fields; the rest have no backing field)
 # Basic settings
 hostname = "ubuntu"
 domainname = ""
@@ -246,17 +270,19 @@ drop = [
 add = []
 
 [container.config.seccomp]
-profile = "default"
-custom_rules = []
+# planned: custom_rules
+seccomp_profile = "default"
 
 [container.config.apparmor]
-profile = "pn-next-default"
+apparmor_profile = "pn-next-default"
 enforce = true
 
 [container.config.selinux]
-context = "system_u:system_r:container_t:s0:c123,c456"
+selinux_label = "system_u:system_r:container_t:s0:c123,c456"
 enforce = true
 
+# planned: memory_swap_limit, memory_reservation, cpu_shares, cpu_quota, cpu_period, cpuset_cpus, cpuset_mems, io_weight, io_max_read_bps, io_max_read_iops, io_max_write_bps, io_max_write_iops
+# (real ResourceLimits = cpu_limit, memory_limit, disk_limit, pids_limit)
 [container.resources]
 memory_limit = "2G"
 memory_swap_limit = "4G"
@@ -274,8 +300,11 @@ io_max_write_bps = "100MB/s"
 io_max_read_iops = 1000
 io_max_write_iops = 1000
 
+# planned: mask_paths, readonly_paths
+# (real SecurityConfig = privileged, capabilities, seccomp_profile, apparmor_profile,
+#  selinux_label, no_new_privileges, read_only_rootfs)
 [container.security]
-profile = "default"
+seccomp_profile = "default"
 no_new_privileges = true
 read_only_rootfs = false
 user_namespace = false
@@ -288,10 +317,12 @@ readonly_paths = [
     "/proc/sysrq-trigger"
 ]
 
+# planned: networks, dns_search, dns_options, extra_hosts, ports, ipc_mode, uts_mode
+# (real container NetworkConfig = mode, bridge, ip_address, gateway, dns_servers, port_mappings)
 [container.network]
 mode = "bridge"          # bridge, host, none, container:<name>
 networks = ["default"]
-dns = ["1.1.1.1", "8.8.8.8"]
+dns_servers = ["1.1.1.1", "8.8.8.8"]
 dns_search = ["local"]
 dns_options = ["ndots:2"]
 extra_hosts = { "host.docker.internal" = "host-gateway" }
@@ -299,17 +330,20 @@ ports = []
 ipc_mode = "shareable"
 uts_mode = ""
 
+# planned: api
 [container.gpu]
 enabled = false
 devices = []
 api = "vulkan"           # vulkan, opengl, opencl, cuda
 
+# planned: max_checkpoints
 [container.checkpoint]
 enabled = false
 interval = "30m"
 max_checkpoints = 5
 storage = "local"
 
+# planned: prestart, poststart, prestop, poststop
 [container.hooks]
 prestart = []
 poststart = []
@@ -322,9 +356,10 @@ poststop = []
 ### `~/.config/pn-next/security/<name>.toml`
 
 ```toml
+# planned: description
 [profile]
 name = "default"
-type = "default"         # default, restricted, unconfined, custom
+profile_type = "default"         # default, restricted, unconfined, custom
 enabled = true
 description = "Balanced security profile for general use"
 no_new_privileges = true
@@ -378,8 +413,9 @@ add = [
     "CAP_SETUID", "CAP_SETPCAP", "CAP_NET_BIND_SERVICE"
 ]
 
+# planned: custom_rules
 [profile.apparmor]
-profile = "pn-next-default"
+profile_name = "pn-next-default"
 enforce = true
 # Custom AppArmor rules
 custom_rules = [
@@ -389,6 +425,7 @@ custom_rules = [
     "capability setgid,"
 ]
 
+# planned: custom_rules
 [profile.selinux]
 context = "system_u:system_r:container_t:s0:c123,c456"
 enforce = true
@@ -398,6 +435,7 @@ custom_rules = [
     "allow container_t self:netlink_route_socket { nlmsg_read nlmsg_write };"
 ]
 
+# planned: paths
 [profile.mask_paths]
 paths = [
     "/proc/asound", "/proc/bus", "/proc/fs", "/proc/irq",
@@ -407,6 +445,7 @@ paths = [
     "/proc/timer_stats", "/sys/firmware", "/sys/kernel/security"
 ]
 
+# planned: paths
 [profile.readonly_paths]
 paths = [
     "/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys",
@@ -465,11 +504,15 @@ add = [
 ### `~/.config/pn-next/networks/<name>.toml`
 
 ```toml
+# planned: created
+# (the persisted network file is a FLAT NetworkConfig: name, driver, subnet, gateway,
+#  dns_servers, enable_ipv6, mtu, containers, ips — there is no [network.config] table)
 [network]
 name = "default"
 driver = "bridge"
 created = "2024-01-15T10:30:00Z"
 
+# planned: ip_range, ipv6_subnet, ipv6_gateway, dns_search, internal, enable_icc
 [network.config]
 # Bridge network settings
 subnet = "10.88.0.0/16"
@@ -481,7 +524,7 @@ ipv6_subnet = "fd00::/80"
 ipv6_gateway = "fd00::1"
 
 # DNS
-dns = ["1.1.1.1", "8.8.8.8"]
+dns_servers = ["1.1.1.1", "8.8.8.8"]
 dns_search = ["local"]
 
 # Firewall
@@ -526,11 +569,15 @@ Example CNI config:
 ### `~/.config/pn-next/storage/<name>.toml`
 
 ```toml
+# planned: created
+# (the persisted volume file is a FLAT VolumeConfig: name, driver, labels, options —
+#  there is no [storage.config] table)
 [storage]
 name = "local"
 driver = "local"
 created = "2024-01-15T10:30:00Z"
 
+# planned: path, fs_type, mount_options, quota_enabled, quota_size
 [storage.config]
 # Local driver settings
 path = "~/.local/share/pn-next/storage/local"

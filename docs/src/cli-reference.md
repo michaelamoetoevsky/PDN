@@ -568,9 +568,11 @@ podnext -r /path/to/rootfs -q qemu-aarch64 -- /bin/bash
 ```toml
 [container]
 name = "ubuntu"
-image = "docker.io/library/ubuntu:22.04"
+distro = "ubuntu"
+version = "22.04"
 
 [container.config]
+# planned: user
 hostname = "ubuntu"
 working_dir = "/root"
 user = "root"
@@ -583,6 +585,7 @@ LANG = "en_US.UTF-8"
 "/sdcard" = { target = "/mnt/sdcard", readonly = false }
 "/data/data/com.termux/files/home" = { target = "/home/termux", readonly = false }
 
+# planned: io_weight, io_max_read, io_max_write
 [container.resources]
 memory_limit = "2G"
 cpu_limit = "2.0"
@@ -592,15 +595,17 @@ io_max_read = "100MB/s"
 io_max_write = "100MB/s"
 
 [container.security]
-profile = "default"
+seccomp_profile = "default"
 no_new_privileges = true
 read_only_rootfs = false
 user_namespace = false
 
+# planned: networks
 [container.network]
 mode = "bridge"
 networks = ["default"]
 
+# planned: api
 [container.gpu]
 enabled = false
 devices = []
