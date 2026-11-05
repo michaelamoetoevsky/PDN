@@ -206,11 +206,29 @@ impl NetworkManager {
     }
 }
 
+/// Ensure the guest has a valid, non-empty `/etc/resolv.conf`.
+///
+/// If `/etc/resolv.conf` is missing or contains no active nameserver entries,
+/// default public resolvers with bounded timeout options are written.
+pub fn ensure_resolv_conf(rootfs: &std::path::Path) -> Result<()> {
+    let etc = rootfs.join("etc");
+    std::fs::create_dir_all(&etc)?;
+    let resolv = etc.join("resolv.conf");
+    let needs_write = match std::fs::read_to_string(&resolv) {
+        Ok(content) => !content.lines().any(|l| l.trim().starts_with("nameserver")),
+        Err(_) => true,
+    };
+    if needs_write {
+        apply_resolv_conf(rootfs, &[])?;
+    }
+    Ok(())
+}
+
 /// Write the guest's `/etc/resolv.conf`.
 ///
 /// An empty `dns` restores the default public resolvers that `install` writes,
 /// so `disconnect` leaves the container in the state it started in.
-fn apply_resolv_conf(rootfs: &std::path::Path, dns: &[String]) -> Result<()> {
+pub fn apply_resolv_conf(rootfs: &std::path::Path, dns: &[String]) -> Result<()> {
     const DEFAULTS: [&str; 3] = ["8.8.8.8", "8.8.4.4", "1.1.1.1"];
 
     let servers: Vec<String> = if dns.is_empty() {
@@ -221,10 +239,11 @@ fn apply_resolv_conf(rootfs: &std::path::Path, dns: &[String]) -> Result<()> {
 
     let etc = rootfs.join("etc");
     std::fs::create_dir_all(&etc)?;
-    let body: String = servers
+    let mut body: String = servers
         .iter()
         .map(|s| format!("nameserver {}\n", s))
         .collect();
+    body.push_str("options timeout:2 attempts:3\n");
     std::fs::write(etc.join("resolv.conf"), body)?;
     Ok(())
 }
@@ -269,7 +288,7 @@ mod tests {
 
         // DNS actually applied inside the guest rootfs.
         let resolv = std::fs::read_to_string(rootfs.join("etc/resolv.conf")).unwrap();
-        assert_eq!(resolv, "nameserver 9.9.9.9\n");
+        assert_eq!(resolv, "nameserver 9.9.9.9\noptions timeout:2 attempts:3\n");
 
         // Persisted: a fresh manager reading the same file sees it.
         let mut reloaded = NetworkManager {
@@ -300,5 +319,31 @@ mod tests {
         assert!(m.inspect("..").is_err());
         assert!(m.remove("..").is_err());
         let _ = std::fs::remove_dir_all(m.config_path.parent().unwrap());
+    }
+
+    #[test]
+    fn ensure_resolv_conf_populates_missing_or_empty_resolv() {
+        let rootfs = std::env::temp_dir().join(format!("pdn-ensure-resolv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&rootfs);
+
+        // Missing file is created
+        ensure_resolv_conf(&rootfs).unwrap();
+        let content = std::fs::read_to_string(rootfs.join("etc/resolv.conf")).unwrap();
+        assert!(content.contains("nameserver 8.8.8.8"));
+        assert!(content.contains("options timeout:2 attempts:3"));
+
+        // Whitespace-only file is replaced
+        std::fs::write(rootfs.join("etc/resolv.conf"), "   \n\n").unwrap();
+        ensure_resolv_conf(&rootfs).unwrap();
+        let content = std::fs::read_to_string(rootfs.join("etc/resolv.conf")).unwrap();
+        assert!(content.contains("nameserver 8.8.8.8"));
+
+        // Valid custom config is kept intact
+        std::fs::write(rootfs.join("etc/resolv.conf"), "nameserver 10.0.0.1\n").unwrap();
+        ensure_resolv_conf(&rootfs).unwrap();
+        let content = std::fs::read_to_string(rootfs.join("etc/resolv.conf")).unwrap();
+        assert_eq!(content, "nameserver 10.0.0.1\n");
+
+        let _ = std::fs::remove_dir_all(&rootfs);
     }
 }

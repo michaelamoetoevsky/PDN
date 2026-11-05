@@ -44,6 +44,7 @@ struct SerializableInfo {
     platform: String,
     rust_version: String,
     backend: String,
+    isolation: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -2344,6 +2345,7 @@ async fn cmd_info(format: OutputFormat) -> Result<()> {
         platform: "Termux/Android".to_string(),
         rust_version: "1.80+".to_string(),
         backend: "proot-distro-core".to_string(),
+        isolation: "proot (unmapped host tree, masked /proc)".to_string(),
     };
 
     #[derive(Tabled, Serialize)]
@@ -2356,6 +2358,8 @@ async fn cmd_info(format: OutputFormat) -> Result<()> {
         rust_version: String,
         #[tabled(rename = "BACKEND")]
         backend: String,
+        #[tabled(rename = "ISOLATION")]
+        isolation: String,
     }
 
     let row = InfoRow {
@@ -2363,6 +2367,7 @@ async fn cmd_info(format: OutputFormat) -> Result<()> {
         platform: info.platform.clone(),
         rust_version: info.rust_version.clone(),
         backend: info.backend.clone(),
+        isolation: info.isolation.clone(),
     };
 
     let serializable = SerializableInfo {
@@ -2370,16 +2375,21 @@ async fn cmd_info(format: OutputFormat) -> Result<()> {
         platform: info.platform.clone(),
         rust_version: info.rust_version.clone(),
         backend: info.backend.clone(),
+        isolation: info.isolation.clone(),
     };
 
     match format {
         OutputFormat::Table => output_table(&[row]),
         OutputFormat::Json => output_json(&serializable)?,
         OutputFormat::Yaml => output_yaml(&serializable)?,
-        OutputFormat::Text => println!(
-            "podnext {} - PRoot Distro Next for Termux/Android",
-            env!("CARGO_PKG_VERSION")
-        ),
+        OutputFormat::Text => {
+            println!(
+                "podnext {} - PRoot Distro Next for Termux/Android",
+                env!("CARGO_PKG_VERSION")
+            );
+            println!("Backend: {}", info.backend);
+            println!("Isolation: {}", info.isolation);
+        }
     }
     Ok(())
 }
@@ -3038,6 +3048,8 @@ struct SystemInfo {
     rust_version: String,
     #[tabled(rename = "Backend")]
     backend: String,
+    #[tabled(rename = "Isolation")]
+    isolation: String,
 }
 
 #[derive(Tabled, serde::Serialize)]

@@ -500,6 +500,10 @@ pub async fn login_container_native(
     isolated: bool,
     command: Vec<String>,
 ) -> Result<()> {
+    let container_mgr = proot_distro_core::ContainerManager::new()?;
+    if let Ok(c) = container_mgr.get(container_name).await {
+        let _ = proot_distro_core::network::ensure_resolv_conf(&c.rootfs_path);
+    }
     pn_trace!("[DEBUG native] Creating ProotDistroCore");
     let mut distro_core = proot_distro_core::ProotDistroCore::new()?;
     pn_trace!("[DEBUG native] ProotDistroCore created");
@@ -623,6 +627,7 @@ pub async fn run_container_native(
 ) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     let mut container = container_mgr.get(container_name).await?;
+    let _ = proot_distro_core::network::ensure_resolv_conf(&container.rootfs_path);
     // The loader does not carry the image's recorded ENV/WORKDIR; reinstate them
     // so `podnext run` behaves as the image was built (#30 residual gap 1).
     apply_image_runtime_config(&mut container);

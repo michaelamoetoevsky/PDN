@@ -152,7 +152,7 @@ impl ProotEngine {
     }
 
     /// Add Android/Termux system binds required for dynamic linker to work
-    fn add_android_system_binds(cmd: &mut Command, isolated: bool) {
+    fn add_android_system_binds(cmd: &mut Command, _isolated: bool) {
         // Android system directories - required for dynamic linker
         cmd.arg("--bind=/apex");
         cmd.arg("--bind=/odm");
@@ -164,47 +164,6 @@ impl ProotEngine {
         // Linker config - required for dynamic linker
         cmd.arg("--bind=/linkerconfig/ld.config.txt");
         cmd.arg("--bind=/linkerconfig/com.android.art/ld.config.txt");
-
-        // In isolated mode, skip all host user storage, home directories, and caches
-        if isolated {
-            return;
-        }
-
-        // Termux prefix - required for Termux utilities
-        if let Ok(prefix) = std::env::var("TERMUX_PREFIX") {
-            cmd.arg(format!("--bind={}", prefix));
-        } else {
-            cmd.arg("--bind=/data/data/com.termux/files/usr");
-        }
-
-        // Android dalvik/ART caches
-        for cache_dir in &[
-            "/data/app",
-            "/data/dalvik-cache",
-            "/data/misc/apexdata/com.android.art/dalvik-cache",
-        ] {
-            if std::path::Path::new(cache_dir).exists() {
-                cmd.arg(format!("--bind={}", cache_dir));
-            }
-        }
-
-        // Storage binds (if available)
-        for storage_dir in &["/storage/self/primary", "/sdcard", "/storage/emulated/0"] {
-            if std::path::Path::new(storage_dir).exists() {
-                cmd.arg(format!("--bind={}", storage_dir));
-            }
-        }
-
-        // Termux app directories
-        if let Ok(home) = std::env::var("HOME") {
-            cmd.arg(format!("--bind={}", home));
-        }
-        if let Ok(cache) = std::env::var("TERMUX_PREFIX") {
-            let termux_cache = format!("{}/tmp", cache);
-            if std::path::Path::new(&termux_cache).exists() {
-                cmd.arg(format!("--bind={}", termux_cache));
-            }
-        }
     }
 
     /// Start a daemon process (background mode)

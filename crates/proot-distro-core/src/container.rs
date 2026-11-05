@@ -229,6 +229,7 @@ impl ContainerManager {
                 .collect::<anyhow::Result<Vec<String>>>()?;
 
             // Same fake /proc stubs as the interactive path (see execute).
+            let _ = crate::network::ensure_resolv_conf(&container.rootfs_path);
             if let Some(container_dir) = container.rootfs_path.parent() {
                 // The synthetic binds below are derived from this directory, so a
                 // colon anywhere in it would silently lose /dev/shm and the /proc

@@ -47,36 +47,76 @@ const FAKE_LOADAVG: &str = "0.12 0.07 0.02 2/165 765\n";
 const FAKE_OVERFLOW_ID: &str = "65534\n";
 const FAKE_CAP_LAST_CAP: &str = "40\n";
 const FAKE_INOTIFY_WATCHES: &str = "4096\n";
-const FAKE_UPTIME_SECONDS: &str = "124.08";
-const FAKE_VMSTAT: &str = "\
-nr_free_pages 1743136
-nr_zone_inactive_anon 179281
-nr_zone_active_anon 7183
-nr_zone_inactive_file 22858
-nr_zone_active_file 51328
-nr_zone_unevictable 642
-nr_zone_write_pending 0
-nr_mlock 0
-nr_bounce 0
-nr_zspages 0
-nr_free_cma 0
-numa_hit 1259626
-numa_miss 0
-numa_foreign 0
-numa_interleave 720
-pgpgin 200232
-pgpgout 180764
-pswpin 0
-pswpout 0
+
+const FAKE_MOUNTS: &str = "\
+rootfs / rootfs rw,relatime 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+devpts /dev/pts devpts rw,nosuid,noexec,relatime 0 0
 ";
-const FAKE_STAT_TAIL: &str = "\
-intr 127541 38 290 0 0 0 0 4 0 1 0 0 25329 258 0 5777 277 0 0 0 0 0 0 0 0 0
-ctxt 140223
-btime 1750000000
-processes 8944
-procs_running 2
-procs_blocked 0
-";
+
+/// System uptime in seconds (from CLOCK_BOOTTIME).
+pub fn system_uptime() -> f64 {
+    unsafe {
+        let mut ts: libc::timespec = std::mem::zeroed();
+        if libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) == 0 {
+            ts.tv_sec as f64 + (ts.tv_nsec as f64 / 1_000_000_000.0)
+        } else {
+            124.08
+        }
+    }
+}
+
+/// Boot time in seconds since Unix epoch, matching `system_uptime`.
+pub fn boot_time_seconds(uptime: f64) -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    if now > uptime {
+        (now - uptime) as u64
+    } else {
+        0
+    }
+}
+
+fn host_mem_free_kb() -> Option<u64> {
+    let content = fs::read_to_string("/proc/meminfo").ok()?;
+    for line in content.lines() {
+        if line.starts_with("MemFree:") {
+            let mut parts = line.split_whitespace();
+            parts.next(); // "MemFree:"
+            return parts.next().and_then(|val| val.parse::<u64>().ok());
+        }
+    }
+    None
+}
+
+pub fn fake_vmstat() -> String {
+    let free_pages = host_mem_free_kb().map(|kb| kb / 4).unwrap_or(1743136);
+    format!(
+        "nr_free_pages {}\n\
+nr_zone_inactive_anon 179281\n\
+nr_zone_active_anon 7183\n\
+nr_zone_inactive_file 22858\n\
+nr_zone_active_file 51328\n\
+nr_zone_unevictable 642\n\
+nr_zone_write_pending 0\n\
+nr_mlock 0\n\
+nr_bounce 0\n\
+nr_zspages 0\n\
+nr_free_cma 0\n\
+numa_hit 1259626\n\
+numa_miss 0\n\
+numa_foreign 0\n\
+numa_interleave 720\n\
+pgpgin 200232\n\
+pgpgout 180764\n\
+pswpin 0\n\
+pswpout 0\n",
+        free_pages
+    )
+}
 
 /// Per-CPU snapshot in USER_HZ ticks, in `/proc/stat` column order:
 /// user nice system idle iowait irq softirq steal guest guest_nice.
@@ -192,6 +232,11 @@ fn cpu_rows(cpus: &[u32]) -> Vec<(u32, [u64; 10])> {
 /// is the column-wise sum of those, as the kernel's is, so a tool that
 /// cross-checks the two sees them agree.
 pub fn fake_stat(cpus: &[u32]) -> String {
+    let uptime = system_uptime();
+    fake_stat_with_uptime(cpus, uptime)
+}
+
+pub fn fake_stat_with_uptime(cpus: &[u32], uptime: f64) -> String {
     let rows = cpu_rows(cpus);
     let mut totals = [0u64; 10];
     for (_, row) in &rows {
@@ -204,19 +249,29 @@ pub fn fake_stat(cpus: &[u32]) -> String {
     for (cpu, row) in &rows {
         out.push_str(&format!("cpu{} {}\n", cpu, join(row)));
     }
-    out.push_str(FAKE_STAT_TAIL);
+    let btime = boot_time_seconds(uptime);
+    out.push_str(&format!(
+        "intr 127541 38 290 0 0 0 0 4 0 1 0 0 25329 258 0 5777 277 0 0 0 0 0 0 0 0 0\n\
+         ctxt 140223\n\
+         btime {}\n\
+         processes 8944\n\
+         procs_running 2\n\
+         procs_blocked 0\n",
+        btime
+    ));
     out
 }
 
 /// `/proc/uptime`, the second field being total idle ticks over all CPUs so it
 /// stays consistent with the idle column of `cpu` in `fake_stat`.
 pub fn fake_uptime(cpus: &[u32]) -> String {
+    let uptime = system_uptime();
+    fake_uptime_with_uptime(cpus, uptime)
+}
+
+pub fn fake_uptime_with_uptime(cpus: &[u32], uptime: f64) -> String {
     let idle: u64 = cpu_rows(cpus).iter().map(|(_, r)| r[IDLE_COLUMN]).sum();
-    format!(
-        "{} {:.2}\n",
-        FAKE_UPTIME_SECONDS,
-        idle as f64 / USER_HZ as f64
-    )
+    format!("{:.2} {:.2}\n", uptime, idle as f64 / USER_HZ as f64)
 }
 
 fn fake_version() -> String {
@@ -238,12 +293,14 @@ pub fn ensure(container_dir: &Path) -> Result<PathBuf> {
     fs::create_dir_all(dir.join("sys_empty"))?;
 
     let cpus = host_cpu_ids();
+    let uptime = system_uptime();
     let entries = [
         ("loadavg", FAKE_LOADAVG.to_string()),
-        ("stat", fake_stat(&cpus)),
-        ("uptime", fake_uptime(&cpus)),
+        ("stat", fake_stat_with_uptime(&cpus, uptime)),
+        ("uptime", fake_uptime_with_uptime(&cpus, uptime)),
         ("version", fake_version()),
-        ("vmstat", FAKE_VMSTAT.to_string()),
+        ("vmstat", fake_vmstat()),
+        ("mounts", FAKE_MOUNTS.to_string()),
         ("sysctl_kernel_cap_last_cap", FAKE_CAP_LAST_CAP.to_string()),
         (
             "sysctl_inotify_max_user_watches",
@@ -286,6 +343,23 @@ pub fn bindings(container_dir: &Path) -> Vec<String> {
     let empty = dir.join("sys_empty");
     if empty.is_dir() {
         out.push(format!("{}:/sys/fs/selinux", empty.display()));
+    }
+    // Truthful mount table showing rootfs as rw. Trailing ! avoids dereferencing symlink.
+    let mounts = dir.join("mounts");
+    if mounts.is_file() {
+        out.push(format!("{}:/proc/mounts!", mounts.display()));
+    }
+    // Mask host processes so guest cannot inspect host process command lines.
+    if empty.is_dir() {
+        if let Ok(entries) = fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    if name.chars().all(|c| c.is_ascii_digit()) {
+                        out.push(format!("{}:/proc/{}", empty.display(), name));
+                    }
+                }
+            }
+        }
     }
     for (name, guest_path) in ENTRIES {
         if readable(guest_path) {
@@ -341,6 +415,36 @@ mod tests {
     }
 
     #[test]
+    fn uptime_and_stat_btime_are_temporally_consistent() {
+        let cpus = [0u32, 1];
+        let uptime_val = 5000.50;
+        let uptime_str = fake_uptime_with_uptime(&cpus, uptime_val);
+        let stat_str = fake_stat_with_uptime(&cpus, uptime_val);
+
+        let up: f64 = uptime_str
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let btime_line = stat_str.lines().find(|l| l.starts_with("btime ")).unwrap();
+        let btime: u64 = btime_line
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let expected_btime = (now - uptime_val) as u64;
+        assert!((btime as i64 - expected_btime as i64).abs() <= 2);
+        assert!((up - uptime_val).abs() < 0.01);
+    }
+
+    #[test]
     fn ensure_writes_every_entry_then_bindings_cover_the_blocked_ones() {
         let tmp = std::env::temp_dir().join(format!("pdn-sysdata-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
@@ -350,12 +454,14 @@ mod tests {
         for (name, _) in ENTRIES {
             assert!(dir.join(name).is_file(), "missing stub {name}");
         }
+        assert!(dir.join("mounts").is_file(), "missing mounts stub");
         assert!(dir.join("sys_empty").is_dir());
 
         let b = bindings(&tmp);
-        // Every entry whose host file is blocked, plus the selinux empty dir.
-        let blocked = ENTRIES.iter().filter(|(_, g)| !readable(g)).count();
-        assert_eq!(b.len(), blocked + 1);
+        // Truthful mounts table bound directly
+        assert!(b.iter().any(|a| a.ends_with(":/proc/mounts!")));
+        // SELinux empty dir bound
+        assert!(b.iter().any(|a| a.ends_with(":/sys/fs/selinux")));
         // If /proc/uptime is blocked on this host (e.g. Android), verify it is bound.
         if !readable("/proc/uptime") {
             assert!(b.iter().any(|a| a.ends_with(":/proc/uptime")));

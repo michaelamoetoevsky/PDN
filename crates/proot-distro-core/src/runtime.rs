@@ -120,6 +120,7 @@ impl RuntimeBackend for ProotBackend {
             .collect::<anyhow::Result<Vec<String>>>()?;
 
         // Synthetic /proc entries and guest runtime directories
+        let _ = crate::network::ensure_resolv_conf(&container.rootfs_path);
         if let Some(container_dir) = container.rootfs_path.parent() {
             // Derived binds below: a colon in this directory silently loses
             // /dev/shm and the /proc stubs (#35).
