@@ -48,8 +48,15 @@ pub struct DockerHubImage {
     pub is_automated: bool,
 }
 
+fn http_client() -> Client {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
 pub async fn search_docker_hub(query: &str, limit: usize) -> Result<Vec<DockerHubImage>> {
-    let client = Client::new();
+    let client = http_client();
     let url = format!(
         "https://registry.hub.docker.com/v2/search/repositories/?query={}&page_size={}",
         encode(query),
@@ -339,7 +346,7 @@ fn parse_image_ref(image_ref: &str) -> Result<(String, String)> {
 }
 
 async fn get_docker_hub_token(repo: &str) -> Result<String> {
-    let client = Client::new();
+    let client = http_client();
     // Use library/ prefix for official images in token scope
     let scope_repo = if repo.contains('/') {
         repo.to_string()
@@ -371,7 +378,7 @@ async fn get_docker_hub_token(repo: &str) -> Result<String> {
 }
 
 async fn get_manifest(name: &str, tag: &str, token: &str) -> Result<ImageManifest> {
-    let client = Client::new();
+    let client = http_client();
     // Add library/ prefix for official images (no slash in name)
     let manifest_name = if name.contains('/') {
         name.to_string()
@@ -450,7 +457,7 @@ async fn get_manifest(name: &str, tag: &str, token: &str) -> Result<ImageManifes
 }
 
 async fn get_manifest_by_digest(name: &str, digest: &str, token: &str) -> Result<ImageManifest> {
-    let client = Client::new();
+    let client = http_client();
     // Add library/ prefix for official images (no slash in name)
     let manifest_name = if name.contains('/') {
         name.to_string()
@@ -497,7 +504,7 @@ async fn download_and_extract_layers(
     token: &str,
     rootfs: &Path,
 ) -> Result<()> {
-    let _client = Client::new();
+    let _client = http_client();
     let layers = manifest.layers();
     let pb = ProgressBar::new(layers.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
@@ -536,7 +543,7 @@ async fn download_and_extract_layers(
 }
 
 async fn download_layer(name: &str, digest: &str, token: &str) -> Result<Vec<u8>> {
-    let client = Client::new();
+    let client = http_client();
     // Add library/ prefix for official images (no slash in name)
     let manifest_name = if name.contains('/') {
         name.to_string()

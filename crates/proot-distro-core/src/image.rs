@@ -123,7 +123,10 @@ impl ImageManager {
             .ok_or_else(|| anyhow::anyhow!("Image '{}' not found locally", image_ref))?
             .clone();
 
-        let client = Client::new();
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| Client::new());
 
         // Determine registry URL
         let (registry_host, repo_name) = Self::parse_registry_and_repo(&name)?;
