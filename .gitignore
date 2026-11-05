@@ -58,3 +58,6 @@ docs/generated/
 # Backup files
 *.bak
 *.backup
+# Python bytecode from a local py_compile / import
+__pycache__/
+*.py[cod]
