@@ -11,6 +11,39 @@ Built entirely in Rust, PDN unifies the PRoot (C) ecosystem, the `proot-distro` 
 
 ---
 
+## What's New
+
+The measured state of `master` after the `v0.1.8` tag (`Cargo.toml` still reads `0.1.8`;
+`podnext version` prints `podnext 0.1.8`). Every figure below names the command that produced
+it. This is roadmap section 9, and **section 9 is not complete**: section 9.2 (the split, plus
+cache and daemon routing) and section 9.3 (terminal fidelity, detach/attach, the quoting table,
+a soak run) remain open.
+
+- **The CLI is being split by domain (section 9.2).** `main.rs` fell from 4,679 to 2,474 lines,
+  and five domains are now their own modules: `commands/image.rs` 755, `commands/sync.rs` 580,
+  `commands/container.rs` 473, `commands/volume.rs` 260, `commands/network.rs` 237.
+  `commands/mod.rs` is still 3,719 lines and two further extractions are in flight.
+  (`wc -l crates/podnext/src/main.rs crates/podnext/src/commands/*.rs`; baseline from
+  `git show a6c4fa6:crates/podnext/src/main.rs | wc -l`.)
+- **`podnext doctor` exists** and reports 12 checks with a container named: six host checks and
+  six guest checks including the proot argv; host-only it reports 7.
+  (`podnext doctor --container test-alpine --format json`.)
+- **`--bind` / `--volume` now reach the guest** (#43); the `:rw` suffix that PRoot misread as part
+  of the guest path is gone (`a29ee6d`).
+- **`image ls` reports a measured size**, or `>=` when subtrees could not be read, or `unknown`
+  - never a directory `stat` presented as a size (#44, `8477181`).
+- **`run` refuses the seven options it cannot honour** instead of dropping them, and `--help` no
+  longer claims `--detach` runs in the background (#47, `7960de8`).
+- **Daemon path defaults follow the environment** (`TERMUX__HOME`, `XDG_*`), not hard-coded
+  Termux paths (#46, `285720a`).
+- **Verification ledger:** 80 PASS / 0 FAIL / 13 SKIPPED of 93 measured offline; the 13 are
+  cargo-gated and get verdicts only in CI, where the last full run (commit `892549a`) was
+  93 PASS / 0 FAIL / 0 SKIPPED.
+  (`python3 scripts/build_issue_ledger.py --offline | tail -1`;
+  `gh run view 42032340292 --log | grep 'checks:'`.)
+
+---
+
 ## 1. Feature Comparison: PodNext vs PRoot-Distro
 
 | Feature / Metric | `proot-distro` (Termux Default) | `podnext` (PRoot Distro Next) | PDN Advantage |
@@ -250,7 +283,7 @@ The GitHub Actions automated verification matrix is **100% Passing (Green)**:
 
 | Workflow | Scope & Test Matrix | Status |
 |---|---|---|
-| **PDN CI/CD** | Host Build, Integration Test Suite (133 tests passed), Cross-Compile aarch64, Fuzzing, Docs mdBook, Security Audit | **SUCCESS** |
+| **PDN CI/CD** | Host Build, Issue ledger (93 PASS / 0 FAIL / 0 SKIPPED at `892549a`), Cross-Compile aarch64, Fuzzing, Docs mdBook, Security Audit | **SUCCESS** |
 | **Android Cross-Compile** | Matrix: `aarch64-linux-android` & `x86_64-linux-android` with NDK `r27c` & `r30` | **SUCCESS** |
 | **Benchmark Suite** | Performance & latency regression benchmarks | **SUCCESS** |
 

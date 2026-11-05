@@ -312,6 +312,12 @@ This roadmap serves as the definitive engineering blueprint for elevating contai
 
 ## 9. Roadmap to v0.1.9 — stability, simplicity, and the interactive shell
 
+**Status (5 Nov 2026): not complete.** Every figure below names the command that produced it. The
+`v0.1.9` release was withdrawn before it was tagged (`5b479d1`), `Cargo.toml` still reads `0.1.8`,
+and sections 9.2 and 9.3 still have open work items. A one-line status per sub-section follows its
+heading. Ledger: 80 PASS / 0 FAIL / 13 SKIPPED of 93 offline; 93 PASS / 0 FAIL / 0 SKIPPED in CI at
+`892549a` (`python3 scripts/build_issue_ledger.py --offline | tail -1`).
+
 Decisions already taken, so they are not reopened here:
 
 - **Licence**: `GPL-2.0-or-later`, declared identically in `LICENSE`, `Cargo.toml` and `README.md`,
@@ -322,6 +328,8 @@ Decisions already taken, so they are not reopened here:
   exists underneath. section 9.2 builds that interface first.
 
 ### 9.1 Stability and honesty — freeze breadth, deepen the paths people use daily
+
+**Status (5 Nov 2026): landed.** Every command carries a `stable` / `experimental` label and every stub refuses with a named reason (#42, `fcabc1c`); the exit-code contract is documented and the CLI-reference contract test runs the built binary (#42, `28c4594`); the audit findings were triaged into the tracker. Verified by the ledger: 80 PASS / 0 FAIL / 13 SKIPPED of 93 offline, 93 PASS in CI at `892549a`.
 
 The defect pattern of the last three rounds was consistent: a command existed, printed something
 plausible, and could not do what it claimed (`image push`, benchmark reporting, `image inspect`,
@@ -336,6 +344,8 @@ plausible, and could not do what it claimed (`image push`, benchmark reporting, 
 | Triage the 13-agent audit findings into issues | every finding either fixed, filed, or explicitly declined with a reason |
 
 ### 9.2 Simplicity and performance — one source of truth, one module per domain
+
+**Status (5 Nov 2026): in progress, not done.** The module split has started: `main.rs` 4,679 to 2,474 lines, with `image` / `volume` / `network` / `sync` / `container` extracted (`17476f1`, `181d2fe`, `472d9b3`, `dc40a06`, `892549a`); `commands/mod.rs` is still 3,719 lines and the `build` / `shell` / `service` / `policy` / `system` domains are not split. The environment-variable half of the paths item landed (`TERMUX__HOME` / `XDG_*`, #46, `285720a`); the cached container index and the daemon routing of read-only queries did not. (`wc -l crates/podnext/src/main.rs crates/podnext/src/commands/*.rs`.)
 
 Measured baseline: `image ls` 28.6 ms, `list -a` 42–53 ms for ten containers, dominated by process
 start plus a full container load; `image ls` reports `SIZE` as a `stat` of the directory (3.4 KB for a
@@ -352,6 +362,8 @@ start plus a full container load; `image ls` reports `SIZE` as a `stat` of the d
 
 ### 9.3 The interactive shell — the largest untapped value
 
+**Status (5 Nov 2026): open.** One item landed: `podnext doctor` on the host and inside the guest, 12 checks with a container (`285720a`, `a6c4fa6`; #45). The rest is not done: real `--detach` plus `attach` (the command still refuses, #47), terminal fidelity (`SIGWINCH` resize, `TERM` / `COLORTERM`, UTF-8 locale, a default `PS1`), the `run ... -- <cmd>` quoting table, and the soak run. `known-limitations.md` lists these under "Not measured yet".
+
 Being able to `login` is not the same as enjoying the shell daily. Ordered by what blocks people:
 
 | Work item | Acceptance criterion |
@@ -364,6 +376,8 @@ Being able to `login` is not the same as enjoying the shell daily. Ordered by wh
 | `podnext doctor` on the host and inside the guest | reports DNS, `/dev/shm`, `os-release`, cgroup, TMPDIR, proot argv with pass/fail |
 
 ### 9.4 Explicit non-goals for v0.1.9
+
+**Status (5 Nov 2026): held.** Only `doctor` was added beyond the existing surface (the new top-level command required by section 9.3); `cluster`, `dbus`, `gitops` and `multiarch_build` were not expanded, and there is no TUI (`podnext --help` lists the same command set as before this round).
 
 - No expansion of `cluster`, `dbus`, `gitops` or `multiarch_build` (`pn-next` is already 23,760 lines).
   Complexity that is not exercised rots, and the project has the receipts: a benchmark target drifted

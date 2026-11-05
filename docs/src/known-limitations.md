@@ -4,7 +4,12 @@ Measured against `podnext 0.1.8` on Termux/Android 16 (aarch64), 5 Nov 2026. Eac
 observation that produced it, so it can be re-checked rather than believed. The raw captures behind
 these entries are in `research/v019_GAP_BASELINE.md`.
 
-## Defects fixed in v0.1.9
+## Defects fixed on `master`, not yet released
+
+`Cargo.toml` still reads `0.1.8` (`grep -m1 '^version' Cargo.toml`) and `podnext version` prints
+`podnext 0.1.8`. The `v0.1.9` release was withdrawn before it was tagged (`5b479d1`, after the
+reverted `be4919d` / `ed7dc3f`), so the fixes below carry no released version. Each entry names the
+command that confirms it in the tree.
 
 **`--bind` and `--volume` were accepted and did nothing.** Two independent causes, both
 measured: `cmd_run` took the argument as `_volume` and never read it, and the rendered bind
@@ -21,6 +26,8 @@ total 0                                                                         
 The full trace, including the captured PRoot argv, is in
 `research/PROOT_BIND_SUFFIX_MEASUREMENT.md`. The documented short form was wrong as well:
 `podnext run ubuntu -v /sdcard:/mnt/sdcard` exited 2 because `-v` is `--verbose`, not `--volume`.
+Both flags are now read and merged (`grep -n 'specs.extend(volume)' crates/podnext/src/commands/container.rs`,
+line 189).
 
 **`image ls` printed a meaningless size and called the container name an `IMAGE ID`.** The size came
 from `du -sb` on the rootfs; when `du` exited non-zero the code fell back to the directory's inode
@@ -42,10 +49,14 @@ readable files supplies a figure marked `>=` when subtrees could not be read, an
 be measured at all prints `unknown`. The column that held the container name is now `CONTAINER`; no
 image ID exists to print, because the metadata carries the image name and tag and no digest.
 
-**`podnext doctor` did not exist.** It does now (see [CLI reference](cli-reference.md#podnext-doctor)):
-host checks for the proot binary and its version, `TMPDIR`, shared memory, DNS, the kernel and cgroups,
-plus guest checks (os-release, architecture, `/dev/shm`, mounts, resolv.conf) when a container is named.
-It does not print the proot argv; `PN_DEBUG=1 podnext run ...` does.
+**`podnext doctor` did not exist.** It does now (see [CLI reference](cli-reference.md#podnext-doctor)).
+Host-only it reports six host checks (proot binary and its version, `TMPDIR`, shared memory, DNS,
+the kernel, cgroups) plus a seventh `guest` placeholder that says no container was named. With
+`--container <name>` it reports twelve: the six host checks and six guest checks (os-release,
+architecture, `/dev/shm`, mounts, resolv.conf, and the proot argv it captured from the real
+invocation). It now prints the proot argv as the `guest proot argv` check; `PN_DEBUG=1 podnext
+run ...` also emits it. Verified with `podnext doctor --container test-alpine --format json`
+(12 checks) and `podnext doctor --format json` (7), against `crates/podnext/src/doctor.rs`.
 
 ## Deliberate limitations
 
