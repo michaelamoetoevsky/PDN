@@ -112,6 +112,9 @@ backlog items are feature requests with no commitment attached.
 | Route read-only metadata through `podnext-daemon` (the end-to-end latency criterion) | #59 |
 | Decide the seccomp profiles: verify per distro, or decline with the measurement | #60 |
 | `--no-kill-on-exit` in the direct-execution path: measure, then decide | #63 |
+| Execute the documented examples in `cli-reference.md`, with a written exclusion list | #64 |
+| Bring `cli.rs`, `main.rs` and `commands/mod.rs` under the ~800-line ceiling, or record the exception | #65 |
+| Measure the bindings and the `USER` story inside a guest | #66 |
 | The map that holds all of the above | #48 |
 
 Release state: `Cargo.toml` is `0.1.8`, `v0.1.9` was withdrawn, and the next tag is `v0.2.0`
