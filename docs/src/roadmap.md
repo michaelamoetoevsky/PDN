@@ -373,3 +373,89 @@ Being able to `login` is not the same as enjoying the shell daily. Ordered by wh
 
 The audit run that accompanies this section supplies the concrete defect list; its findings are
 triaged into the issue tracker and folded back here as they are confirmed.
+
+---
+
+## 10. v0.2.0 — the mobility target
+
+The goal for v0.2.0: podnext is usable as a daily driver with the same mobility as Termux's
+`proot-distro`. Mobility means four things, each with an acceptance test, so "done" is not a matter
+of opinion. Measured against the reference implementation installed on this device (the Python
+`proot-distro` package) and against podnext `v0.1.8`.
+
+### 10.1 Gap: bringing something in
+
+| Capability | Reference | podnext today | Acceptance test for v0.2.0 |
+|---|---|---|---|
+| Install from a registry reference | yes, with alias derivation | partial: `install <image>` with a name, no alias derivation | `podnext install alpine:3.20` creates a container named by the derived alias, no extra flags |
+| Install from a local rootfs tarball | yes | no | `podnext install ./rootfs.tar.gz` works offline |
+| Install from a local OCI image-layout archive | yes (marker-detected, blobs verified against the declared digests) | no | `podnext install ./image.oci.tar` verifies digests and refuses a mismatch |
+| Install from a URL, with checksum | yes | no | `podnext install https://…/rootfs.tar.xz --checksum sha256:…` |
+| Multi-arch | `--architecture` plus emulator | `--qemu` only in a legacy pre-pass | an x86_64 rootfs runs on this aarch64 device through the emulator, documented |
+
+### 10.2 Gap: living inside it
+
+podnext's `login` accepts exactly three things today: `-u/--user`, `--isolated`, and a trailing
+command. The reference polygon is far wider, and this is where "mobility" is felt:
+
+| Flag | Why it matters | Acceptance test |
+|---|---|---|
+| `--bind` (repeatable) | reaching the phone's storage without editing configs | `login c --bind /sdcard:/mnt/sd` works, pass-through mounts verified inside |
+| `--shared-tmp`, `--shared-home`, `--termux-home` | sharing state with Termux deliberately | each is testable inside the guest |
+| `--work-dir` | starting in the right place | `PWD` inside matches |
+| `--hostname` | applications that care | `hostname` inside matches |
+| `--fix-low-ports`, `--redirect-ports` | servers on privileged ports | a listener on 80 inside is reachable as documented |
+| `--no-sysvipc`, `--no-link2symlink` | escape hatches for broken guests | documented and honoured |
+| `--detach` + `attach` | leaving a long job running | detach, then reattach to the same live shell (today the code prints "not fully implemented yet" and stays in the foreground) |
+| `--env` (repeatable) | per-session configuration | visible inside |
+| `--get-proot-cmd` | debuggability: print the exact proot invocation | prints a copy-pasteable command that reproduces the session |
+| `--user` semantics stated honestly | GUI-less guests often need root | `--user` documented with what PRoot can and cannot enforce |
+
+### 10.3 Gap: moving things out and between devices
+
+| Capability | Reference | podnext today | Acceptance test |
+|---|---|---|---|
+| Portable export | OCI layout archive | no | `podnext export <c> ./c.oci.tar`, then `install` it on another device |
+| Import (above) | yes | no | round-trip on the same device first, then across |
+| Registry push/pull of built images | yes (§4.4) | impossible: no layers retained (#39) | `build local` → `push` → `pull` on a second machine |
+| Backup/restore | yes, with compression | yes | already passing; keep it |
+
+### 10.4 Gap: ecosystem
+
+| Capability | Reference | Acceptance test |
+|---|---|---|
+| Short alias | `pd` | `pd` resolves to `podnext` in a Termux package |
+| Completions | bash + fish | `podnext completion` emits both and they load |
+| Curated distro names | a name like `alpine` installs without a registry reference | `podnext search` lists installable names and `install <name>` uses them |
+| Discoverable help | a help page per command | every command's `--help` states its stable/experimental status and one example |
+
+### 10.5 Recycling map — what to take from the reference, and how
+
+Reimplemented from the OCI/Docker specifications, **never transcribed**: the reference is GPL-3.0 and
+this project is `GPL-2.0-or-later`; the boundary is described in `research/IMAGE_STORE_AND_PUSH.md`
+§5. What is taken is the *architecture*, module by module:
+
+| Reference area | What it does | podnext counterpart to build |
+|---|---|---|
+| layer cache + manifest cache | digest-addressed blobs; the image is artifacts, the rootfs is derived | new `image-store` module (§4.4) |
+| pull / push | Docker Registry v2 with blob skipping, streaming, auth scoping | registry transport (§4.4) |
+| local archive install | raw rootfs tar and OCI layout, digests verified, reads bounded | `podnext install <archive>` |
+| build engine + layer differ | one layer per instruction, whiteouts, multi-stage with per-stage scopes | replaces the current single-rootfs builder |
+| login option polygon | isolated / shared / bindings / ports / detach / user | widen `login` to §10.2 |
+| session registry | recorded sessions, consistent `ps`/`kill`, teardown | extend what exists; add detach/attach |
+| sysdata, shm, l2s, dirfd | /proc stubs, shared memory, hardlink emulation, descriptor VFS | already ported in earlier rounds — verify parity, do not rewrite |
+| state dir + paths | honours `TERMUX__HOME`, `TERMUX__PREFIX`, XDG | replace 12 hard-coded Termux paths |
+| help pages + alias + completions | discoverability | §10.4 |
+
+### 10.6 Sequencing
+
+- **v0.1.9** (current): stability, honesty, module split, cached index, env-var paths, and the crash
+  class filed as #41. No new top-level commands; no TUI.
+- **v0.2.0**: §10.1–10.4. The image store (§4.4) is the spine, because import/export, push/pull and
+  build-with-layers all sit on it; the `login` polygon is the other half and is independent of it, so
+  the two can proceed in parallel.
+- Performance is not a later phase: the cached container index and the daemon-owned state are v0.1.9
+  work precisely because they make every v0.2.0 command cheaper by construction.
+
+Acceptance for the whole section: the 13-agent audit findings triaged, the four tables above
+satisfied, and a two-device round trip demonstrated end to end.
