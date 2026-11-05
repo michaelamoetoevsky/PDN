@@ -224,8 +224,13 @@ the withdrawn attempt: the detach/attach round trip is exercised by the smoke te
 seen), so the reattach path has coverage that runs at release time rather than a claim in a document.
 
 **Why the artifact comes from `087bc0a` and not from the tag's commit.** `ci.yml` filters on paths
-(`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`, `deny.toml`, `.github/workflows/**`) and has no
-`workflow_dispatch`, so a documentation-only commit produces no artifact at all. The release commit
+(`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`, `deny.toml`, `.github/workflows/**`), so a
+documentation-only commit produces no run and therefore no artifact. **Correction (6 Nov):** this paragraph
+originally added "and has no `workflow_dispatch`", which is false and was false when written - `ci.yml` has
+carried `workflow_dispatch` since its first commit (`d35ec30`) and still did at `v0.1.8`. The path filter
+alone is the whole mechanism, and it also supplies the cleaner remedy that should have been recommended here:
+dispatch the workflow by hand on the release commit, so its own artifact exists and no diff proof is needed.
+The release commit
 (`0881275`) touches documentation only, and the proof that this is the same code is a diff rather than a
 promise:
 

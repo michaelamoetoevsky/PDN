@@ -39,6 +39,23 @@ that carries it, so it can be re-derived with `git show <sha>`.
   bind exists** anywhere in the option surface, and `add_induced_bindings()` is reconfiguration-only - so
   the lookalike directory tree a guest sees is PDN's own making, as #66 measured, not proot's (`3870792`).
 
+- Three research documents carried a **false** claim that `ci.yml` has no `workflow_dispatch`. It has carried
+  one since its first commit (`d35ec30`), and still did at `v0.1.8` (`git show v0.1.8:.github/workflows/ci.yml`,
+  line 26). The path filter alone explains why a documentation-only push runs nothing, and it supplies a better
+  remedy than the one those documents recommended: dispatch the workflow by hand on the release commit, so its
+  own artifact exists. Each correction is visible in place rather than rewritten silently.
+
+### Removed
+
+- The second, tag-triggered release job in `ci.yml`. The tag commit's `PDN CI/CD` run was **red** because of
+  it - `aarch64-linux-android-ranlib: not found` in the vendored OpenSSL build, exit 101 - and since
+  `scripts/preflight_release.sh` refuses a run whose conclusion is not `success`, a permanently red job inside
+  the tag run blocked the intended release path. It was a duplicate publisher (it ends in
+  `softprops/action-gh-release`, as `release.yml` does), its body was hard-coded boilerplate that would have
+  overwritten the curated notes had it ever run, its binaries were a second build path that preflight does not
+  verify, and nothing in the repository referenced it or the tarballs it built. 124 lines removed, nothing
+  added, one publisher remains (`3ae1d37`; #77).
+
 ## [0.2.0] - 2026-11-06
 
 Tag `v0.2.0`. 123 commits since `v0.1.8` (`git log --oneline v0.1.8..v0.2.0 | wc -l`) across 138 files, and

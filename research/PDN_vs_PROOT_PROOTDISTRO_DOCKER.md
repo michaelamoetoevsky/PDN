@@ -147,10 +147,14 @@ workflow file.
 targets, integration test, security audit, benchmarks, documentation build, artifact aggregation),
 `cross-compile.yml`, `benchmark.yml`, `benchmark-report.yml`, `dependency-updates.yml`,
 `devcontainer-test.yml`, `issue-ledger.yml`, `release.yml`. Fuzzing is wired in. That is not the weak part of
-this project; the weak parts are that `ci.yml` cannot be run deliberately (no `workflow_dispatch` **M**,
-which is why the v0.2.0 release needed a diff proof to reuse an older commit's artifact), that the runner's
-warning ceiling cannot be re-recorded without its raw log (#73), and that the release body used to be
-`git log -n 50` (fixed this release).
+this project; the weak parts are that `ci.yml` filters on paths, so a documentation-only push runs nothing at
+all (corrected here: an earlier version of this paragraph claimed `ci.yml` had no `workflow_dispatch`; it has
+had one since its first commit - `git show v0.1.8:.github/workflows/ci.yml`, line 26), that the runner's
+warning ceiling cannot be re-recorded without its raw log (#73), that the release body was first
+`git log -n 50` and then, once that was fixed, arrived as 8 KB of notes on **one line** because the workflow
+escaped the notes into a line-oriented Actions output (`#75`, fixed, and the published body repaired), and
+that a second tag-triggered release job in `ci.yml` could never succeed and would have overwritten the
+curated body with stale boilerplate had it ever run (`#77`, removed).
 
 Docker's infrastructure lesson is scale rather than shape: separate repositories with their own CI for CLI,
 daemon, compose and buildx **K**, which is also why its `plugin` command exists.

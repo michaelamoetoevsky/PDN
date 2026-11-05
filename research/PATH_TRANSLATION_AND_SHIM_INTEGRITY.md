@@ -300,13 +300,18 @@ container image of `podnext` itself. Installation is a `curl | bash` of a script
 (4.1). For a tool whose pitch is "the safe way to run a distro on Termux", that is the weakest link in the
 chain, and it is the same link `install.sh` sits on.
 
-### 4.4 `ci.yml` cannot be run deliberately
+### 4.4 `ci.yml` filters on paths, so a documentation-only push runs nothing
 
-**Measured**: it triggers on push paths (`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`, `deny.toml`,
-`.github/workflows/**`) with no `workflow_dispatch`. Consequence, hit during this release: the release commit
-touched documentation only, so no Android artifact existed for it, and the pre-tag smoke test used the last
-commit that touched code - with `git diff --quiet <sha>..HEAD -- crates/ Cargo.toml Cargo.lock` as proof the
-code was identical. One line of YAML removes the workaround.
+**Measured, and corrected.** It triggers on push paths (`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`,
+`deny.toml`, `.github/workflows/**`). An earlier version of this section added "with no `workflow_dispatch`",
+which is **false and was false when it was written**: `ci.yml` has carried `workflow_dispatch` since its
+first commit (`d35ec30`), and still did at `v0.1.8` (`git show v0.1.8:.github/workflows/ci.yml`, line 26).
+What actually happened is the path filter alone: the release commit touched documentation only, so no run
+existed for it, and the pre-tag smoke test used the last commit that touched code - with
+`git diff --quiet <sha>..HEAD -- crates/ Cargo.toml Cargo.lock` as proof the code was identical. The
+correction also carries its own remedy: since `workflow_dispatch` is present, a release commit that touches
+no code can be dispatched by hand and produce its own artifact, which is better than the diff proof. A push
+that touches `.github/workflows/**` triggers the workflow, which is how this was caught.
 
 ### 4.5 Extension surface: none, and that may be right
 
@@ -362,7 +367,9 @@ as IPC with a token (option C), not as a file on a path.
    them as a workflow artifact. One step to attach `SHA256SUMS` to the release, and it is the piece that makes
    (1) fixable rather than merely regrettable.
 3. **Deploy the documentation.** `docs/book.toml` and 16 pages exist; nothing publishes them (section 4.2).
-4. **`workflow_dispatch` on `ci.yml`** (section 4.4). One line, removes the release-time workaround.
+4. **~~`workflow_dispatch` on `ci.yml`~~** (section 4.4). Withdrawn: it is already there and always has been.
+   The real remedy for a release commit that touches no code is to dispatch the workflow by hand on that
+   commit, so its own artifact exists and no diff proof is needed.
 5. **A `pd` alias and an example in the 23 commands that lack one** (section 5). The cheapest adoption work
    in the document, and the CLI reference contract test already parses those blocks.
 6. **`restore`, `clear-cache`, and install from a local archive** (section 3), in that order: a backup without
