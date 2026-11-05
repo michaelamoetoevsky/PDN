@@ -300,10 +300,10 @@ CHECKS: list[dict] = [
 
     # ── #57: detach + attach is a round trip, and the refusal is gone ──────────
     dict(issue="57", claim="a detached run is spawned as its own session host",
-         cmd="grep -rnF 'fn spawn_detached_session' crates/podnext/src/native.rs",
+         cmd="grep -rnF 'fn spawn_detached_session' crates/podnext/src",
          needle="fn spawn_detached_session"),
     dict(issue="57", claim="attach reconnects through the session host, instead of creating a session",
-         cmd="grep -rnF 'fn run_session_host' crates/podnext/src/native.rs", needle="fn run_session_host"),
+         cmd="grep -rnF 'fn run_session_host' crates/podnext/src", needle="fn run_session_host"),
     dict(issue="57", claim="the refusal that a detached session cannot be re-entered is gone",
          cmd="grep -rnF 'a detached session cannot be re-entered' crates/podnext/src || echo GONE",
          needle="GONE"),
