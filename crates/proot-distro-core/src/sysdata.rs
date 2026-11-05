@@ -135,7 +135,6 @@ btime 1750000000
 processes 8944
 procs_running 2
 procs_blocked 0
->>>>>>> 5b40f68 (fix(proc): sysdata virtualization, /sys empty mask, /proc/net stubs, umask (Batch G))
 ";
 
 /// System uptime in seconds (from CLOCK_BOOTTIME).
