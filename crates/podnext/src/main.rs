@@ -3219,12 +3219,23 @@ async fn cmd_network_inspect(networks: Vec<String>, format: OutputFormat) -> Res
 
 async fn cmd_network_rm(networks: Vec<String>) -> Result<()> {
     let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let mut errors = 0;
 
-    for name in networks {
-        match core.network_manager().remove(&name) {
-            Ok(_) => println!("Removed network: {}", name),
-            Err(e) => eprintln!("Failed to remove network {}: {}", name, e),
+    for name in &networks {
+        match core.network_manager().remove(name) {
+            Ok(_) => println!("Removed network: {}", proot_distro_core::escape_name(name)),
+            Err(e) => {
+                eprintln!(
+                    "Failed to remove network {}: {}",
+                    proot_distro_core::escape_name(name),
+                    e
+                );
+                errors += 1;
+            }
         }
+    }
+    if errors > 0 {
+        anyhow::bail!("Failed to remove {} network(s)", errors);
     }
     Ok(())
 }
@@ -3924,10 +3935,14 @@ async fn cmd_volume_inspect(volumes: Vec<String>, format: OutputFormat) -> Resul
 
 async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
     let mut core = proot_distro_core::ProotDistroCore::new()?;
+    let mut errors = 0;
 
-    for name in volumes {
+    for name in &volumes {
         if !force {
-            print!("Remove volume '{}'? [y/N]: ", name);
+            print!(
+                "Remove volume '{}'? [y/N]: ",
+                proot_distro_core::escape_name(name)
+            );
             io::stdout().flush()?;
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
@@ -3936,10 +3951,20 @@ async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
                 continue;
             }
         }
-        match core.storage_manager().remove_volume(&name) {
-            Ok(_) => println!("Removed volume: {}", name),
-            Err(e) => eprintln!("Failed to remove volume {}: {}", name, e),
+        match core.storage_manager().remove_volume(name) {
+            Ok(_) => println!("Removed volume: {}", proot_distro_core::escape_name(name)),
+            Err(e) => {
+                eprintln!(
+                    "Failed to remove volume {}: {}",
+                    proot_distro_core::escape_name(name),
+                    e
+                );
+                errors += 1;
+            }
         }
+    }
+    if errors > 0 {
+        anyhow::bail!("Failed to remove {} volume(s)", errors);
     }
     Ok(())
 }

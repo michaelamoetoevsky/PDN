@@ -216,4 +216,13 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(sm.storage_root.parent().unwrap());
     }
+
+    #[test]
+    fn remove_missing_volume_returns_error() {
+        let mut sm = StorageManager::tmp_manager("missing");
+        let res = sm.remove_volume("ghostvol");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("not found"));
+        let _ = std::fs::remove_dir_all(sm.storage_root.parent().unwrap());
+    }
 }
