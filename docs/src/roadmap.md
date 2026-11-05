@@ -418,8 +418,10 @@ of opinion. Measured against the reference implementation installed on this devi
 
 ### 10.2 Gap: living inside it
 
-podnext's `login` accepts exactly three things today: `-u/--user`, `--isolated`, and a trailing
-command. The reference polygon is far wider, and this is where "mobility" is felt:
+podnext's `login` accepts exactly two things today: `--isolated` and a trailing command. `-u/--user`
+is refused — the guest runs as the mapped root (see [Known limitations](known-limitations.md)) — so it
+is no longer part of the accepted surface. The reference polygon is far wider, and this is where
+"mobility" is felt:
 
 | Flag | Why it matters | Acceptance test |
 |---|---|---|

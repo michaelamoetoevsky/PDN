@@ -12,9 +12,10 @@ inside the guest, then holds the documentation to it:
   2. That the host home is not mounted (a host marker file must be invisible in the guest).
   3. The guest<->host file exchange for `/tmp` and `$HOME`, both directions, with the exact host
      paths (`~/.podnext/containers/<name>/tmp` and `.../rootfs/root`).
-  4. The USER story: `id` in the guest is the mapped root and `doctor` records `--change-id=0:0:0`;
-     the build output that states `USER` is not enforced is left to the unit tests, and whether
-     `run` states the user is reported as an observation (it does not today).
+  4. The USER story: `id` in the guest is the mapped root, `doctor` records `--change-id=0:0:0`, and
+     `run` now states the mapped root on **stderr** while stdout stays empty (roadmap section 9.3;
+     the note used to be absent). The build output that states `USER` is not enforced is left to the
+     unit tests.
 
 Negative control: `/mnt/sdcard` and `/nonexistent_pdn_probe` are NOT mapped and must be ABSENT -
 proving the check distinguishes mapped from unmapped paths.
@@ -137,15 +138,18 @@ def main() -> int:
         checks.append(("host/guest exchange", "SKIP",
                        f"store not at {store}; is PDN_ROOT redeclared?"))
 
-    # 4. USER story: the guest runs as the mapped root, and doctor records how.
+    # 4. USER story: the guest runs as the mapped root, doctor records how, and `run` now states it
+    # on stderr while stdout stays empty (roadmap 9.3 - the note used to be absent entirely).
     rc, out = run_guest("id")
     add("guest runs as mapped root", "uid=0(root)" in out, out.strip())
     rc, out = run_host(["doctor", "--container", CONTAINER, "--format", "json"])
     add("doctor records --change-id=0:0:0", "--change-id=0:0:0" in out,
         "present" if "--change-id=0:0:0" in out else "absent")
-    rc, out = run_guest("true")
-    print(f"NOTE  `podnext run {CONTAINER} -- true` stdout/stderr: {out!r} "
-          f"(run does not state the user; roadmap 9.3 wants it to)")
+    p = subprocess.run([BIN, "run", CONTAINER, "--", "true"],
+                       capture_output=True, text=True, env=ENV, timeout=180)
+    add("run states the user on stderr, stdout stays empty",
+        p.stdout == "" and "NOTE: the guest runs as root (uid 0)" in p.stderr,
+        f"stdout={p.stdout!r} stderr={p.stderr.strip()!r}")
 
     width = max(len(n) for n, _, _ in checks)
     for name, status, detail in checks:

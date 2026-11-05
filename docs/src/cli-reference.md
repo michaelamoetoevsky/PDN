@@ -142,14 +142,13 @@ podnext login <CONTAINER> [OPTIONS] [-- <SHELL_ARGS>...]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `-u, --user <USER>` | User to run as |
+| `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.2.0) |
 | `--isolated` | Run in isolated mode (do not mount host storage or Termux home directory) |
 
 **Examples:**
 ```bash
 podnext login ubuntu
 podnext login ubuntu -- /bin/bash
-podnext login ubuntu --user 1000
 podnext login debian --isolated
 ```
 

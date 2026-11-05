@@ -398,7 +398,13 @@ pub async fn cmd_sessions(format: OutputFormat) -> Result<()> {
             }
         }
     }
-    eprintln!("\nNote: Use 'podnext attach <container>' to create a new session.");
+    // `attach` never creates a session: it reconnects to one started with `run --detach`, and
+    // with none running for the container it exits 1 and names the command that starts one. The
+    // old note told the caller the opposite.
+    eprintln!(
+        "\nNote: 'podnext attach <container>' reconnects to a session started with \
+         'podnext run --detach <container>'; it does not create one."
+    );
     Ok(())
 }
 

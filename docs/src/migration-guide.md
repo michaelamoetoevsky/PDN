@@ -56,7 +56,7 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 |--------------|-----|-------|
 | (manual) | `podnext ps` | List active sessions |
 | (manual) | `podnext sessions` | Better formatted sessions |
-| (manual) | `podnext attach <session>` | Attach to running session |
+| (manual) | `podnext attach <container>` | Attach (reconnect) to a running session; the argument is the container name |
 | (manual) | `podnext kill <container>` | Stop container |
 
 ### Network & Storage

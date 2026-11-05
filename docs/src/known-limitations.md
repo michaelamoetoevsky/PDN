@@ -58,6 +58,26 @@ invocation). It now prints the proot argv as the `guest proot argv` check; `PN_D
 run ...` also emits it. Verified with `podnext doctor --container test-alpine --format json`
 (12 checks) and `podnext doctor --format json` (7), against `crates/podnext/src/doctor.rs`.
 
+**`login -u/--user` was accepted and ignored; it now refuses.** The [CLI reference](cli-reference.md)
+listed `-u, --user <USER>` for `login` as "User to run as", but the value only reached
+`LoginOptions.user` and nothing read it: `podnext login alpine --user 1000 -- id` printed
+`uid=0(root)`, byte-identical to the same login without the flag (measured inside the guest, #66).
+`run` already refused the same flag; `login` now refuses it the same way — exit 1 with the
+mapped-root reason on stderr. Confirm: `podnext login alpine --user 1000 -- id` exits 1 and names
+`--change-id=0:0:0`.
+
+**`run`/`login` printed nothing about the user the guest runs as.** Roadmap section 9.3 asks that
+the build/run output state it, and `build local` already does. Both commands now print one line to
+**stderr** before the guest takes the terminal —
+
+```
+NOTE: the guest runs as root (uid 0): PRoot maps every guest id to the single host uid via `--change-id=0:0:0`, so there is no privilege separation
+```
+
+— so the machine-readable stream is untouched: `podnext run alpine -- true` exits 0 with stdout
+still empty, and the note appears on stderr. Confirm: `podnext run alpine -- true` writes the note
+to stderr and nothing to stdout.
+
 ## Deliberate limitations
 
 - **Exit codes**: `0` success, `1` general error, `2` invalid arguments. A command run inside a
@@ -144,23 +164,6 @@ run ...` also emits it. Verified with `podnext doctor --container test-alpine --
   `--kill-on-exit`, because `proot-core` passes the token unconditionally rather than from the config
   field. The flag would be accepted and never enforced, so it refuses with that measurement
   (issue #63).
-
-## Measured defects not yet fixed
-
-Measured on 5 Nov 2026, inside `alpine`, with this branch's build (`podnext 0.1.8`). Kept here rather
-than fixed in passing because the owning files (the `login`/`run` command path) are not this file's.
-
-- **`podnext login -u/--user` is accepted and ignored.** The [CLI reference](cli-reference.md) lists
-  `-u, --user <USER>` for `login` as "User to run as", but the flag only reaches `LoginOptions.user`
-  and nothing reads it: `podnext login alpine --user 1000 -- id` runs as `uid=0(root)`, byte-identical
-  to the same command without the flag. `run` refuses the same flag (exit 1, "the guest runs as the
-  mapped root"), so the two paths disagree; `login` should refuse it for the same reason.
-- **`podnext run`/`login` print nothing about the user the guest runs as.** Roadmap section 9.3 asks
-  that the build/run output state it. `podnext build local` does — a Dockerfile with `USER nobody`
-  prints `NOTE: USER is not enforced here...` — but a plain `podnext run alpine -- true` exits 0
-  silently and `--verbose` adds nothing. What the guest runs as is visible only through
-  `podnext doctor --container alpine` (its proot argv carries `--change-id=0:0:0`) or by running `id`
-  in the guest (`uid=0(root) gid=0(root)`).
 
 ## Not measured yet
 

@@ -55,7 +55,7 @@ use std::path::PathBuf;
     podnext quota usage web-srv               # Monitor real-time resource usage\n\
     podnext watchdog status                   # Monitor circuit breaker & watchdog\n\
     podnext log tail web-srv                  # Stream logs in real-time\n\
-    podnext dbus serve --socket /tmp/d.sock   # Run IPC D-Bus broker\n\
+    podnext dbus serve --socket $PREFIX/tmp/pn-dbus.sock  # Run IPC D-Bus broker\n\
     podnext dbus call ...                     # Send D-Bus method call\n\
     podnext gitops sync                       # Synchronize declarative GitOps manifests\n\
     podnext gitops status                     # Check GitOps app sync status\n\
@@ -255,12 +255,12 @@ pub(crate) enum Commands {
         EXAMPLES:\n  \
         podnext login debian\n  \
         podnext login ubuntu -- /bin/bash\n  \
-        podnext login debian --user 1000"
+        podnext login debian --isolated"
     )]
     Login {
         /// Container name
         container: String,
-        /// User to run as
+        /// User to run as (not implemented: `login` refuses it; the guest runs as the mapped root)
         #[arg(short, long)]
         user: Option<String>,
         /// Run in isolated mode (do not mount host storage or Termux home directory)
@@ -476,7 +476,8 @@ pub(crate) enum Commands {
     Attach {
         /// Container name
         container: String,
-        /// User to run as
+        /// User to run as (not implemented: `attach` refuses it; a session's user is fixed when it
+        /// starts, and the guest runs as the mapped root)
         #[arg(short, long)]
         user: Option<String>,
         /// Command to run instead of shell (after --)

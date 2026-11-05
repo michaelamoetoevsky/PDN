@@ -20,9 +20,18 @@ fn test_sessions_json_output_clean() {
         .unwrap_or_else(|e| panic!("stdout was not valid json: {}\nerror: {}", stdout, e));
     assert!(parsed.is_array());
 
-    // Human note must be on stderr, not stdout
-    assert!(!stdout.contains("Note: Use 'podnext attach"));
-    assert!(stderr.contains("Note: Use 'podnext attach"));
+    // The human note must be on stderr, not stdout, and it must describe what `attach` actually
+    // does: reconnect to a session started with `run --detach`. It never creates one, so the note
+    // must not claim otherwise.
+    assert!(!stdout.contains("podnext attach"));
+    assert!(
+        stderr.contains("podnext attach") && stderr.contains("reconnect"),
+        "the sessions note belongs on stderr and must say attach reconnects; stderr was: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("create a new session"),
+        "the sessions note must not tell the caller attach creates a session; stderr was: {stderr:?}"
+    );
 }
 
 #[test]
