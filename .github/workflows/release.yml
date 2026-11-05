@@ -341,19 +341,39 @@ jobs:
           fi
           
           # Prefer the curated section for this version, and fall back to the commit list only when the
-          # changelog has none - saying so in the body instead of substituting silently. Read the file
-          # BEFORE overwriting it: `git log -n 50` used to be the only source, which shipped fifty commit
-          # subjects cut at a count with nothing to do with the release.
+          # changelog has none - saying so in the body instead of substituting silently. The notes are
+          # written to a file of their own: the release reads that file (body_path), because routing them
+          # through an Actions output meant flattening every newline to a literal `\n` and shipping that.
           if BODY=$(sh scripts/extract_changelog.sh CHANGELOG.md "$VERSION" 2>/dev/null); then
-            printf '%s\n' "$BODY" > CHANGELOG.md
+            printf '%s\n' "$BODY" > release-notes.md
           else
             printf 'The changelog has no section for `%s`, so these are the last fifty commit subjects.\n\n' \
-              "$VERSION" > CHANGELOG.md
-            git log --pretty=format:"- %s (%h)" -n 50 >> CHANGELOG.md
+              "$VERSION" > release-notes.md
+            git log --pretty=format:"- %s (%h)" -n 50 >> release-notes.md
+          fi
+
+          # Two guards, because the published v0.2.0 body was 8 KB of notes on one line, with `\n` visible
+          # where the line breaks should have been, and nothing in the pipeline noticed:
+          #   - the notes must have real line breaks;
+          #   - the notes must not contain a literal backslash-n token.
+          # Shown to fail before being trusted: with the escape applied, both guards refuse (run
+          # `sh scripts/check_release_notes.sh` on an escaped copy to reproduce).
+          lines=$(wc -l < release-notes.md)
+          if [ "$lines" -lt 5 ]; then
+            echo "ERROR: release notes are $lines lines - the notes were flattened, which is what the v0.2.0 body did"
+            exit 1
+          fi
+          if grep -qF '\n' release-notes.md; then
+            echo "ERROR: the release notes contain a literal backslash-n token; newlines were escaped somewhere in the pipeline"
+            grep -nF '\n' release-notes.md | head -3
+            exit 1
           fi
           
-          # Output changelog and version
-          echo "changelog=$(cat CHANGELOG.md | sed 's/"/\\"/g' | sed ':a;N;s/\n/\\n/g;ta')" >> $GITHUB_OUTPUT
+          # Only the version travels through $GITHUB_OUTPUT. An Actions output is a single line, so the
+          # body used to be smuggled through one with every newline rewritten to a literal backslash-n -
+          # and the release action does not unescape that. The published v0.2.0 body began with the two
+          # characters `\` `n` and had no line breaks at all, which `od -c` on the release shows. The notes
+          # already exist as a file two lines above; the release reads that file instead.
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
@@ -361,7 +381,7 @@ jobs:
         with:
           tag_name: ${{ steps.changelog.outputs.version }}
           name: PDN ${{ steps.changelog.outputs.version }}
-          body: ${{ steps.changelog.outputs.changelog }}
+          body_path: release-notes.md
           files: |
             release-artifacts/podnext-aarch64-linux-android
             release-artifacts/podnext-x86_64-linux-android
