@@ -97,6 +97,32 @@ wired both new harnesses into CI, and filed #70 for a committed conflict marker 
 | Two fabricated sample outputs in `cli-reference.md`; `config validate` exits 3 where the doc says 2 | doc plus contract question |
 | #65: `cli.rs` 1,450 and `main.rs` 1,170 above the ceiling | in flight (wave 6, `dept/split`); the tracked help fixture is its guard rail |
 
+### Wave 6 - landed (`fc6d288`, base `a6c8660`)
+
+One department, 14 files, +1606/-1496. `cli.rs` 1450 -> **687** (the floor: the 453-line `Commands` enum
+cannot leave the root), `main.rs` 1170 -> **479**, and the Clap surface now lives in eight `cli/` domain
+modules. The 123-screen dump is byte-identical to the tracked fixture with **no regeneration**, which is
+the point: a pure move has no business changing rendered text, so the fixture documented itself as
+unnecessary rather than being quietly rewritten. 84 tests green, no test target edited, `podnext` bin
+warnings 26 -> 26 with a byte-identical per-message set.
+
+It drove out two real compile errors: `E0425` (an extracted function stayed private, so the glob
+re-export did not carry it) and `E0616` x13 (`SystemInfo`'s private fields stopped being reachable from a
+sibling module). Both are the ordinary cost of a move and neither changed behaviour.
+
+The cherry-pick conflicted on `docs/src/roadmap.md` - the department and the parent had both edited the
+same status paragraph - and was resolved by taking the department's measured numbers and appending what the
+criterion actually says: it reads "no file over ~800 lines", and `native.rs` is 1,605, so the row stays
+**half** and **#72** carries the gap.
+
+### Wave 7 - in flight (`dept/native`, base `fc6d288`)
+
+`native.rs` - the OCI install path (Docker Hub, manifests, layer download/extract, smoke test) plus the
+container/session path (`run`/`login`, metadata, mount specs) including the signal plumbing where
+regression #68 lived. Guard differences are stated in its brief: the help fixture proves nothing about a
+file with no Clap surface, so the load-bearing evidence is the 84 tests, `shell_fidelity.py`,
+`soak_sessions.py` and the detach/attach round trip.
+
 ### S4 - integration
 
 1. `scripts/integrate_branches.py` for each branch: it counts the commits to pick from the branch's
