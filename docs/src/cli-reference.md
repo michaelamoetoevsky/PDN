@@ -567,10 +567,10 @@ Manage D-Bus IPC broker and service forwarder.
 podnext dbus serve --socket /tmp/pn-dbus.sock
 
 # List registered D-Bus services
-podnext dbus list --socket /tmp/pn-dbus.sock
+podnext dbus list
 
 # Call a method over D-Bus
-podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service.GetStatus --socket /tmp/pn-dbus.sock
+podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service GetStatus --socket /tmp/pn-dbus.sock
 ```
 
 ### `podnext gitops`
