@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-05 07:15:45Z from `43d69e3` (docs(synthesis): record the integration outcome and the four integrati).
+Generated 2026-11-05 09:17:28Z from `28c4594` (test(ledger): gate the CLI reference against the real binary (#42)).
 
 ## Why this exists
 
@@ -17,7 +17,7 @@ silently-regressed fix shows up as a FAIL in a document rather than as a surpris
 | **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
 | **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
 
-**Coverage: 59 checks PASS by direct observation · 0 FAIL · 0 SKIPPED**, across 59 checks covering 25 of 39 issues (14 issues have no automated check).
+**Coverage: 64 checks PASS by direct observation · 0 FAIL · 0 SKIPPED**, across 64 checks covering 26 of 40 issues (14 issues have no automated check).
 
 **Every check in this run produced a verdict**, including the cargo-gated behaviour checks,
 so no fix in this ledger is recorded as PASS on the strength of a source grep alone.
@@ -107,7 +107,7 @@ _state_: CLOSED  ·  _labels_: performance  ·  _closed_: 2026-11-04T11:04:51Z
   - → `crates/proot-distro-core/tests/deep_fs_recursion.rs`
 - [PASS] the deep-recursion test passes
   - `cargo test -p proot-distro-core --test deep_fs_recursion --locked`
-  - → `memguard: env-u-LD pid=14792 pgid=14792 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T071321Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=600MB dur=24s`
+  - → `memguard: env-u-LD pid=23850 pgid=23850 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091717Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=101MB dur=4s`
 
 **#17 [BUG-L1] podnext build local rejects ARG, skips RUN, and produces no usable OCI image**  
 _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T11:04:52Z
@@ -136,7 +136,7 @@ _state_: CLOSED  ·  _labels_: bug, performance  ·  _closed_: 2026-11-04T11:04:
   - → `4336:    fn copy_keeps_sparse_files_sparse() {`
 - [PASS] the sparse-copy unit test passes
   - `cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked`
-  - → `memguard: env-u-LD pid=14583 pgid=14583 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T071306Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1102MB dur=14s`
+  - → `memguard: env-u-LD pid=23264 pgid=23264 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091713Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=193MB dur=4s`
 
 **#19 [CI-1] test_restart_policy_unless_stopped fails: explicit stop loses to restart policy**  
 _state_: CLOSED  ·  _labels_: bug, ci  ·  _closed_: 2026-11-04T04:23:51Z
@@ -188,7 +188,7 @@ _state_: CLOSED  ·  _labels_: bug, ci, performance  ·  _closed_: 2026-11-04T10
   - → `103:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 108:          cargo bench --workspace --bench benchmarks --locked -- \ | 130:          cargo bench --workspace --bench benchmarks --locked -- \`
 - [PASS] the benchmark targets compile (the false-green defect)
   - `cargo bench -p pn-next --no-run --locked`
-  - → `memguard: env-u-LD pid=7707 pgid=7707 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T070501Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1675MB dur=484s`
+  - → `memguard: env-u-LD pid=23013 pgid=23013 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091708Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=105MB dur=4s`
 
 **#30 [CI-5] Benchmark job is unpredictable: 25.7 min then 43+ min, and a baseline step killed with SIGTERM**  
 _state_: CLOSED  ·  _labels_: ci, performance  ·  _closed_: 2026-11-04T15:35:42Z
@@ -211,7 +211,7 @@ _state_: CLOSED  ·  _labels_: ci, flaky-test  ·  _closed_: 2026-11-04T14:30:47
   - → `25:const DEADLINE: Duration = Duration::from_secs(30);`
 - [PASS] the abnormal-restart test passes
   - `cargo test -p pn-next --test supervisor_e2e test_restart_policy_on_abnormal --locked`
-  - → `memguard: env-u-LD pid=15163 pgid=15163 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T071346Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1364MB dur=119s`
+  - → `memguard: env-u-LD pid=24132 pgid=24132 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091722Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=0MB dur=2s`
 
 **#32 Signal lifecycle: stopping a PDN process orphans the guest, and podnext-daemon ignores SIGTERM**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:18Z
@@ -308,6 +308,25 @@ _state_: CLOSED  ·  _labels_: documentation  ·  _closed_: 2026-11-05T00:19:42Z
 - [PASS] the README states the same licence
   - `grep -nF 'GPL-2.0-or-later' README.md`
   - → `286:SPDX-License-Identifier: `GPL-2.0-or-later`. The full text is in [LICENSE](LICENSE).`
+
+**#42 [BUG-DOC] CLI reference documented options that do not exist (exit codes 3-12, 8 inert PN_* vars, --short/--json, ps --all, kill --signal/--timeout, network --ip-range, volume --size/--storage)**  
+_state_: OPEN  ·  _labels_: (none)  ·  _closed_: —
+
+- [PASS] no exit code outside 0/1/2 is documented
+  - `! sed -n '/## Exit Codes/,/## Environment Variables/p' docs/src/cli-reference.md | grep -qE '^\| (3|4|5|6|7|8|9|1[0-2]) \| '`
+  - → ``
+- [PASS] no environment variable is documented that no crate reads
+  - `! grep -qE '^\| `(PN_CONFIG_DIR|PN_DATA_DIR|PN_CACHE_DIR|PN_LOG_LEVEL|PN_GATEWAY_ADDR|PN_RUNTIME|PN_SECURITY_PROFILE|PN_NO_COLOR)`' docs/src/cli-reference.md`
+  - → ``
+- [PASS] the version section does not document --short/--json
+  - `! sed -n '/### `podnext version`/,/^## /p' docs/src/cli-reference.md | grep -qE '^\| `--(short|json)`'`
+  - → ``
+- [PASS] known-limitations.md is registered in the book summary
+  - `grep -qF 'known-limitations.md' docs/src/SUMMARY.md`
+  - → ``
+- [PASS] every documented command and option exists in the real CLI
+  - `cargo test -p podnext --test cli_reference_contract`
+  - → `memguard: env-u-LD pid=24228 pgid=24228 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091724Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=117MB dur=4s`
 
 ## Issues with no automated check (the honest gap)
 
