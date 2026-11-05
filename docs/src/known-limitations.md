@@ -1,0 +1,78 @@
+# Known Limitations
+
+Measured against `podnext 0.1.8` on Termux/Android 16 (aarch64), 5 Nov 2026. Each entry names the
+observation that produced it, so it can be re-checked rather than believed. The raw captures behind
+these entries are in `research/v019_GAP_BASELINE.md`.
+
+## Defects being fixed in v0.1.9
+
+**`--bind` and `--volume` are accepted but do nothing.** Both `run` flags are listed in `--help`, and
+the container starts successfully, but the guest does not see the mounted path:
+
+```sh
+$ echo MARKER-OK > $PREFIX/tmp/bindtest/marker.txt
+$ podnext run test-alpine --bind $PREFIX/tmp/bindtest:/probe -- cat /probe/marker.txt
+cat: can't open '/probe/marker.txt': No such file or directory
+```
+
+The same output is produced with `--volume`, and with neither flag, which is what identifies the
+no-op. The documented short form is wrong too: `podnext run ubuntu -v /sdcard:/mnt/sdcard` exits 2
+because `-v` is `--verbose`.
+
+**`image ls` can print a meaningless size.** The size comes from `du -sb` on the rootfs; when `du`
+exits non-zero the code falls back to the directory's inode size and prints it as if it were real:
+
+```sh
+$ podnext image ls
+| debian | latest | deb-pdn | ... | 3.4 KB |          # the rootfs is 402.1 MB
+$ du -sb ~/.podnext/containers/deb-pdn/rootfs ; echo rc=$?
+du: cannot read directory '.../rootfs/apex': Permission denied
+rc=1
+$ stat -c '%s bytes' ~/.podnext/containers/deb-pdn/rootfs
+3452 bytes
+```
+
+The container carries Android system directories inside its rootfs, an app uid cannot read them, and
+the failure is invisible in the output. A size that cannot be measured should say so.
+
+**`image ls` labels the container name as `IMAGE ID`.**
+
+**`podnext doctor` does not exist.** The roadmap (§9.3) expects a host-and-guest report covering DNS,
+`/dev/shm`, `os-release`, cgroups, `TMPDIR` and the proot argv.
+
+## Deliberate limitations
+
+- **Exit codes**: `0` success, `1` general error, `2` invalid arguments. A command run inside a
+  container propagates the guest's own status unchanged, including `128 + signal`. There are no
+  distinct codes for "container not found", "image not found" and so on; earlier releases documented
+  codes 3–12, none of which any code path returns.
+- **`kill`** runs a fixed teardown sequence (SIGQUIT to the traced root, then a sweep for inherited
+  session descriptors). Selecting the signal and the timeout is not exposed.
+- **`volume create`** takes a driver and driver options only. There is no size or storage-pool
+  selection: a volume is a directory under `$HOME/.podnext/volumes`.
+- **`network create`** takes driver, subnet and gateway. Carving an IP range inside the subnet is not
+  implemented.
+- **`image pull` / `image push`** refuse with an explanation instead of reporting a success they did
+  not achieve: there is no OCI blob store yet, and `podnext install <image>` is the working path.
+- **Temporary files live in `$PREFIX/tmp`.** `/tmp` exists on Android but is not writable by an app
+  uid, and `std::env::temp_dir()` falls back to it when `TMPDIR` is unset.
+
+## Not measured yet
+
+These are claims the project cannot currently make, listed so that the absence is visible:
+
+- `login --detach` followed by `attach` returning to the same shell.
+- Terminal fidelity in the guest: `SIGWINCH` handling, `PS1`, `TERM`/`COLORTERM`, UTF-8 locale.
+- The `podnext run … -- <cmd>` quoting table.
+- A soak run proving no guest processes survive a forced stop.
+
+## Deferred to v0.2.0
+
+- **OCI image store and registry transport** (roadmap §4.4): blob store, manifest cache,
+  digest-addressed layers, pull/push transport. This is the spine of v0.2.0 — import/export and
+  push/pull all depend on it.
+- **Login polygon** (roadmap §10.2): shared home, shared tmp, shared X11, bind presets, work dir,
+  hostname, detach, and the rest of the mobility-parity flag set.
+- **Remaining `/proc` and `/sys` stub cases** for unusual distributions. The current stubs cover the
+  common paths; the remainder is documented rather than guessed at.
+- **No TUI** until the machine interface is stable (roadmap §9.4).

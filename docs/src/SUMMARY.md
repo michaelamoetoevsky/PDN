@@ -4,6 +4,7 @@
 - [Getting Started](getting-started.md)
 - [Architecture](architecture.md)
 - [CLI Reference](cli-reference.md)
+- [Known Limitations](known-limitations.md)
 - [Configuration](configuration.md)
 - [Security](security.md)
 - [Advanced Topics](advanced.md)

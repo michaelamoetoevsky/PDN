@@ -130,8 +130,7 @@ podnext ps [OPTIONS]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--all` | Show all sessions |
-| `--format <FORMAT>` | Output format: table, json, yaml |
+| `--format <FORMAT>` | Output format: table, json, yaml, text |
 
 ### `podnext sessions`
 
@@ -154,14 +153,12 @@ podnext attach <SESSION_ID> [OPTIONS]
 Stop container.
 
 ```bash
-podnext kill <CONTAINER> [OPTIONS]
+podnext kill <CONTAINER>
 ```
 
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--signal <SIGNAL>` | Signal to send (default: SIGTERM) |
-| `--timeout <SECONDS>` | Wait timeout before SIGKILL (default: 10) |
+There are no `--signal` or `--timeout` options: the teardown sequence (SIGQUIT to the traced root,
+then a scan of `/proc/*/fd` for inherited session inodes) is fixed. Selecting the signal is listed in
+`known-limitations.md`.
 
 ### `podnext remove`
 
@@ -388,7 +385,8 @@ podnext network create <NAME> [OPTIONS]
 | `--driver <DRIVER>` | Network driver: bridge, host, none, macvlan |
 | `--subnet <CIDR>` | Subnet for bridge network |
 | `--gateway <IP>` | Gateway IP |
-| `--ip-range <CIDR>` | IP range for allocation |
+
+IP-range carving inside a subnet is not implemented.
 
 ### `podnext network ls`
 
@@ -429,9 +427,11 @@ podnext volume create <NAME> [OPTIONS]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--storage <POOL>` | Storage pool to use |
-| `--size <SIZE>` | Volume size (e.g., 10G) |
-| `--driver <DRIVER>` | Volume driver |
+| `--driver <DRIVER>` | Volume driver (default: `local`) |
+| `--opts <KEY=VALUE>` | Driver options |
+
+Volume size and storage-pool selection are not implemented; a volume is a directory under
+`$HOME/.podnext/volumes`.
 
 ### `podnext volume ls`
 
@@ -540,8 +540,9 @@ podnext version [OPTIONS]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--short` | Short version only |
-| `--json` | JSON output |
+| `-f, --format <FORMAT>` | Output format: `table` (default), `json`, `yaml`, `text` |
+
+There is no `--short` and no `--json`; `podnext version --format json` is the JSON form.
 
 ## Direct Execution (proot-compatible)
 
@@ -566,31 +567,42 @@ podnext -r /path/to/rootfs -q qemu-aarch64 -- /bin/bash
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error |
-| 2 | Invalid arguments |
-| 3 | Container not found |
-| 4 | Image not found |
-| 5 | Network error |
-| 6 | Storage error |
-| 7 | Permission denied |
-| 8 | Resource limit exceeded |
-| 9 | Security policy violation |
-| 10 | Gateway error |
-| 11 | Runtime error |
-| 12 | Internal error |
+| 1 | General error (missing container/image, failed operation, refused stub) |
+| 2 | Invalid arguments (unknown subcommand, missing or conflicting flags) |
+| *n* | The command's own exit status, passed through unchanged |
+
+Three classes are asserted by `crates/podnext/tests/automation_contract.rs`. A command executed inside
+a container (`podnext run … -- cmd`, `podnext login … -- cmd`) propagates the guest's status verbatim,
+including `128 + signal` for a signal death — a wrapper script can test `$?` against the real code.
+Codes 3–12 were documented here but are not produced by any code path; the table above is the
+contract.
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PN_CONFIG_DIR` | Config directory | `~/.config/pn-next` |
-| `PN_DATA_DIR` | Data directory | `~/.local/share/pn-next` |
-| `PN_CACHE_DIR` | Cache directory | `~/.cache/pn-next` |
-| `PN_LOG_LEVEL` | Log level (trace/debug/info/warn/error) | `info` |
-| `PN_GATEWAY_ADDR` | Gateway address | `unix:///run/pn-gateway.sock` |
-| `PN_RUNTIME` | Runtime to use | `auto` |
-| `PN_SECURITY_PROFILE` | Default security profile | `default` |
-| `PN_NO_COLOR` | Disable colored output | `false` |
+These are the variables the code actually reads. Each row names the site that reads it, so the table
+can be re-verified with `grep`.
+
+| Variable | Effect | Read at |
+|----------|--------|---------|
+| `PN_DEBUG` | Any value turns on debug tracing | `pn-next` `pn_trace!` (supervisor, backup_restore) |
+| `PN_NEXT_DEBUG` | Same, for the CLI process | `crates/podnext/src/main.rs:1503` |
+| `PN_NEXT_SERVICES_DIR` | Directory holding service definitions | `crates/podnext/src/commands/mod.rs:614` |
+| `PN_SHM_DIR` | Directory bound to the guest's `/dev/shm` | `crates/proot-distro-core/src/shm.rs:16` |
+| `PDN_BACKUP_DIR` | Backup destination | `crates/pn-next/src/backup_restore/mod.rs:98` |
+| `PDN_CONTAINERS_DIR` | Container store root | `crates/pn-next/src/backup_restore/mod.rs:87` |
+| `PDN_GITOPS_DIR` | GitOps manifest directory | `crates/pn-next/src/gitops/mod.rs:483` |
+| `PROOT_BIN` | Path to the `proot` binary (default: resolved from `PATH`) | `crates/podnext/src/native.rs:129`, `crates/proot-core/src/lib.rs:72` |
+| `RUNTIME_DIR` | Directory holding session runtime state | `crates/proot-distro-core/src/session.rs:25` |
+| `UML4TERMUX_RUNTIME` | Select the uml4termux runtime | `crates/proot-distro-core/src/runtime.rs:205` |
+| `TMPDIR` | Temp base; falls back to `$PREFIX/tmp`, never `/tmp` | `crates/proot-distro-core/src/paths.rs:24` |
+| `PREFIX` | Termux prefix used for the `tmp` fallback | `crates/proot-distro-core/src/paths.rs:24` |
+| `HOME` | Container store root: `$HOME/.podnext` | `crates/proot-distro-core/src/paths.rs` |
+| `PN_TEST_ROOT` | Test-only root override | `crates/proot-distro-core/src/paths.rs:29`, `shm.rs:23` |
+
+`PN_CONFIG_DIR`, `PN_DATA_DIR`, `PN_CACHE_DIR`, `PN_LOG_LEVEL`, `PN_GATEWAY_ADDR`, `PN_RUNTIME`,
+`PN_SECURITY_PROFILE` and `PN_NO_COLOR` were documented here and appear nowhere in `crates/`: nothing
+reads them. They have been removed rather than implemented — a variable that is documented but inert
+is worse than an absent one.
 
 ## Configuration Files
 
