@@ -451,11 +451,22 @@ def main() -> int:
         f"across {len(results)} checks covering {len(checked)} of {len(issues)} issues "
         f"({len(uncovered)} issues have no automated check).",
         "",
-        "**A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the "
-        f"{nskip} SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this",
-        "device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind",
-        "them was not observed in the committed run. Do not read the PASS count as full verification.",
-        "",
+    ]
+    if nskip:
+        lines += [
+            "**A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the "
+            f"{nskip} SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this",
+            "device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind",
+            "them was not observed in the committed run. Do not read the PASS count as full verification.",
+            "",
+        ]
+    else:
+        lines += [
+            "**Every check in this run produced a verdict**, including the cargo-gated behaviour checks,",
+            "so no fix in this ledger is recorded as PASS on the strength of a source grep alone.",
+            "",
+        ]
+    lines += [
         "## Checks that FAIL (a fix that is no longer present)",
         "",
     ]
