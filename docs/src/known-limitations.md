@@ -95,9 +95,18 @@ run ...` also emits it. Verified with `podnext doctor --container test-alpine --
   token (0 occurrences), and this PRoot build has no seccomp option — `proot --help` lists
   `--sysvipc` and `--kernel-release` and nothing else in that family. The flag was parsed and
   dropped; it now refuses with that measurement on stderr, like the other unsupported `run` flags
-  (issue #62). The metadata field `security.seccomp_profile` is inert for the same reason and is
-  recorded for #60, which owns the seccomp decision: enforcing it would need container loading on
-  the run path, so it is not silently upgraded here.
+  (issue #62). The metadata field `security.seccomp_profile` refuses for the same reason (issue #60):
+  measured, no BPF filter is ever built — `SeccompFilter::install` only sets `PR_SET_NO_NEW_PRIVS`
+  and its `filter_program` is an empty buffer the compiler reports as never read — so a container
+  that asks for a profile is told so instead of being started without one. A profile cannot be
+  tailored to a distro while the name is read only as `.is_some()`; enforcing one would need a BPF
+  program builder (`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ...)`) and a runtime that honours it.
+- **`--no-kill-on-exit` is refused; `--kill-on-exit` is the default and cannot be turned off.**
+  Measured in the direct-execution path: the generated proot argv is token-for-token identical with
+  `--kill-on-exit`, with `--no-kill-on-exit` and with neither — 27 tokens, exactly one
+  `--kill-on-exit`, because `proot-core` passes the token unconditionally rather than from the config
+  field. The flag would be accepted and never enforced, so it refuses with that measurement
+  (issue #63).
 
 ## Not measured yet
 

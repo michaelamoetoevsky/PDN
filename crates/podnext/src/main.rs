@@ -260,6 +260,27 @@ async fn run() -> Result<()> {
             i += 1;
         }
 
+        // Measured on this device (issue #62/#63): in this path the generated proot argv is
+        // token-for-token identical with and without either flag -- 27 tokens, exactly one
+        // `--kill-on-exit` (proot-core passes it unconditionally), zero seccomp tokens. Both are
+        // refused here, before any work, rather than parsed and dropped. The string
+        // `--seccomp is not implemented` is the one the ledger greps for (issue #62).
+        if seccomp {
+            anyhow::bail!(
+                "--seccomp is not implemented: this PRoot build applies no seccomp filter, so the \
+                 flag would be accepted and never enforced (the generated proot argv is \
+                 byte-identical with and without it). Drop the flag, or use a runtime that can \
+                 enforce it."
+            );
+        }
+        if no_kill_on_exit {
+            anyhow::bail!(
+                "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \
+                 unconditionally, so the flag would be accepted and never enforced (the generated \
+                 proot argv is byte-identical with and without it). Drop the flag (issue #63)."
+            );
+        }
+
         if rootfs.is_none() {
             eprintln!("Error: -r/--rootfs is required for direct execution mode");
             std::process::exit(1);
@@ -303,6 +324,16 @@ async fn run() -> Result<()> {
             "--seccomp is not implemented: this PRoot build applies no seccomp filter, so the flag \
              would be accepted and never enforced (the generated proot argv is byte-identical with \
              and without it). Drop the flag, or use a runtime that can enforce it."
+        );
+    }
+
+    // Same class (issue #63), measured the same way: `--no-kill-on-exit` cannot turn off a
+    // `--kill-on-exit` that `proot-core` passes unconditionally, so the flag changes nothing.
+    if cli.no_kill_on_exit {
+        anyhow::bail!(
+            "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \
+             unconditionally, so the flag would be accepted and never enforced (the generated proot \
+             argv is byte-identical with and without it). Drop the flag."
         );
     }
 
@@ -401,12 +432,10 @@ async fn execute_direct(cli: &Cli, trailing_args: &[String]) -> Result<()> {
         engine.config.trace = true;
     }
 
-    // Set kill-on-exit
+    // Kill-on-exit is the default and `proot-core` passes `--kill-on-exit` to proot
+    // unconditionally; `--no-kill-on-exit` refuses before dispatch instead (issue #63).
     if cli.kill_on_exit {
         engine.config.kill_on_exit = true;
-    }
-    if cli.no_kill_on_exit {
-        engine.config.kill_on_exit = false;
     }
 
     // Set sysvipc

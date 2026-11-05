@@ -167,7 +167,8 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 | `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.2.0) |
 | `-t, --tty` | Accepted for compatibility: stdio is inherited, so a TTY is used when the caller has one |
 | `-i, --interactive` | Accepted for compatibility: stdin is inherited unless the caller redirects it |
-| `--seccomp` | Refused: this PRoot build applies no seccomp filter, and the flag used to be accepted and dropped. The proot argv is byte-identical with and without it (0 seccomp tokens; 133 `--bind` entries either way) and `proot --help` lists no seccomp option at all (issue #62) |
+| `--seccomp` | Refused: this PRoot build applies no seccomp filter, and the flag used to be accepted and dropped. The proot argv is byte-identical with and without it (0 seccomp tokens; 133 `--bind` entries either way) and `proot --help` lists no seccomp option at all (issue #62). A `security.seccomp_profile` in container metadata is refused for the same reason (issue #60) |
+| `--no-kill-on-exit` | Refused: `proot-core` passes `--kill-on-exit` to proot unconditionally, so the proot argv is byte-identical with and without this flag (issue #63). `--kill-on-exit` is the default and cannot be turned off |
 
 A **refused** flag exits 1 with the reason on stderr and does not run the command. Accepting a flag and
 then ignoring it is what `run` used to do, and a caller cannot tell that from success.
@@ -750,7 +751,7 @@ io_max_read = "100MB/s"
 io_max_write = "100MB/s"
 
 [container.security]
-seccomp_profile = "default"
+seccomp_profile = "default" # refused: this PRoot build installs no BPF filter (issue #60)
 no_new_privileges = true
 read_only_rootfs = false
 user_namespace = false

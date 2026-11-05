@@ -234,7 +234,12 @@ impl ContainerManager {
             } else {
                 container.config.command.clone()
             };
-            engine_guard.config.seccomp = container.config.security.seccomp_profile.is_some();
+            // A profile recorded in the container metadata cannot be enforced (issue #60): no BPF
+            // filter is built, so refuse instead of starting the container with the field dropped.
+            crate::security::assert_seccomp_profile_supported(
+                &container.config.security.seccomp_profile,
+            )?;
+            engine_guard.config.seccomp = false;
             engine_guard.config.kernel_release = container.config.kernel_release.clone();
             engine_guard.config.hostname = container.config.hostname.clone();
         }

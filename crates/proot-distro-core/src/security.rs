@@ -162,6 +162,29 @@ impl DistroSecurityManager {
     }
 }
 
+/// Refuse a container whose metadata asks for a seccomp profile (issue #60).
+///
+/// Measured on this device: no BPF filter is ever installed. `ProotConfig::seccomp` reaches
+/// `proot-core`'s `SeccompFilter::install`, which sets `PR_SET_NO_NEW_PRIVS` on the PDN process
+/// and then says so in its own source ("In a full implementation, we would build and install a
+/// BPF filter / For now, we just document the intent"); its `filter_program` is an empty `Vec`
+/// the compiler reports as *never read*, so not one syscall is denied. The profile *name* is read
+/// only as `.is_some()`, so nothing can be tailored to a distro. Enforcing a profile would need a
+/// BPF program builder (`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ...)`) and a runtime that
+/// honours it, so v0.1.9 declines: the field refuses instead of being accepted and dropped.
+pub fn assert_seccomp_profile_supported(profile: &Option<String>) -> anyhow::Result<()> {
+    if let Some(name) = profile {
+        anyhow::bail!(
+            "security.seccomp_profile ({name:?}) is not applied: this PRoot build installs no BPF \
+             filter, so the field would be accepted and never enforced. SeccompFilter::install \
+             (crates/proot-core/src/seccomp.rs) only sets PR_SET_NO_NEW_PRIVS; no syscall is \
+             denied. Remove security.seccomp_profile, or use a runtime that can enforce it \
+             (issue #60)."
+        );
+    }
+    Ok(())
+}
+
 // Re-export additional types
 
 #[cfg(test)]
@@ -172,5 +195,14 @@ mod tests {
     fn test_distro_security_profile_default() {
         let profile = DistroSecurityProfile::default();
         assert!(profile.base.enabled);
+    }
+
+    #[test]
+    fn seccomp_profile_is_refused_not_dropped() {
+        assert!(assert_seccomp_profile_supported(&None).is_ok());
+        let err = assert_seccomp_profile_supported(&Some("default".to_string())).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not applied"), "{msg}");
+        assert!(msg.contains("issue #60"), "{msg}");
     }
 }
