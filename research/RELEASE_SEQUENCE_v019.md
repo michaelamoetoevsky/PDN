@@ -52,30 +52,31 @@ status paragraph tends to round up, which is why they are rows here.
 Each batch is a unit of work with its own gate. A batch is not done because the code is written; it
 is done when the gate has run and its output is in the ticket.
 
-### S1 - the four dispatched departments (in flight)
+### S1 - done (wave 2, base `a0b4025`)
 
-| Ticket | Department | Files (exclusive) | Gate |
+| Ticket | Department | Landed | Outcome |
 |---|---|---|---|
-| #54 | `dept/build` | `commands/mod.rs` regions + `build.rs`, `gitops.rs`, `compose.rs` | fmt, 48 unit, 6 contract, 123 help screens byte-identical, ledger 0 FAIL |
-| #56 + #58 | `dept/shell` | `scripts/shell_fidelity.py`, `scripts/soak_sessions.py` | the measurements themselves, each with a demonstrated negative control |
-| #59 | `dept/daemon` | `daemon.rs`, `commands/container.rs` | both paths diffed, latency and round-trip counts, a staleness control |
-| #60 + #63 | `dept/honesty` | `main.rs`, `cli.rs`, `security.rs`, two docs | measured argv comparison for #63; a decision stated in terms of the measurement for #60 |
+| #54 | `dept/build` | `d8f84d5` | `commands/mod.rs` 1,945 -> 813; `build.rs` 698, `gitops.rs` 455 |
+| #56 + #58 | `dept/shell` | `eab10ce` | two harnesses; fidelity found the #68 regression, soak passed 20/20 with a leak control |
+| #59 | `dept/daemon` | `83827a1` | metadata routed; identical output, constant round trips, never stale; latency independence recorded as an exception |
+| #60 + #63 | `dept/honesty` | `255d25a` | seccomp profile refused with the decision measured; `--no-kill-on-exit` refused |
 
-### S2 - #57, held on purpose
+`dept/build`'s extraction turned six file-pinned predicates red; it reported the repath instead of
+editing the parent-owned ledger, and the parent applied it in the same push. The parent also fixed
+the #68 regression the shell department found, using that department's harness as the oracle.
 
-`attach` and `sessions` live in `commands/container.rs`, which `dept/daemon` owns until S1 lands.
-Running both is how the first wave produced an eleven-block conflict. S2 starts from the result of
-#59.
+### S2 and S3 - dispatched as wave 3, base `58636ee`
 
-### S3 - the three criterion gaps
+| Ticket | Department | Owns |
+|---|---|---|
+| #57 | `dept/attach` | `commands/container.rs`, `native.rs`, `session.rs` - detach/attach round trip |
+| #64 | `dept/examples` | `scripts/check_doc_examples.py` + the fenced examples in `cli-reference.md` |
+| #66 | `dept/bindings` | `constants.rs`, `known-limitations.md` - bindings and `USER` measured in a guest |
+| #67 | `dept/scanner` | `main.rs` - every flag the direct-execution scanner drops, honoured or refused |
 
-- **#64** executes the documented examples, with a written exclusion list.
-- **#65** brings `cli.rs`, `main.rs` and `commands/mod.rs` under the ceiling, or records the
-  exception with its size in the roadmap. Lowering the promise is allowed; hiding the number is not.
-- **#66** measures the bindings and the `USER` story inside a guest, then makes code and
-  documentation agree.
-
-These three can run in parallel with S2 provided they do not take a file S2 owns.
+**#65 is held to a fourth wave on purpose.** It rewrites `cli.rs` and `main.rs`, which is the file
+`dept/scanner` owns right now; putting both in one wave would put two writers in `main.rs`, the
+mistake the first wave's eleven-block conflict taught.
 
 ### S4 - integration
 
