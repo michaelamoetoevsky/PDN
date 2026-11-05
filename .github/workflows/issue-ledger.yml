@@ -138,6 +138,21 @@ jobs:
           fi
           exit $rc
 
+      - name: Execute the reference's examples (documentation is code)
+        # cli_reference_contract proves every documented command and flag EXISTS. Nothing has ever run
+        # the fenced EXAMPLES, so an example could be fiction in exactly the way a phantom flag is -
+        # the class of defect #42 and #64 are about. The harness executes what it can against the
+        # binary this job already built and prints a reason for every block it excludes, so an
+        # exclusion is visible rather than silent. A skip (no binary) prints that it is not a pass
+        # and exits 0; a failure exits 1 and fails this job.
+        run: |
+          python3 scripts/check_doc_examples.py --binary target/debug/podnext
+          # The bindings harness needs an installed container, which a runner has not got: both of its
+          # unmeasurable paths (no binary, no usable container) print a skip and exit 0, so wiring it
+          # costs nothing and keeps it discoverable. No `|| true` here: with those paths verified to
+          # exit 0, any non-zero exit is a real failure or a wiring bug, and both must fail the job.
+          python3 scripts/check_bindings.py --binary target/debug/podnext
+
       - name: Fail if the ledger reported a FAIL
         if: always()
         run: |

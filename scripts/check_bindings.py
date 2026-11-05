@@ -26,6 +26,7 @@ Env overrides: PDNEXT_BIN (path to podnext), PDN_CONTAINER (container name, defa
 Temp files go under $PREFIX/tmp (never /tmp on Android).
 """
 
+import argparse
 import os
 import pathlib
 import subprocess
@@ -55,6 +56,19 @@ def run_host(args: list[str]) -> tuple[int, str]:
 
 
 def main() -> int:
+    # The first version of this script read PDNEXT_BIN/PDN_CONTAINER from the environment only and
+    # ignored argv entirely, so a caller passing `--binary <path>` was silently given the default
+    # instead - the same shape as the flags this project refuses to drop. argparse makes the intended
+    # binary explicit and turns an unknown flag into an error rather than a no-op.
+    global BIN, CONTAINER
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--binary", default=os.environ.get("PDNEXT_BIN"),
+                    help="podnext binary to measure with (default: $PDNEXT_BIN)")
+    ap.add_argument("--container", default=os.environ.get("PDN_CONTAINER", "alpine"),
+                    help="installed container to measure inside (default: $PDN_CONTAINER or alpine)")
+    args = ap.parse_args()
+    BIN, CONTAINER = args.binary, args.container
+
     if not BIN or not os.access(BIN, os.X_OK):
         print(f"SKIP: no podnext binary (PDNEXT_BIN={BIN!r}); a skip is not a pass")
         return 0
