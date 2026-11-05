@@ -340,8 +340,17 @@ jobs:
             VERSION="${{ github.ref_name }}"
           fi
           
-          # Generate changelog - simple version
-          git log --pretty=format:"- %s (%h)" -n 50 > CHANGELOG.md
+          # Prefer the curated section for this version, and fall back to the commit list only when the
+          # changelog has none - saying so in the body instead of substituting silently. Read the file
+          # BEFORE overwriting it: `git log -n 50` used to be the only source, which shipped fifty commit
+          # subjects cut at a count with nothing to do with the release.
+          if BODY=$(sh scripts/extract_changelog.sh CHANGELOG.md "$VERSION" 2>/dev/null); then
+            printf '%s\n' "$BODY" > CHANGELOG.md
+          else
+            printf 'The changelog has no section for `%s`, so these are the last fifty commit subjects.\n\n' \
+              "$VERSION" > CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" -n 50 >> CHANGELOG.md
+          fi
           
           # Output changelog and version
           echo "changelog=$(cat CHANGELOG.md | sed 's/"/\\"/g' | sed ':a;N;s/\n/\\n/g;ta')" >> $GITHUB_OUTPUT

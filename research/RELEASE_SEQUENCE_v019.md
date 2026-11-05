@@ -166,20 +166,33 @@ file with no Clap surface, so the load-bearing evidence is the 84 tests, `shell_
 
 ### S6 - tag, release, smoke test
 
-The release workflow (`.github/workflows/release.yml`) triggers on a `v*` tag and does a release
-build, test and clippy per target, then uploads `podnext-<target>`, `install.sh` and
-`install-short.sh`, runs the security audit, and creates the release. So the sequence is:
+Order matters here, and reading `.github/workflows/release.yml` is what settled it: the release is created
+with `draft: false` and the action's default `make_latest`, so **pushing the tag publishes a release marked
+latest immediately**. The smoke test therefore has to happen BEFORE the tag, not after it. The `Release`
+job's `publish-crates` step is skipped on a tag push (`if: workflow_dispatch && version != ''`), so nothing
+else chases the tag.
 
-1. Tag **`v0.2.0`** on the S5 commit, push the tag, watch `Release Automation` to completion.
-2. Run `sh scripts/smoke_release.sh <downloaded-binary> 0.2.0` - the smoke test the withdrawn attempt
-   never did, now a committed, re-runnable tool: `version` (and that it says `0.2.0`), `doctor` (host),
-   `install alpine:latest`, `list`, `run -- echo <marker>`, `login -- true`, `doctor --container`,
-   `sessions`, `remove --force`, and that the container is gone afterwards. Every step's exit code is
-   recorded, every failure prints its own log path, and a failure exits non-zero so the release cannot be
-   marked latest on a partial pass. It refuses to run at all (exit 2) rather than guess when the binary is
-   missing or the target container name is already taken.
-3. Only then mark the release as latest, and post the acceptance summary as a comment on map #48,
-   quoting the ledger and smoke-test output.
+1. Land S5, then wait for the **PDN CI/CD** run on that commit to be green. Its
+   `Rust Android Cross-Compile (aarch64)` job uploads `pn-android-aarch64` - a release-mode aarch64 Android
+   binary - and that is the artifact to test, not the debug binary the device builds locally.
+2. Download and smoke-test it **before any tag exists**:
+   `gh run download <run-id> -n pn-android-aarch64 -D $PREFIX/tmp/rel-art`, `chmod +x`, then
+   `sh scripts/smoke_release.sh $PREFIX/tmp/rel-art/podnext 0.2.0`. This is not theoretical: it was
+   exercised against `fc6d288`'s artifact - 11 of 11 steps ok, exit 0, on this device.
+3. Tag `v0.2.0` on the S5 commit and push the tag.
+4. Watch `Release Automation` to completion, then download the **published** artifacts and run the smoke
+   test again against those exact bytes: the release job builds its own binaries, so the published ones are
+   the authoritative artifact even though they come from the same commit. If that run fails, withdraw the
+   release and the tag - this project has done it once and the procedure is known: `gh release delete` and
+   `git push --delete origin v0.2.0`, then fix forward.
+5. Only then post the acceptance summary as a comment on map #48, quoting the ledger output and the smoke
+   log path.
+
+Release-body note: the workflow's "Generate changelog" step used `git log -n 50` as the release body, so a
+release page carried fifty commit subjects rather than the curated section. It now reads the `[0.2.0]`
+section out of `CHANGELOG.md` via `scripts/extract_changelog.sh` (five controls: section found, `v` prefix,
+`Unreleased`, missing version -> exit 1 with empty stdout, no arguments -> exit 2), falling back to the
+commit list only when the section is absent - and saying so in the body when it does.
 
 ## 4. The standing protocol for every batch
 
