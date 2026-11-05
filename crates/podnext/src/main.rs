@@ -70,56 +70,56 @@ use proot_distro_core::storage::VolumeConfig;
 #[command(
     long_about = "podnext (PRoot Distro Next) - Next-generation container & service orchestration platform.\n\n\
     ========================================================================\n\
-    1. SIMPLE & CORE DISTRO USAGE (Pengganti proot-distro sehari-hari):\n\
+    1. SIMPLE & CORE DISTRO USAGE (Everyday proot-distro replacement):\n\
     ========================================================================\n\
-    podnext install debian:13                 # Pasang distro Debian 13 trixie\n\
-    podnext login debian                      # Masuk ke shell interaktif container\n\
-    podnext run debian -- apt update          # Jalankan perintah langsung di container\n\
-    podnext list                              # Tampilkan daftar container terpasang\n\
-    podnext copy debian:/etc/hosts ./hosts    # Salin berkas/folder host <-> container\n\
-    podnext sync ./src debian:/root/src -d    # Sinkronisasi direktori (hashing sha256 + prune)\n\
-    podnext rename debian deb-prod            # Ganti nama container terpasang\n\
-    podnext reset deb-prod                    # Reset container ke instalasi bersih semula\n\
-    podnext remove deb-prod                   # Hapus container beserta datanya\n\
-    podnext search debian                     # Cari OCI image di Docker Hub\n\
-    podnext info                              # Tampilkan informasi sistem & host kernel\n\n\
+    podnext install debian:13                 # Install Debian 13 trixie distro\n\
+    podnext login debian                      # Enter interactive container shell\n\
+    podnext run debian -- apt update          # Run command directly in container\n\
+    podnext list                              # List installed containers\n\
+    podnext copy debian:/etc/hosts ./hosts    # Copy files/dirs host <-> container\n\
+    podnext sync ./src debian:/root/src -d    # Sync directories (sha256 hashing + prune)\n\
+    podnext rename debian deb-prod            # Rename installed container\n\
+    podnext reset deb-prod                    # Reset container to initial clean state\n\
+    podnext remove deb-prod                   # Remove container and its data\n\
+    podnext search debian                     # Search OCI images on Docker Hub\n\
+    podnext info                              # Show system & host kernel info\n\n\
     ========================================================================\n\
     2. INTERMEDIATE: IMAGES, STORAGE, VOLUMES & BACKUP:\n\
     ========================================================================\n\
-    podnext image ls                          # Tampilkan cache image lokal\n\
-    podnext image pull alpine:latest          # Unduh image OCI dari registry\n\
-    podnext volume create my-vol              # Buat volume penyimpanan persisten\n\
-    podnext volume ls                         # Tampilkan daftar volume\n\
-    podnext volume prune                      # Bersihkan volume tak terpakai\n\
-    podnext network create isolated-net       # Buat jaringan bridge terisolasi\n\
-    podnext network ls                        # Tampilkan jaringan container\n\
-    podnext backup create debian              # Buat arsip snapshot container (tar.gz)\n\
-    podnext backup list                       # Tampilkan daftar snapshot cadangan\n\
-    podnext backup restore <id> --target deb2 # Pulihkan container dari backup\n\n\
+    podnext image ls                          # List local image cache\n\
+    podnext image pull alpine:latest          # Pull OCI image from registry\n\
+    podnext volume create my-vol              # Create persistent storage volume\n\
+    podnext volume ls                         # List storage volumes\n\
+    podnext volume prune                      # Remove unused volumes\n\
+    podnext network create isolated-net       # Create isolated bridge network\n\
+    podnext network ls                        # List container networks\n\
+    podnext backup create debian              # Create container snapshot archive (tar.gz)\n\
+    podnext backup list                       # List backup snapshots\n\
+    podnext backup restore <id> --target deb2 # Restore container from backup\n\n\
     ========================================================================\n\
     3. ADVANCED: SYSTEM SERVICES, DAEMON & SUPERVISOR:\n\
     ========================================================================\n\
-    podnext daemon start                      # Jalankan supervisor daemon PDN\n\
-    podnext daemon status                     # Periksa status daemon supervisor\n\
-    podnext service start web-srv             # Jalankan managed service (dengan restart policy)\n\
-    podnext service status web-srv            # Tampilkan status & PID service\n\
-    podnext service logs web-srv              # Tampilkan log service\n\
-    podnext quota set web-srv memory 512M     # Terapkan kuota cgroup memory\n\
-    podnext quota set web-srv cpu 200         # Terapkan batas kuota CPU (2 cores)\n\
-    podnext quota usage web-srv               # Pantau utilisasi resource real-time\n\
-    podnext watchdog status                   # Pantau circuit breaker & watchdog\n\
-    podnext log tail -s web-srv               # Streaming log secara real-time\n\
-    podnext dbus serve --socket /tmp/d.sock   # Jalankan D-Bus broker IPC\n\
-    podnext dbus call ...                     # Kirim panggilan method D-Bus\n\
-    podnext gitops sync                       # Sinkronisasi deklaratif GitOps manifests\n\
-    podnext gitops status                     # Status sinkronisasi aplikasi GitOps\n\
-    podnext boot enable web-srv               # Pasang auto-start saat Termux boot\n\
-    podnext wakelock acquire web-srv partial  # Ambil Android wake lock agar tetap aktif\n\n\
+    podnext daemon start                      # Start PDN supervisor daemon\n\
+    podnext daemon status                     # Check supervisor daemon status\n\
+    podnext service start web-srv             # Start managed service (with restart policy)\n\
+    podnext service status web-srv            # Show service status & PID\n\
+    podnext service logs web-srv              # View service logs\n\
+    podnext quota set web-srv memory 512M     # Set memory cgroup quota\n\
+    podnext quota set web-srv cpu 200         # Set CPU quota limit (2 cores)\n\
+    podnext quota usage web-srv               # Monitor real-time resource usage\n\
+    podnext watchdog status                   # Monitor circuit breaker & watchdog\n\
+    podnext log tail web-srv                  # Stream logs in real-time\n\
+    podnext dbus serve --socket /tmp/d.sock   # Run IPC D-Bus broker\n\
+    podnext dbus call ...                     # Send D-Bus method call\n\
+    podnext gitops sync                       # Synchronize declarative GitOps manifests\n\
+    podnext gitops status                     # Check GitOps app sync status\n\
+    podnext boot enable web-srv               # Enable auto-start on Termux boot\n\
+    podnext wakelock acquire web-srv partial  # Acquire Android wake lock to keep active\n\n\
     ========================================================================\n\
-    4. DIRECT EXECUTION MODE (Kompatibilitas murni seperti biner proot):\n\
+    4. DIRECT EXECUTION MODE (Pure compatibility like proot binary):\n\
     ========================================================================\n\
-    podnext -r /path/to/rootfs -- /bin/bash    # Jalankan rootfs kustom secara langsung\n\
-    podnext -r /path/to/rootfs -b /host/dir:/guest/dir -- ls # Bind mount direktori host langsung\n"
+    podnext -r /path/to/rootfs -- /bin/bash    # Run custom rootfs directly\n\
+    podnext -b /host/dir:/guest/dir -- ls      # Directly bind mount host directory\n"
 )]
 struct Cli {
     #[command(subcommand)]
