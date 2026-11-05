@@ -5,13 +5,13 @@
       "crates": {
         "pn-gateway (lib)": 2,
         "pn-next (lib)": 208,
-        "podnext (bin \"podnext\")": 50,
+        "podnext (bin \"podnext\")": 26,
         "podnext (bin \"podnext-daemon\")": 1,
         "proot-compat (lib)": 5,
         "proot-core (lib)": 5,
         "proot-distro-core (lib)": 19
       },
-      "total": 290
+      "total": 266
     },
     "x86_64-unknown-linux-gnu cargo 1.99.1 rustc 1.99.1": {
       "cold": true,
@@ -28,5 +28,5 @@
       "total": 290
     }
   },
-  "note": "Warning ceilings, one entry per host triple plus toolchain version. The triple matters because which cfg branches compile changes the warning set; the versions matter because rustc's lint set changes between releases. Hashes and dates are excluded - they do not. An entry is recorded deliberately, from a measurement this gate produced; the runner's entry came from its own exit-2 output, never from a different command's log."
+  "note": "Warning ceilings. One entry per toolchain, because rustc's lint set changes between versions and the CI runner uses `stable`, which moves on its own."
 }

@@ -13,7 +13,7 @@ Built entirely in Rust, PDN unifies the PRoot (C) ecosystem, the `proot-distro` 
 
 ## What's New
 
-`v0.2.0` (`Cargo.toml` reads `0.2.0`; `podnext version` prints `podnext 0.2.0`). 122 commits since `v0.1.8`
+`v0.2.0` (`Cargo.toml` reads `0.2.0`; `podnext version` prints `podnext 0.2.0`). 123 commits since `v0.1.8`
 across 138 files. Every figure below names the command that produced it.
 
 This is a stability, honesty and shape release rather than a feature release: exactly one command was added.
@@ -38,8 +38,9 @@ stated with its number below rather than rounded up.
 - **`podnext doctor`** reports host checks and, with `--container <name>`, the guest side including the proot
   argv.
 - **Gates that can fail.** The issue ledger (129 checks; an untriaged issue fails the build - CI reports
-  `129 PASS / 0 FAIL / 0 SKIPPED`), the warning ratchet keyed by toolchain (266 warnings on the runner's
-  toolchain, measured cold), the tracked help fixture, `scripts/local_gate.sh`, and
+  `129 PASS / 0 FAIL / 0 SKIPPED`), the warning ratchet keyed by toolchain (266 warnings measured cold on this device, and the same
+  266 on the runner - whose recorded ceiling is still 290 and therefore loose, tracked in #73 rather
+  than hand-edited into a generated file), the tracked help fixture, `scripts/local_gate.sh`, and
   `scripts/preflight_release.sh`, which smoke-tests the release artifact **before** the tag exists because
   the tag publishes a release marked latest immediately.
 - **One criterion is a recorded exception, not a claim.** Daemon metadata routing produces identical output
