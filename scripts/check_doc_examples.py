@@ -251,6 +251,37 @@ def extract(doc, cli):
     return blocks, failures, flags_checked
 
 
+# Commands whose exit status is a property of the HOST, not of the documentation.
+#
+# `podnext doctor` reports host checks - the proot binary, the temp directory, /dev/shm, DNS, the kernel.
+# On a host missing one of them it exits 1 and names the failing row, which the document itself states.
+# A blanket "every executed example must exit 0" therefore encodes an assumption about the MACHINE: on a
+# CI runner (no proot binary) the documented example fails while being perfectly correct. The contract is
+# a RELATIONSHIP - 0 when no row fails, 1 with the reason - so that is what gets asserted, and the
+# non-zero acceptance is printed as a note rather than passing silently.
+HOST_DEPENDENT_EXIT = {
+    "doctor": (
+        1,
+        "exits 1 when a host check fails; the documented contract is 0 when no row fails, 1 with the "
+        "reason (a CI runner has no proot binary)",
+    ),
+}
+
+
+def _accepted_nonzero(entry, rc, out):
+    """Why a non-zero exit is ACCEPTED for this command, or None if it is a real violation."""
+    argv = entry.get("argv") or []
+    name = argv[1] if len(argv) > 1 else ""
+    allowed = HOST_DEPENDENT_EXIT.get(name)
+    if not allowed:
+        return None
+    code, why = allowed
+    # Accepting the code is not enough: the failure must also be reported the way the document says.
+    if rc == code and "one or more checks failed" in out:
+        return why
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--doc", default=str(DOC))
@@ -289,6 +320,7 @@ def main():
     )
 
     ran = 0
+    notes = []
     try:
         for block in blocks:
             for entry in block["entries"]:
@@ -309,6 +341,13 @@ def main():
                     continue
                 ran += 1
                 if p.returncode != 0:
+                    accepted = _accepted_nonzero(entry, p.returncode, p.stdout + p.stderr)
+                    if accepted:
+                        notes.append(
+                            f"L{entry['line']}: {entry['text']}\n"
+                            f"    exit {p.returncode} accepted: {accepted}"
+                        )
+                        continue
                     detail = (p.stderr or p.stdout).strip().splitlines()
                     failures.append(
                         f"L{entry['line']}: {entry['text']}\n    exited {p.returncode}: {detail[0] if detail else ''}"
@@ -345,6 +384,8 @@ def main():
         for block in partial:
             print(f"  L{block['first']}  {block['label'][:72]}")
 
+    for n in notes:
+        print(f"NOTE  {n}")
     if failures:
         print()
         print(f"FAIL: {len(failures)} documented example(s) do not hold")
