@@ -84,11 +84,9 @@ def compare(baseline: dict, now: dict) -> list[str]:
     """Return violations. Growing is a violation; shrinking is not."""
     problems: list[str] = []
     b_cmds, n_cmds = baseline.get("commands"), now.get("commands")
-    if n_cmds is None:
-        problems.append("cannot read the command list (no binary): pass --binary")
-    elif b_cmds:
-        added = sorted(set(n_cmds) - set(b_cmds))
-        removed = sorted(set(b_cmds) - set(n_cmds))
+    if b_cmds:
+        added = sorted(set(n_cmds or []) - set(b_cmds))
+        removed = sorted(set(b_cmds) - set(n_cmds or []))
         if added:
             problems.append(f"new top-level command(s): {', '.join(added)} "
                             "(section 9.4 allows none beyond doctor)")
@@ -121,6 +119,13 @@ def main() -> int:
         return 0
 
     baseline = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
+    if now["commands"] is None:
+        # Not a violation: a measurement that could not be taken. Reporting it as a crossed
+        # non-goal would be the same mistake as reporting an unreadable check as healthy, so it
+        # leaves with its own status.
+        print(f"cannot measure: no runnable podnext at {args.binary} "
+              f"(build it first, or pass --binary)", file=sys.stderr)
+        return 2
     problems = compare(baseline, now)
     if args.json:
         print(json.dumps({"ok": not problems, "problems": problems, "measured": now}, indent=2))
