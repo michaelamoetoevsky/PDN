@@ -29,23 +29,24 @@ there is no `v0.1.10`.
 |---|---|---|
 | 9.1 labels | met | 37 commands + `doctor` labelled; `fcabc1c` |
 | 9.1 stub refusals | met | zero "not fully implemented" in user-facing output; `fcabc1c` |
-| 9.1 exit-code contract | met | `crates/podnext/tests/exit_codes.rs`, 5 classes; `665b3ba` |
-| 9.1 contract test incl. examples | **half** | commands and flags gated by `28c4594`; ~100 example blocks in `cli-reference.md` are never executed - #64 |
-| 9.1 triage of the audit | met | the ledger now fails on an untriaged issue; 0 of 61 untriaged (`research/AUDIT_FINDINGS_DISPOSITION.md`) |
+| 9.1 exit-code contract | met | `crates/podnext/tests/exit_codes.rs`, now 7 classes - the phantom `3` from `config validate` was removed by moving the CODE to the documented `2`; `665b3ba` |
+| 9.1 contract test incl. examples | met | commands and flags gated by `28c4594`; the 50 example blocks are now executed or excluded with a printed reason by `scripts/check_doc_examples.py` (`10 executed / 41 excluded, 0 failures`), and the harness runs in CI; it found two genuinely wrong examples - #64, `c9108ec` |
+| 9.1 triage of the audit | met | the ledger fails on an untriaged issue; 0 untriaged of 69 issues, and the disposition document is generated rather than hand-kept (`build_issue_ledger.py --disposition`) |
 | 9.2 split, no file over ~800 lines | **half** | `main.rs` 4,679 to 1,040, `commands/mod.rs` 3,719 to **813**, Clap surface in `cli.rs` 1,445; 123 help screens byte-identical - two files are still above the ceiling, #65 |
 | 9.2 index cache p50 under 10 ms | met in-process | `cf3f487`: 1.3-2.2 ms in-process with ten containers; process start alone is 31-36 ms, so end-to-end belongs to #59 |
 | 9.2 honest image size | met | `#44`: a measured size, a `>=` bound, or `unknown` |
 | 9.2 metadata through the daemon | **exception, recorded** | routed: six queries diff empty against the fallback, round trips constant (1 vs 0), never stale; latency independence NOT met (5.20 vs 1.48 ms at n=10) and left unmet on purpose, with the reason |
 | 9.2 environment paths | met | `#46`: `TERMUX__HOME`, `PREFIX`, `XDG_*`; `TERMUX__PREFIX` excluded with the measurement |
-| 9.3 detach and attach | **not met** | #57, held behind #59 (same file) |
+| 9.3 detach and attach | met | #57 `ff2e1e3`: the same shell pid answers two attaches, a marker written while detached survives, `0 proot/podnext rows` before and after, and a SIGKILL of the supervisor leaves no orphan; supervisor `setsid`, `PPid=1`. Two simplifications are DECLARED in `known-limitations.md`, not hidden: no `SIGWINCH` re-forwarding while attached, no replay of output produced while detached |
 | 9.3 terminal fidelity | met | `scripts/shell_fidelity.py` PASS - winsize, live resize, `TERM`, `COLORTERM`, `PS1`, prompt, UTF-8 both ways, with a control that goes red; it also found and proved the #68 regression, now fixed |
 | 9.3 argv quoting | met | `5c34115`: 15 cases against a real guest, NUL-separated |
-| 9.3 bindings and `USER` | **half** | documented; never measured inside a guest - #66 |
+| 9.3 bindings and `USER` | met | #66 `523ae58` measured it inside a guest with a control: `/sdcard`/`/storage/*` are the guest's own empty rootfs dirs (dev id matches `/`), `/tmp` and `/dev/shm` are per-container, the host home is NOT mounted. `USER`: build states the mapping, `run`/`login` now print it on stderr with stdout untouched, and both `run --user` and `login --user` refuse with the measurement - the silent discard is gone (`5e4f24d`) |
 | 9.3 session hygiene and soak | met | `scripts/soak_sessions.py` - 20/20 iterations with zero container processes left, and an injected leak caught at iteration 7 |
 | 9.3 doctor | met | `#45`: host and guest checks including the proot argv |
 
-**11 met, 3 half, 1 recorded exception, 1 not met.** The half rows and the exception are the ones a
-status paragraph tends to round up, which is why they are rows here.
+**14 met, 1 half, 1 recorded exception, 0 not met.** The half row and the exception are the ones a
+status paragraph tends to round up, which is why they are rows here. The half is the line ceiling (#65);
+the exception is the daemon's latency independence, measured and left unmet on purpose.
 
 ## 3. The sequence
 
@@ -78,7 +79,15 @@ Cherry-picked with no conflict: the four branches touched eleven distinct files.
 predicates (three for #57, two each for #64 and #66, three for #67), deleted #67's now-stale decline reason,
 wired both new harnesses into CI, and filed #70 for a committed conflict marker found while integrating.
 
-### Wave 4 - what the departments reported but could not own
+### Wave 4 - landed (`ad123ef`, base `1fcba7d`)
+
+| Department | Landed | Outcome |
+|---|---|---|
+| `dept/doctext` | `650e564` | detach/attach prose corrected in `cli.rs` + four documents; two fabricated sample outputs replaced with real captured output; the two simplifications declared; baseline regenerated with exactly three screens moved |
+| `dept/userstory` | `5e4f24d` | `login --user` refuses instead of being silently discarded; `run`/`login` state the mapped user on stderr with stdout untouched; `config validate` exits the documented 2 - the code was the wrong side |
+| parent | `ad123ef` | `scripts/local_gate.sh` gained a help-dump stage that cannot report a false identity (verified by sabotage) |
+
+### Wave 5 - the leftovers the departments reported but did not own
 
 | Work | Why it needs its own wave |
 |---|---|
