@@ -283,4 +283,8 @@ PDN is organized into 6 modular Rust crates:
 
 ## License
 
-GPL-2.0-or-later.
+SPDX-License-Identifier: `GPL-2.0-or-later`. The full text is in [LICENSE](LICENSE).
+
+Copyright (C) 2026 PDN Contributors. This program is free software: you can redistribute it and/or
+modify it under the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 2 of the License, or (at your option) any later version.

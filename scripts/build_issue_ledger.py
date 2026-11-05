@@ -48,6 +48,16 @@ CARGO_TARGET = "/data/data/com.termux/files/home/workspace/PDN/target"
 # `needle=None`:              PASS on rc == 0 alone (use only where a symbol is not the point).
 # `cargo=True`:               gated; runs only with --cargo, otherwise SKIPPED.
 CHECKS: list[dict] = [
+    # ── #40: the licence is declared once, in all three places ───────────────
+    dict(issue="40", claim="LICENSE carries the GPL text the manifest declares",
+         cmd="grep -cF 'GNU GENERAL PUBLIC LICENSE' LICENSE", needle=None),
+    dict(issue="40", claim="the manifest declares GPL-2.0-or-later",
+         cmd="grep -nF 'license = \"GPL-2.0-or-later\"' Cargo.toml",
+         needle='license = "GPL-2.0-or-later"'),
+    dict(issue="40", claim="no Apache-2.0 text is left in LICENSE",
+         cmd="grep -nF 'Apache License' LICENSE", mode="absent", needle="Apache License"),
+    dict(issue="40", claim="the README states the same licence",
+         cmd="grep -nF 'GPL-2.0-or-later' README.md", needle="GPL-2.0-or-later"),
     # ── #38: a locally built image is visible to run/list/remove ──────────────
     dict(issue="38", claim="container detection is metadata-based, not an etc/bin/usr guess",
          cmd="grep -nF 'pub fn is_container_dir' crates/proot-distro-core/src/container.rs",
