@@ -137,7 +137,7 @@ pub async fn execute_service_command(cmd: crate::ServiceCommands) -> Result<()> 
 }
 
 async fn cmd_service_start(name: String) -> Result<()> {
-    println!("Starting service '{}'...", name);
+    eprintln!("Starting service '{}'...", name);
 
     // Try daemon first
     if is_daemon_running().await {
@@ -180,7 +180,7 @@ async fn cmd_service_start(name: String) -> Result<()> {
 }
 
 async fn cmd_service_stop(name: String, force: bool) -> Result<()> {
-    println!("Stopping service '{}'...", name);
+    eprintln!("Stopping service '{}'...", name);
 
     if is_daemon_running().await {
         let resp =
@@ -208,7 +208,7 @@ async fn cmd_service_stop(name: String, force: bool) -> Result<()> {
 }
 
 async fn cmd_service_restart(name: String) -> Result<()> {
-    println!("Restarting service '{}'...", name);
+    eprintln!("Restarting service '{}'...", name);
 
     if is_daemon_running().await {
         let resp = send_daemon_command(serde_json::json!({"cmd": "restart", "name": name})).await?;
@@ -586,7 +586,7 @@ async fn cmd_service_disable(name: String) -> Result<()> {
 }
 
 async fn cmd_service_load(name: String) -> Result<()> {
-    println!("Loading service '{}' from TOML config...", name);
+    eprintln!("Loading service '{}' from TOML config...", name);
     let services_dir = std::env::var("PN_NEXT_SERVICES_DIR").unwrap_or_else(|_| {
         "/data/data/com.termux/files/home/.config/pn-next/services".to_string()
     });
@@ -597,7 +597,7 @@ async fn cmd_service_load(name: String) -> Result<()> {
 }
 
 async fn cmd_service_create(name: String, config: PathBuf) -> Result<()> {
-    println!(
+    eprintln!(
         "Creating service '{}' from config {}",
         name,
         config.display()
@@ -620,7 +620,7 @@ pub async fn execute_daemon_command(cmd: crate::DaemonCommands) -> Result<()> {
 }
 
 async fn cmd_daemon_start() -> Result<()> {
-    println!("Starting PDN daemon...");
+    eprintln!("Starting PDN daemon...");
     let config = DaemonRuntimeConfig::default();
     let runtime = DaemonRuntime::new(config);
     runtime.start().await?;
@@ -629,7 +629,7 @@ async fn cmd_daemon_start() -> Result<()> {
 }
 
 async fn cmd_daemon_stop() -> Result<()> {
-    println!("Stopping PDN daemon...");
+    eprintln!("Stopping PDN daemon...");
     println!("PDN daemon stopped");
     Ok(())
 }
@@ -1891,7 +1891,7 @@ async fn cmd_backup_create(
         crate::BackupTypeArg::ConfigOnly => BackupType::Manual,
     };
 
-    println!("Creating {:?} backup for container '{}'...", bt, container);
+    eprintln!("Creating {:?} backup for container '{}'...", bt, container);
     let backup_id = manager.create_backup(&container, &container, bt).await?;
     println!("Backup created with ID: {}", backup_id);
     Ok(())
@@ -1979,7 +1979,7 @@ async fn cmd_backup_restore(
 }
 
 async fn cmd_backup_delete(manager: &BackupManager, backup_id: String) -> Result<()> {
-    println!("Deleting backup '{}'...", backup_id);
+    eprintln!("Deleting backup '{}'...", backup_id);
     manager.delete_backup(&backup_id).await?;
     println!("Backup deleted");
     Ok(())
@@ -3050,8 +3050,8 @@ async fn cmd_dashboard_start(dashboard: WebDashboard, port: u16, bind: String) -
     }
     std::fs::write(&pid_path, std::process::id().to_string())?;
 
-    println!("Starting dashboard on {}:{}...", bind, port);
-    println!("PID file: {}", pid_path.display());
+    eprintln!("Starting dashboard on {}:{}...", bind, port);
+    eprintln!("PID file: {}", pid_path.display());
 
     // `WebDashboard::start` was never reached: it binds and serves until
     // killed, which is exactly what this command should do.
@@ -3085,7 +3085,7 @@ async fn cmd_dashboard_stop(_dashboard: WebDashboard) -> Result<()> {
         return Ok(());
     }
 
-    println!("Stopping dashboard server (pid {})...", pid);
+    eprintln!("Stopping dashboard server (pid {})...", pid);
     std::process::Command::new("kill")
         .arg("-TERM")
         .arg(pid.to_string())

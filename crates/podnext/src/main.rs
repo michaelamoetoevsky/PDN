@@ -2636,12 +2636,12 @@ async fn cmd_image_rm(images: Vec<String>, force: bool) -> Result<()> {
 
     for image in images {
         if !force {
-            print!("Remove image '{}'? [y/N]: ", image);
-            io::stdout().flush()?;
+            eprint!("Remove image '{}'? [y/N]: ", image);
+            io::stderr().flush()?;
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             if !input.trim().eq_ignore_ascii_case("y") {
-                println!("Cancelled.");
+                eprintln!("Cancelled.");
                 continue;
             }
         }
@@ -4046,15 +4046,15 @@ async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
             continue;
         }
         if !force {
-            print!(
+            eprint!(
                 "Remove volume '{}'? [y/N]: ",
                 proot_distro_core::escape_name(name)
             );
-            io::stdout().flush()?;
+            io::stderr().flush()?;
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             if !input.trim().eq_ignore_ascii_case("y") {
-                println!("Cancelled.");
+                eprintln!("Cancelled.");
                 continue;
             }
         }
@@ -4113,17 +4113,17 @@ async fn cmd_volume_prune(force: bool) -> Result<()> {
     }
 
     if !force {
-        println!(
+        eprintln!(
             "Will remove {} volume(s): {}",
             unused.len(),
             unused.join(", ")
         );
-        print!("Continue? [y/N]: ");
-        std::io::Write::flush(&mut std::io::stdout())?;
+        eprint!("Continue? [y/N]: ");
+        std::io::Write::flush(&mut std::io::stderr())?;
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Cancelled.");
+            eprintln!("Cancelled.");
             return Ok(());
         }
     }

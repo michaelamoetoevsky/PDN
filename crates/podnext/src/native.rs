@@ -220,22 +220,22 @@ pub async fn install_image_native(
 
     let install_work = async {
         // Step 1: Get auth token from Docker Hub
-        println!("[1/4] Authenticating with Docker Hub registry...");
+        eprintln!("[1/4] Authenticating with Docker Hub registry...");
         let token = get_docker_hub_token(&name).await?;
 
         // Step 2: Get manifest list to find correct platform
-        println!(
+        eprintln!(
             "[2/4] Fetching image manifest (linux/{})...",
             std::env::consts::ARCH
         );
         let manifest = get_manifest(&name, &tag, &token).await?;
 
         // Step 3: Download and extract layers
-        println!("[3/4] Downloading and extracting OCI layers (Android-safe)...");
+        eprintln!("[3/4] Downloading and extracting OCI layers (Android-safe)...");
         download_and_extract_layers(&name, &manifest, &token, &staging_rootfs).await?;
 
         // Step 4: Apply proot-compat patches
-        println!("[4/4] Configuring guest environment, DNS, and /dev/shm...");
+        eprintln!("[4/4] Configuring guest environment, DNS, and /dev/shm...");
         proot_compat::patch_rootfs(&staging_rootfs)?;
 
         configure_guest_network(&staging_rootfs, &container_name)?;
@@ -832,12 +832,12 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
     }
 
     if !force {
-        print!("Remove container '{}'? [y/N]: ", name);
-        io::stdout().flush()?;
+        eprint!("Remove container '{}'? [y/N]: ", name);
+        io::stderr().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Cancelled.");
+            eprintln!("Cancelled.");
             return Ok(());
         }
     }
