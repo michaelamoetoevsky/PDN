@@ -277,7 +277,7 @@ CHECKS: list[dict] = [
          cmd="grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src",
          needle="--no-kill-on-exit is not implemented"),
     dict(issue="63", claim="the manual direct path refuses it too, not only the parsed path",
-         cmd="grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src/main.rs",
+         cmd="grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src",
          needle="--no-kill-on-exit is not implemented"),
     dict(issue="63", claim="proot-core still passes --kill-on-exit unconditionally, which is why the flag can only refuse",
          cmd="grep -rnF -- '--kill-on-exit' crates/proot-core/src/lib.rs", needle=None),
@@ -318,15 +318,18 @@ CHECKS: list[dict] = [
     dict(issue="66", claim="the documentation states that storage and the host home are not mounted",
          cmd="grep -nF 'Storage and the host home are not mounted into a guest by default' docs/src/known-limitations.md",
          needle="not mounted into a guest by default"),
+    # These are NOT pinned to a file: a symbol move is not a regression, and three rounds
+    # have now had predicates die because a refactor relocated what they grep for. The needles
+    # are specific enough to keep the discrimination the file path used to provide.
     # ── #67: every flag the direct path parses is honoured or refused ─────────
     dict(issue="67", claim="--trace refuses on the direct-execution path instead of being dropped",
-         cmd="grep -rnF -- '--trace is not implemented on the direct-execution path' crates/podnext/src/main.rs",
+         cmd="grep -rnF -- '--trace is not implemented on the direct-execution path' crates/podnext/src",
          needle="--trace is not implemented on the direct-execution path"),
     dict(issue="67", claim="--qemu refuses for the same reason, naming the missing engine field",
-         cmd="grep -rnF -- '--qemu is not implemented on the direct-execution path' crates/podnext/src/main.rs",
+         cmd="grep -rnF -- '--qemu is not implemented on the direct-execution path' crates/podnext/src",
          needle="--qemu is not implemented on the direct-execution path"),
     dict(issue="67", claim="an honoured flag's value reaches the generated proot argv",
-         cmd="grep -rnF 'config.cwd = pwd.map(Into::into)' crates/podnext/src/main.rs",
+         cmd="grep -rnF 'config.cwd = pwd.map(Into::into)' crates/podnext/src",
          needle="config.cwd = pwd.map(Into::into)"),
     # ── #70: an unresolved conflict must not sit in the source tree ───────────
     dict(issue="70", claim="no conflict marker is committed in tracked source",
