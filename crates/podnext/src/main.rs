@@ -20,7 +20,6 @@ macro_rules! pn_trace {
 }
 use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser};
-use serde::Serialize;
 use serde_yaml;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -375,10 +374,8 @@ async fn execute_direct(cli: &Cli, trailing_args: &[String]) -> Result<()> {
         engine.config.gid = Some(gid);
     }
 
-    // Set seccomp
-    if cli.seccomp {
-        engine.config.seccomp = true;
-    }
+    // Asking to switch seccomp filtering OFF stays a no-op: it requests nothing. Asking to switch
+    // it ON is refused before dispatch, where the global flag is read (see `refuse_unenforceable`).
     if cli.no_seccomp {
         engine.config.seccomp = false;
     }
@@ -478,6 +475,7 @@ async fn execute_command(cmd: Commands, global_binds: Vec<String>) -> Result<()>
             user,
             workdir,
             isolated,
+            ..   // the global seccomp/trace flags are handled where the engine is configured
         } => {
             cmd_run(
                 container,

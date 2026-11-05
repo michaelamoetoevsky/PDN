@@ -331,8 +331,13 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
     if key != target_tag {
         println!("  Stored as container '{key}' (a tag is not a path component)");
     }
-    let bin_name = std::env::args()
+    // `args_os`, not `args`: std caches argv once, and `args()` panics re-reading it when any
+    // argument was not valid UTF-8 - the defect of issue #41. Re-applied here because the
+    // integration took this file from a branch cut before the fix; the ledger predicate
+    // "the panicking reader is gone from the tree" is what noticed.
+    let bin_name = std::env::args_os()
         .next()
+        .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "podnext".to_string());
     let rootfs = image_dir.join("rootfs");
     let has_sh = rootfs.join("bin/sh").symlink_metadata().is_ok()
