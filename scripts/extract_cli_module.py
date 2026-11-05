@@ -84,14 +84,16 @@ def main() -> int:
     moved = "\n\n".join("\n".join(lines[s - 1 : e]) for _, s, e in ranges)
     existing = dst.read_text() if dst.exists() else ""
     for name, _, _ in ranges:
-        if re.search(r"\b" + re.escape(name) + r"\b", existing):
-            print(f"{dst} already mentions {name}; moving it again would duplicate", file=sys.stderr)
+        # A DEFINITION, not a mention: the destination legitimately calls into the item while the
+        # item still lives in the source, and a mention-only guard refuses the move that fixes it.
+        if re.search(r"^(?:pub(?:\(crate\))? )?(?:async )?(?:fn|struct|enum|trait|mod) " + re.escape(name) + r"\b", existing, re.M):
+            print(f"{dst} already defines {name}; moving it again would duplicate", file=sys.stderr)
             return 2
     # A moved item stops being private-to-main.rs: functions become reachable and types
     # become crate-visible, which is what a caller in the old file (including its tests)
     # needs. Getting this wrong compiles the bin but breaks the test target.
     moved = re.sub(r"^(async fn|fn )", r"pub \1", moved, flags=re.M)
-    moved = re.sub(r"^(struct|enum) ", r"pub(crate) \1", moved, flags=re.M)
+    moved = re.sub(r"^(struct|enum) ", r"pub(crate) \1 ", moved, flags=re.M)
     dst.write_text(existing + moved + "\n" if existing else moved + "\n")
 
     for _, s, e in sorted(ranges, key=lambda r: r[1], reverse=True):

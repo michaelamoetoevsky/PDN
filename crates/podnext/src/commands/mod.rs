@@ -70,6 +70,7 @@ use tokio::net::UnixStream;
 use crate::utils::format_size;
 
 mod compose;
+pub mod container;
 pub mod image;
 pub mod network;
 pub mod sync;
