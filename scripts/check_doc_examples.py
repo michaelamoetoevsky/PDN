@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from temp_base import temp_base  # one rule, one place (see that module)
 
 REPO = Path(__file__).resolve().parents[1]
 DOC = REPO / "docs/src/cli-reference.md"
@@ -273,7 +274,7 @@ def main():
     doc_path = Path(args.doc)
     blocks, failures, flags_checked = extract(doc_path.read_text(), cli)
 
-    base = Path(os.environ.get("TMPDIR") or Path(os.environ.get("PREFIX", "/tmp")) / "tmp")
+    base = temp_base()
     root = Path(tempfile.mkdtemp(prefix="pdn-doc-examples-", dir=base))
     env = dict(os.environ)
     env.pop("LD_LIBRARY_PATH", None)

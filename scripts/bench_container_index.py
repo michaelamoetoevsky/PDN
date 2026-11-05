@@ -37,6 +37,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from temp_base import temp_base  # one rule, one place (see that module)
 
 # The last container has no os-release, so its distro/tag are read straight from
 # metadata.json: that is the value the invalidation proof changes.
@@ -50,7 +51,7 @@ def make_names(n: int):
 
 
 def temp_base() -> Path:
-    return Path(os.environ.get("TMPDIR") or Path(os.environ.get("PREFIX", "/tmp")) / "tmp")
+    return temp_base()
 
 
 def build_store(root: Path, names) -> None:

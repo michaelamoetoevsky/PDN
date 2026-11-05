@@ -105,21 +105,14 @@ def counts_from(text: str) -> dict[str, int]:
 
 
 def temp_base() -> str:
-    """A writable directory to put a throwaway build under, on both hosts.
+    """Delegates to scripts/temp_base.py, the single owner of this rule.
 
-    Android has no writable `/tmp` (`$PREFIX/tmp` is the only one); a CI runner has `/tmp` and no
-    `$PREFIX`. The first version of this line was `os.environ.get("PREFIX", "/tmp") + "/tmp"`, which
-    appends a second `tmp` and asked the runner to create `/tmp/tmp`:
-
-        FileNotFoundError: [Errno 2] No such file or directory: '/tmp/tmp/pdn-warn-bk210izc'
-
-    A crash is worse than a wrong answer here because it fails the job instead of reporting that the
-    gate could not run - and it fails it for a reason that has nothing to do with the tree.
+    The rule has been got wrong three times in this repository (see that module); keeping a second copy
+    here would be a fourth chance to get it wrong.
     """
-    prefix = os.environ.get("PREFIX")
-    if prefix:
-        return os.path.join(prefix, "tmp")
-    return tempfile.gettempdir()
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from temp_base import temp_base as _base
+    return str(_base())
 
 
 def measure(cold: bool) -> dict[str, int]:

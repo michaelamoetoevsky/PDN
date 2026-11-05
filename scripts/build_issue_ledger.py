@@ -331,6 +331,12 @@ CHECKS: list[dict] = [
     # ── #70: an unresolved conflict must not sit in the source tree ───────────
     dict(issue="70", claim="no conflict marker is committed in tracked source",
          cmd="git grep -nE '^<{7}|^={7}$|^>{7}' -- . || echo NO_MARKERS", needle="NO_MARKERS"),
+
+    # ── #71: one temp-base rule, in one place ──────────────────────────────
+    dict(issue="71", claim="the temp-base expression that broke three times is gone from scripts",
+         cmd="grep -rn 'PREFIX\", \"/tmp\"' scripts/ || echo CLEAN", needle="CLEAN"),
+    dict(issue="71", claim="the rule lives in one module and its self-check can fail",
+         cmd="python3 scripts/temp_base.py", needle="the doubled /tmp segment is unreachable"),
     # ── #68: an interactive guest must keep the terminal it was given ─────────
     dict(issue="68", claim="an interactive run keeps the caller's process group, asserted in code",
          cmd="grep -rnF 'an_interactive_run_does_not_take_its_own_process_group' crates/proot-core/src/lib.rs",

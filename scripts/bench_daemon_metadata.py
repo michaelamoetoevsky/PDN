@@ -32,6 +32,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from temp_base import temp_base  # one rule, one place (see that module)
 
 # Each (argv, label) is run on both paths and diffed byte for byte.
 QUERIES = [
@@ -58,7 +59,7 @@ SCRUB = (
 
 
 def temp_base() -> Path:
-    return Path(os.environ.get("TMPDIR") or Path(os.environ.get("PREFIX", "/tmp")) / "tmp")
+    return temp_base()
 
 
 def child_env(home: Path) -> dict:
