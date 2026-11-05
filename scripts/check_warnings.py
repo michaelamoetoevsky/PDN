@@ -47,22 +47,56 @@ BASELINE = os.path.join(ROOT, "scripts", "warning_baseline.json")
 # `cargo fix ...`)". Anything else that mentions a count is prose, not a count.
 SUMMARY = re.compile(r"^warning: `([^`]+)` \(([^)]+)\) generated (\d+) warnings?(?: \(|$)")
 
+# Cargo colours its diagnostics when CARGO_TERM_COLOR is set, and the workflow sets it to `always` -
+# so the runner emitted `\x1b[1m\x1b[33mwarning\x1b[0m\x1b[1m: ...`, the anchored regex matched
+# nothing, and the gate measured an EMPTY set on every CI run while working here, where the variable
+# is unset. Both halves are fixed: escapes are stripped before matching, and the child build is told
+# to emit plain text. A gate that reads its input as text must not depend on the terminal's decoration.
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def plain(text: str) -> str:
+    return ANSI.sub("", text)
+
 
 def env() -> dict:
     # The TUI here redirects LD_LIBRARY_PATH, which breaks any python that inherits it; cargo is
     # unaffected but the child processes of a test run are not. Dropping it is harmless elsewhere.
-    return {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
+    e = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
+    # Deterministic parsing regardless of what the caller's CI configuration asks for.
+    e["CARGO_TERM_COLOR"] = "never"
+    return e
+
+
+VERSION = re.compile(r"(cargo|rustc)\s+(\d+\.\d+\.\d+)")
 
 
 def toolchain() -> str:
-    c = subprocess.run(["cargo", "--version"], capture_output=True, text=True, env=env()).stdout.strip()
-    r = subprocess.run(["rustc", "--version"], capture_output=True, text=True, env=env()).stdout.strip()
-    return f"{c} / {r}"
+    """A key for the ceilings: host triple plus version NUMBERS.
+
+    The first version used the whole version strings verbatim, so this device (`rustc 1.99.1
+    (58cf8f9c3 2026-10-13) (built from a source tarball)`) and a CI runner
+    (`rustc 1.99.1 (58cf8f9c3 2026-10-13)`) looked like different toolchains and the ratchet sat
+    idle in CI - the exit-2 path firing for a cosmetic reason instead of a real one. The build hash
+    and date do not change the lint set; the version does. The host triple does matter, because
+    which cfg branches compile (and therefore which warnings exist) depends on the target.
+    """
+    c = subprocess.run(["cargo", "--version"], capture_output=True, text=True, env=env()).stdout
+    r = subprocess.run(["rustc", "-vV"], capture_output=True, text=True, env=env()).stdout
+    nums = {m.group(1): m.group(2) for m in VERSION.finditer(c + "\n" + r)}
+    host = ""
+    for line in r.splitlines():
+        if line.startswith("host:"):
+            host = line.split(":", 1)[1].strip()
+    if not nums.get("cargo") or not nums.get("rustc"):
+        # Unrecognisable version output is a measurement problem, not a reason to invent a key.
+        return ""
+    return f"{host} cargo {nums['cargo']} rustc {nums['rustc']}"
 
 
 def counts_from(text: str) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for line in text.splitlines():
+    for line in plain(text).splitlines():
         m = SUMMARY.match(line)
         if m:
             key = f"{m.group(1)} ({m.group(2)})"
@@ -174,6 +208,9 @@ def main() -> int:
             print(f"{doc['baselines'][k]['total']:5d}  {k}")
         return 0
     tc = args.toolchain or toolchain()
+    if not tc:
+        print("cannot measure: could not read a cargo/rustc version to key the ceilings by")
+        return 2
 
     if args.from_log:
         try:
@@ -188,6 +225,20 @@ def main() -> int:
     else:
         measured = measure(args.cold)
     total = sum(measured.values())
+
+    # An EMPTY measurement is not a clean tree - it is a measurement that did not happen. Without
+    # this guard it flows into the comparison as zero for every target and PASSES against any
+    # ceiling, which is the same trap as a warm build wearing a different coat. Seen for real: a CI
+    # runner produced no summary lines at all and the only symptom was an empty list under a
+    # heading that promised "what the tree emits here".
+    if not measured:
+        print("cannot measure: cargo reported no per-target warning summaries")
+        print(f"  source: {args.from_log or ('cargo check --cold' if args.cold else 'cargo check')}")
+        if args.from_log:
+            print(f"  the file held {os.path.getsize(args.from_log)} bytes")
+        print("  An empty measurement is not evidence of zero warnings. Check that the build actually")
+        print("  ran and emitted diagnostics (target dir writable, toolchain resolvable).")
+        return 2
 
     if args.mode == "record":
         doc.setdefault("baselines", {})[tc] = {"cold": args.cold, "total": total, "crates": measured}
@@ -236,6 +287,8 @@ def self_check() -> int:
     assert entry_for({"baselines": {"X": base}}, "X") is base, "keyed lookup"
     assert entry_for({"baselines": {"X": base}}, "Y") is None, "an unrecorded toolchain is not a pass"
     assert entry_for({"toolchain": "X", "crates": base["crates"]}, "X") is not None, "reads the old flat file"
+    colored = "\x1b[1m\x1b[33mwarning\x1b[0m\x1b[1m: `pn-next` (lib) generated 208 warnings\x1b[0m\n"
+    assert counts_from(colored) == {"pn-next (lib)": 208}, "a coloured diagnostic must still parse"
     real = ("warning: `pn-next` (lib) generated 208 warnings\n"
             'warning: `podnext` (bin "podnext") generated 50 warnings (run `cargo fix`)\n'
             "warning: `podnext` (bin \"podnext\") generated 1 warning\n")
@@ -243,6 +296,9 @@ def self_check() -> int:
     assert c == {"pn-next (lib)": 208, 'podnext (bin "podnext")': 51}, c
     assert not SUMMARY.match("warning: `pn-next` (lib) was generated 208 warnings"), "word order"
     assert not SUMMARY.match("6 warnings were generated by `pn-next` (lib)"), "prose, not a count"
+    assert VERSION.findall("cargo 1.99.1 (5f94df478 2026-08-27)") == [("cargo", "1.99.1")], "version parse"
+    assert VERSION.findall("rustc 1.99.1 (58cf8f9c3 2026-10-13) (built from a source tarball)") == [
+        ("rustc", "1.99.1")], "the Termux parenthetical must not change the key"
     base_dir = temp_base()
     assert not base_dir.endswith("/tmp/tmp"), f"temp base must not double the tmp segment: {base_dir}"
     if os.environ.get("PREFIX"):
