@@ -80,7 +80,30 @@ Auditing Termux's official `proot-distro` (`commands/login/__init__.py`) against
 | **Custom Environment** | `--env KEY=VAL` | **ABSENT** | `--env <K=V>` (repeatable) |
 | **Custom Hostname** | `--hostname <name>` | **ABSENT** | Intercept `/proc/sys/kernel/hostname` |
 
-### 2.2 Security Matrix for Custom Binds (`--bind`)
+### 2.2 Forensic Discovery: The Disconnected CLI-to-Engine Plumbing
+A deep code inspection across `crates/podnext/src/main.rs`, `crates/podnext/src/native.rs`, and `crates/proot-distro-core/src/runtime.rs` reveals the exact mechanical breakdown:
+
+1. **CLI Layer (`main.rs:2117`)**: `cmd_run` declares `_volume: Vec<String>`, `_publish: Vec<String>`, `_workdir: Option<String>`, `_user: Option<String>`, prepending underscores to silence compiler dead-code warnings. These values are never passed downstream.
+2. **Native Dispatcher (`native.rs:497`)**: `login_container_native` accepts only `(container, user, isolated, cmd)`. Any bind mounts or environment variables passed on the command line cannot be received.
+3. **Core Engine (`runtime.rs:113`)**: `ProotRuntimeBackend::execute` populates `engine_guard.config.bind` strictly from `container.config.bind_mounts` stored statically on disk at container installation time. Dynamic per-invocation bindings never reach the PRoot argument builder.
+
+#### Required Plumbing Overhaul for v0.2.0:
+- Define an `InvocationOverrides` struct in `proot-distro-core`:
+  ```rust
+  pub struct InvocationOverrides {
+      pub dynamic_binds: Vec<BindMount>,
+      pub dynamic_env: Vec<(String, String)>,
+      pub working_dir: Option<PathBuf>,
+      pub user: Option<String>,
+      pub shared_home: bool,
+      pub shared_tmp: bool,
+      pub shared_x11: bool,
+  }
+  ```
+- Pass `InvocationOverrides` through `cmd_login` / `cmd_run` -> `login_container_native` -> `distro_core.login_with_overrides()` -> `backend.execute_with_overrides()`.
+- Merge dynamic binds with static binds in `runtime.rs:113` before constructing `-b <src>:<dst>`.
+
+### 2.3 Security Matrix for Custom Binds (`--bind`)
 In v0.1.8, arbitrary path traversal in volume creation was discovered (Finding 05-2). The `--bind` engine in v0.2.0 must enforce strict guardrails:
 1. **Canonicalization**: Resolve host path with `std::fs::canonicalize()`.
 2. **Deny List**:
