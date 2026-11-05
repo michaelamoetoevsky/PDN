@@ -8,6 +8,37 @@ The release of record is the version in `Cargo.toml` (currently `0.2.0`). Entrie
 **Unreleased** have landed on `master` and are not yet tagged. Every entry names the commit
 that carries it, so it can be re-derived with `git show <sha>`.
 
+## [Unreleased]
+
+### Added
+
+- `scripts/check_release_notes.sh` checks the file a release body is read from - real line breaks, and no
+  literal backslash-n token - and `--self-test` proves the check discriminates: a clean copy passes, a copy
+  carrying the escape that actually shipped fails, and when both answer the same way it exits 2 instead of
+  claiming a verdict.
+- `research/PROOT_AND_PROOTDISTRO_SOURCE_DISSECTION.md`, the dissection of both comparators' sources read
+  in full: `proot` 138 C files / 32,638 lines with a mechanically generated symbol index, `proot-distro` 77
+  files / 29,015 lines with every module and function docstring. It states eight doctrines with a
+  `file:function` anchor for each, thirteen items for PDN with the acceptance test that settles each, what
+  PDN already does as well or better, and what was not read at statement level (`3870792`).
+
+### Fixed
+
+- The release body is no longer flattened on the way out. The workflow submitted the notes through an
+  Actions output, which is line-oriented, so every newline became the two characters `\` `n`: the published
+  `v0.2.0` notes arrived as 8,152 bytes on **one line**, beginning `5c 6e` instead of `0a`. The notes now
+  go to `release-notes.md` and the release reads that file, the step no longer overwrites the repository's
+  `CHANGELOG.md`, and two guards refuse a flattened or escaped body before the release is created
+  (`03b7ddb`; #75). The already-published body was repaired in place and re-read to confirm it.
+
+### Changed
+
+- Two `proot` facts that PDN had only inferred are now source-level, and one correction of this project's
+  own earlier reasoning: the guest-to-host mapping is string prefix rewriting
+  (`path/path.c:substitute_path_prefix`, reached from `path/binding.c:substitute_binding`), **no read-only
+  bind exists** anywhere in the option surface, and `add_induced_bindings()` is reconfiguration-only - so
+  the lookalike directory tree a guest sees is PDN's own making, as #66 measured, not proot's (`3870792`).
+
 ## [0.2.0] - 2026-11-06
 
 Tag `v0.2.0`. 123 commits since `v0.1.8` (`git log --oneline v0.1.8..v0.2.0 | wc -l`) across 138 files, and
