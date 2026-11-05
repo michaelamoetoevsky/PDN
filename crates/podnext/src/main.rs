@@ -260,11 +260,14 @@ async fn run() -> Result<()> {
             i += 1;
         }
 
-        // Measured on this device (issue #62/#63): in this path the generated proot argv is
-        // token-for-token identical with and without either flag -- 27 tokens, exactly one
-        // `--kill-on-exit` (proot-core passes it unconditionally), zero seccomp tokens. Both are
-        // refused here, before any work, rather than parsed and dropped. The string
-        // `--seccomp is not implemented` is the one the ledger greps for (issue #62).
+        // Measured on this device: with `PN_DEBUG=1 podnext -r <rootfs> <flag> -- /bin/true`,
+        // tokenising the `[DEBUG] Executing proot command` line, a bare direct run is 37 tokens,
+        // and each flag below leaves that multiset unchanged -- because proot-core's `execute()`
+        // never reads the field the flag would set (it hard-codes the token, or has no field at
+        // all). An option the caller can pass that changes nothing is the class this project
+        // refuses to ship (#62, #63, #67), so each refuses here, before any work, rather than
+        // being parsed and dropped. The string `--seccomp is not implemented` is the one the
+        // issue ledger greps for (issue #62).
         if seccomp {
             anyhow::bail!(
                 "--seccomp is not implemented: this PRoot build applies no seccomp filter, so the \
@@ -278,6 +281,72 @@ async fn run() -> Result<()> {
                 "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \
                  unconditionally, so the flag would be accepted and never enforced (the generated \
                  proot argv is byte-identical with and without it). Drop the flag (issue #63)."
+            );
+        }
+        if kill_on_exit {
+            anyhow::bail!(
+                "--kill-on-exit is not implemented on the direct-execution path: kill-on-exit is \
+                 the default and proot-core passes `--kill-on-exit` to proot unconditionally, so \
+                 the flag changes nothing (measured: the generated proot argv is token-for-token \
+                 identical with and without it, 37 tokens). Drop the flag (issue #67)."
+            );
+        }
+        if link2symlink {
+            anyhow::bail!(
+                "--link2symlink is not implemented on the direct-execution path: link2symlink is \
+                 the default and proot-core passes `--link2symlink` to proot unconditionally, so \
+                 the flag changes nothing (measured: the generated proot argv is token-for-token \
+                 identical with and without it, 37 tokens). Drop the flag (issue #67)."
+            );
+        }
+        if sysvipc {
+            anyhow::bail!(
+                "--sysvipc is not implemented on the direct-execution path: proot-core passes \
+                 `--sysvipc` to proot unconditionally, so the flag changes nothing (measured: the \
+                 generated proot argv is token-for-token identical with and without it, 37 \
+                 tokens). Drop the flag (issue #67)."
+            );
+        }
+        if no_sysvipc {
+            anyhow::bail!(
+                "--no-sysvipc is not implemented on the direct-execution path: proot-core passes \
+                 `--sysvipc` to proot unconditionally, so the flag cannot turn it off (measured: \
+                 the generated proot argv is token-for-token identical with and without it, 37 \
+                 tokens). Drop the flag (issue #67)."
+            );
+        }
+        if trace {
+            anyhow::bail!(
+                "--trace is not implemented on the direct-execution path: proot-core never reads \
+                 config.trace, so the flag changes nothing (measured: the generated proot argv is \
+                 token-for-token identical with and without it, 37 tokens). Honouring it needs \
+                 engine plumbing in proot-core. Drop the flag (issue #67)."
+            );
+        }
+        if qemu.is_some() {
+            anyhow::bail!(
+                "--qemu is not implemented on the direct-execution path: proot-core's ProotConfig \
+                 has no qemu field, so the value has nowhere to reach (measured: the generated \
+                 proot argv is token-for-token identical with and without it, 37 tokens). \
+                 Honouring it needs engine plumbing in proot-core. Drop the flag (issue #67)."
+            );
+        }
+        if uid.is_some() {
+            anyhow::bail!(
+                "--uid is not implemented on the direct-execution path: proot-core hard-codes \
+                 `--change-id=0:0:0` and never reads config.uid, so the flag changes nothing \
+                 (measured: the generated proot argv is token-for-token identical with and without \
+                 it, 37 tokens). Honouring it needs engine plumbing in proot-core. Drop the flag \
+                 (issue #67)."
+            );
+        }
+        if gid.is_some() {
+            anyhow::bail!(
+                "--gid is not implemented on the direct-execution path: proot-core hard-codes \
+                 `--change-id=0:0:0` and never reads config.gid, so the flag changes nothing \
+                 (measured: the generated proot argv is token-for-token identical with and without \
+                 it, 37 tokens). Honouring it needs engine plumbing in proot-core. Drop the flag \
+                 (issue #67)."
             );
         }
 
@@ -294,9 +363,25 @@ async fn run() -> Result<()> {
         if pn_debug {
             pn_trace!("[DEBUG main] Calling execute_direct_manual with all flags");
         }
-        // For now, just call execute_direct_manual with basic args
-        // TODO: Pass all parsed flags to a new execute_direct_manual_full function
-        return execute_direct_manual(rootfs.unwrap(), &cmd_args, verbose).await;
+
+        // The flags the engine can honour are threaded through here; the rest refuse above. This
+        // config is the same one the clap path builds in `execute_direct`, so both direct
+        // entry points agree on what a flag does (issue #67).
+        let mut config = proot_core::ProotConfig::default();
+        config.verbose = if verbose { 1 } else { 0 };
+        config.rootfs = Some(rootfs.unwrap().into());
+        config.command = cmd_args.clone();
+        config.bind = binds.clone();
+        config.cwd = pwd.map(Into::into);
+        config.env = env.clone();
+        config.kernel_release = kernel;
+        config.hostname = hostname;
+        // Asking to switch seccomp filtering OFF requests nothing; asking to switch it ON is
+        // refused above (#62).
+        if no_seccomp {
+            config.seccomp = false;
+        }
+        return execute_direct_manual(config).await;
     }
 
     // Parse trailing arguments for direct execution mode (-- <cmd> ...) for clap-parsed case
@@ -463,22 +548,18 @@ async fn execute_direct(cli: &Cli, trailing_args: &[String]) -> Result<()> {
     Ok(())
 }
 
-async fn execute_direct_manual(rootfs: String, cmd_args: &[String], verbose: bool) -> Result<()> {
-    if cmd_args.is_empty() {
+async fn execute_direct_manual(config: proot_core::ProotConfig) -> Result<()> {
+    if config.command.is_empty() {
         bail!("Direct execution mode requires a command. Use 'podnext -r /path/to/rootfs -- <command>'");
     }
 
-    pn_trace!("[DEBUG direct] Rootfs: {:?}", rootfs);
-    pn_trace!("[DEBUG direct] Command: {:?}", cmd_args);
-    pn_trace!("[DEBUG direct] Verbose: {}", verbose);
+    pn_trace!("[DEBUG direct] Rootfs: {:?}", config.rootfs);
+    pn_trace!("[DEBUG direct] Command: {:?}", config.command);
+    pn_trace!("[DEBUG direct] Verbose: {}", config.verbose);
 
-    // Use proot-core directly for direct execution
-    let mut config = proot_core::ProotConfig::default();
-    config.verbose = if verbose { 1 } else { 0 };
+    // Use proot-core directly for direct execution. The config already carries every flag this
+    // entry point can honour; the ones it cannot refused in the scanner before reaching here.
     let mut engine = proot_core::ProotEngine::new(config)?;
-
-    engine.config.rootfs = Some(rootfs.into());
-    engine.config.command = cmd_args.to_vec();
 
     // Execute and wait for completion
     let exit_code = engine.execute().await? as i32;
