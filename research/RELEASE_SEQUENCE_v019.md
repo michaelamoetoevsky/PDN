@@ -171,9 +171,13 @@ build, test and clippy per target, then uploads `podnext-<target>`, `install.sh`
 `install-short.sh`, runs the security audit, and creates the release. So the sequence is:
 
 1. Tag **`v0.2.0`** on the S5 commit, push the tag, watch `Release Automation` to completion.
-2. Download one artifact and run the **smoke test on this device**, which the withdrawn attempt
-   never did: `podnext install alpine`, `run`, `login`, `remove`, and `doctor` - each command's exit
-   status recorded.
+2. Run `sh scripts/smoke_release.sh <downloaded-binary> 0.2.0` - the smoke test the withdrawn attempt
+   never did, now a committed, re-runnable tool: `version` (and that it says `0.2.0`), `doctor` (host),
+   `install alpine:latest`, `list`, `run -- echo <marker>`, `login -- true`, `doctor --container`,
+   `sessions`, `remove --force`, and that the container is gone afterwards. Every step's exit code is
+   recorded, every failure prints its own log path, and a failure exits non-zero so the release cannot be
+   marked latest on a partial pass. It refuses to run at all (exit 2) rather than guess when the binary is
+   missing or the target container name is already taken.
 3. Only then mark the release as latest, and post the acceptance summary as a comment on map #48,
    quoting the ledger and smoke-test output.
 
