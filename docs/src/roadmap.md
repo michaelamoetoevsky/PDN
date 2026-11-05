@@ -307,3 +307,69 @@ The implementation roadmap is structured for clean, sequential execution:
 ```
 
 This roadmap serves as the definitive engineering blueprint for elevating container infrastructure on Android into a production-grade, secure, and developer-friendly runtime platform.
+
+---
+
+## 9. Roadmap to v0.1.9 — stability, simplicity, and the interactive shell
+
+Decisions already taken, so they are not reopened here:
+
+- **Licence**: `GPL-2.0-or-later`, declared identically in `LICENSE`, `Cargo.toml` and `README.md`,
+  pinned by four ledger predicates (#40, closed).
+- **Image model**: unchanged in v0.1.9. Images are still container directories; the OCI artifact
+  store, layers and registry transport are §4.4 and belong to the next major version.
+- **TUI**: not in v0.1.9. A TUI is a consumer; it is cheap only once a stable machine interface
+  exists underneath. §9.2 builds that interface first.
+
+### 9.1 Stability and honesty — freeze breadth, deepen the paths people use daily
+
+The defect pattern of the last three rounds was consistent: a command existed, printed something
+plausible, and could not do what it claimed (`image push`, benchmark reporting, `image inspect`,
+`login --detach`). v0.1.9 removes the pattern rather than more instances of it.
+
+| Work item | Acceptance criterion |
+|---|---|
+| Label every command `stable` / `experimental`, in `--help` and in the docs | no command is unlabelled |
+| Replace every remaining stub with an explicit refusal that names the reason | zero occurrences of "not fully implemented" in user-facing output |
+| Document the exit-code contract (0 ok, 1 usage/error, 2 invalid input) and enforce it | a test asserts the code for each failure class |
+| Contract test: every command, flag and example in `docs/src/cli-reference.md` must exist and run | `podnext image list` vs `ls` cannot happen again |
+| Triage the 13-agent audit findings into issues | every finding either fixed, filed, or explicitly declined with a reason |
+
+### 9.2 Simplicity and performance — one source of truth, one module per domain
+
+Measured baseline: `image ls` 28.6 ms, `list -a` 42–53 ms for ten containers, dominated by process
+start plus a full container load; `image ls` reports `SIZE` as a `stat` of the directory (3.4 KB for a
+307 MB image). Two monolithic files carry most of the CLI: `main.rs` 4,220 lines and
+`commands/mod.rs` 3,604 lines.
+
+| Work item | Acceptance criterion |
+|---|---|
+| Split the CLI by domain (`container`, `image`, `build`, `shell`, `service`, `network`, `policy`, `system`) | no file over ~800 lines; `--help` output byte-identical |
+| Cache the container index with mtime invalidation | metadata query p50 < 10 ms with 10 containers |
+| Stop printing a number that is not the image size | either a real size computed once and cached with a staleness marker, or an explicit `unknown` |
+| Route read-only metadata queries through the daemon that already exists (`podnext-daemon`) | CLI latency independent of container count |
+| Honour `TERMUX__HOME`, `TERMUX__PREFIX`, `TERMUX_APP__PACKAGE_NAME` and `XDG_*` instead of 12 hard-coded Termux paths | the suite passes with `HOME` and `PREFIX` relocated |
+
+### 9.3 The interactive shell — the largest untapped value
+
+Being able to `login` is not the same as enjoying the shell daily. Ordered by what blocks people:
+
+| Work item | Acceptance criterion |
+|---|---|
+| Real `--detach` plus `attach` back into the same session (the session registry and `attach` already exist) | login → detach → attach returns to the same shell, no orphan session |
+| Terminal fidelity: `SIGWINCH`/resize, `TERM`/`COLORTERM` passthrough, UTF-8 and locale, a sane default `PS1` | `vim`/`htop` render and resize correctly inside the guest |
+| Correct argv quoting for `podnext run … -- <cmd>` | a table of quoting cases passes, including embedded quotes and `;` |
+| Predictable bindings (`/sdcard`, `/storage`, shared home/tmp) and an honest `USER` story | documented, tested, and the build output states USER is not enforced |
+| Session hygiene: reuse, `ps`/`kill` consistency, no zombie guests after SIGKILL | a soak run leaves no processes behind |
+| `podnext doctor` on the host and inside the guest | reports DNS, `/dev/shm`, `os-release`, cgroup, TMPDIR, proot argv with pass/fail |
+
+### 9.4 Explicit non-goals for v0.1.9
+
+- No expansion of `cluster`, `dbus`, `gitops` or `multiarch_build` (`pn-next` is already 23,760 lines).
+  Complexity that is not exercised rots, and the project has the receipts: a benchmark target drifted
+  through 26 compile errors behind a green check.
+- No new top-level commands. v0.1.9 makes the existing 37 honest before adding a 38th.
+- No TUI until §9.2 lands, no OCI store until the next major version (§4.4).
+
+The audit run that accompanies this section supplies the concrete defect list; its findings are
+triaged into the issue tracker and folded back here as they are confirmed.
