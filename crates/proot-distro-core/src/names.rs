@@ -122,6 +122,11 @@ pub fn store_key(reference: &str) -> String {
     last.split(':').next().unwrap_or(last).to_string()
 }
 
+/// Escape control and ANSI non-printable bytes for safe terminal output (issue #05-3).
+pub fn escape_name(s: &str) -> String {
+    s.chars().flat_map(|c| c.escape_default()).collect()
+}
+
 #[cfg(test)]
 mod store_key_tests {
     use super::store_key;
@@ -176,5 +181,37 @@ mod store_key_tests {
                 "validate_network_name({bad:?}) must fail"
             );
         }
+    }
+
+    #[test]
+    fn rejects_control_bytes_and_spaces() {
+        let v = super::NameValidator::new();
+        let long_name = "a".repeat(65);
+        for bad in [
+            "a\x01b",
+            "\x1b[31mred",
+            "hello world",
+            " ",
+            "\t",
+            "\n",
+            &long_name,
+        ] {
+            assert!(
+                v.validate_volume_name(bad).is_err(),
+                "validate_volume_name({bad:?}) must fail"
+            );
+            assert!(
+                v.validate_network_name(bad).is_err(),
+                "validate_network_name({bad:?}) must fail"
+            );
+        }
+    }
+
+    #[test]
+    fn escape_name_sanitizes_nonprintable_and_ansi() {
+        assert_eq!(super::escape_name("normal-name_1"), "normal-name_1");
+        assert_eq!(super::escape_name("a\x01b"), "a\\u{1}b");
+        assert_eq!(super::escape_name("\x1b[31mred"), "\\u{1b}[31mred");
+        assert_eq!(super::escape_name("line\nbreak"), "line\\nbreak");
     }
 }

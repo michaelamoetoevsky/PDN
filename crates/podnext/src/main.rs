@@ -3107,7 +3107,10 @@ async fn cmd_network_create(
         ..Default::default()
     };
     core.network_manager().create(&config)?;
-    println!("Network '{}' created successfully", name);
+    println!(
+        "Network '{}' created successfully",
+        proot_distro_core::escape_name(&name)
+    );
     Ok(())
 }
 
@@ -3163,7 +3166,7 @@ async fn cmd_network_inspect(networks: Vec<String>, format: OutputFormat) -> Res
     for name in networks {
         match core.network_manager().inspect(&name) {
             Ok(info) => results.push(info),
-            Err(e) => eprintln!("Network '{}': {}", name, e),
+            Err(e) => eprintln!("Network '{}': {}", proot_distro_core::escape_name(&name), e),
         }
     }
 
@@ -3830,7 +3833,10 @@ async fn cmd_volume_create(name: String, driver: String, opts: Vec<String>) -> R
         options,
     };
     core.storage_manager().create_volume(&config)?;
-    println!("Volume '{}' created successfully", name);
+    println!(
+        "Volume '{}' created successfully",
+        proot_distro_core::escape_name(&name)
+    );
     Ok(())
 }
 
@@ -3877,7 +3883,7 @@ async fn cmd_volume_inspect(volumes: Vec<String>, format: OutputFormat) -> Resul
     for name in volumes {
         match core.storage_manager().inspect_volume(&name) {
             Ok(info) => results.push(info),
-            Err(e) => eprintln!("Volume '{}': {}", name, e),
+            Err(e) => eprintln!("Volume '{}': {}", proot_distro_core::escape_name(&name), e),
         }
     }
 

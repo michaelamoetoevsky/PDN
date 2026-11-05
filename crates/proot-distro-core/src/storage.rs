@@ -98,7 +98,7 @@ impl StorageManager {
         if self.volumes.contains_key(&config.name) {
             return Err(Error::msg(format!(
                 "Volume '{}' already exists",
-                config.name
+                crate::names::escape_name(&config.name)
             )));
         }
         // Materialise the mountpoint: a volume the guest can bind into must
@@ -116,7 +116,10 @@ impl StorageManager {
             self.save()?;
             Ok(())
         } else {
-            Err(Error::msg(format!("Volume '{}' not found", name)))
+            Err(Error::msg(format!(
+                "Volume '{}' not found",
+                crate::names::escape_name(name)
+            )))
         }
     }
 
@@ -147,7 +150,10 @@ impl StorageManager {
                 size: 0,
             })
         } else {
-            Err(Error::msg(format!("Volume '{}' not found", name)))
+            Err(Error::msg(format!(
+                "Volume '{}' not found",
+                crate::names::escape_name(name)
+            )))
         }
     }
 }

@@ -152,17 +152,16 @@ impl ContainerManager {
 
     pub async fn get(&self, name: &str) -> Result<Container> {
         let containers = self.containers.lock().await;
-        containers
-            .get(name)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))
+        containers.get(name).cloned().ok_or_else(|| {
+            anyhow::anyhow!("Container '{}' not found", crate::names::escape_name(name))
+        })
     }
 
     pub async fn remove(&self, name: &str) -> Result<()> {
         let mut containers = self.containers.lock().await;
-        containers
-            .remove(name)
-            .ok_or_else(|| anyhow::anyhow!("Container '{}' not found", name))?;
+        containers.remove(name).ok_or_else(|| {
+            anyhow::anyhow!("Container '{}' not found", crate::names::escape_name(name))
+        })?;
         Ok(())
     }
 

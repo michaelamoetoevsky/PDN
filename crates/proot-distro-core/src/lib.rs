@@ -71,7 +71,7 @@ pub use layer_diff::compute_layer_diff;
 pub use locking::LockManager;
 pub use login::{LoginManager, LoginOptions};
 pub use message::{Message, MessageLevel};
-pub use names::NameValidator;
+pub use names::{escape_name, store_key, NameValidator};
 pub use network::{NetworkInfo, NetworkManager};
 pub use paths::{temp_base, ContainerPaths, PathResolver};
 pub use progress::ProgressTracker;

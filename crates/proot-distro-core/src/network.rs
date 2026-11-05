@@ -80,7 +80,10 @@ impl NetworkManager {
     pub fn create(&mut self, config: &NetworkConfig) -> Result<()> {
         crate::names::NameValidator::new().validate_network_name(&config.name)?;
         if self.networks.contains_key(&config.name) {
-            anyhow::bail!("Network '{}' already exists", config.name);
+            anyhow::bail!(
+                "Network '{}' already exists",
+                crate::names::escape_name(&config.name)
+            );
         }
         self.networks.insert(config.name.clone(), config.clone());
         self.save()?;
@@ -92,7 +95,7 @@ impl NetworkManager {
             self.save()?;
             Ok(())
         } else {
-            anyhow::bail!("Network '{}' not found", name)
+            anyhow::bail!("Network '{}' not found", crate::names::escape_name(name))
         }
     }
 
@@ -127,7 +130,7 @@ impl NetworkManager {
                 containers: config.containers.clone(),
             })
         } else {
-            anyhow::bail!("Network '{}' not found", name)
+            anyhow::bail!("Network '{}' not found", crate::names::escape_name(name))
         }
     }
 
