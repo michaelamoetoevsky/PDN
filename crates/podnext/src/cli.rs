@@ -288,7 +288,7 @@ pub(crate) enum Commands {
         /// Remove the container when it exits (not implemented: `run` refuses it)
         #[arg(long = "rm", global = false)]
         rm: bool,
-        /// Run in the background (not implemented: `run` refuses it rather than running in the foreground)
+        /// Run in the background under a supervised PTY; reattach with `podnext attach <container>` (Ctrl-P Ctrl-Q detaches again)
         #[arg(long = "detach", short = 'd', global = false)]
         detach: bool,
         /// Assign a name to the container (not implemented: `run` refuses it)
@@ -468,7 +468,11 @@ pub(crate) enum Commands {
         format: OutputFormat,
     },
 
-    /// [experimental] [Container] Attach to a container session (creates new session)
+    /// [experimental] [Container] Attach to a running detached session (reconnects; does not start one)
+    #[command(
+        long_about = "Reconnect to a session started with `podnext run --detach <container>`. `attach` never starts a session: with none running for the container it exits 1 and names the command that starts one. The argument is the container name, not a session id.\n\n\
+        Ctrl-P Ctrl-Q detaches again and leaves the guest running; the same guest shell answers the next attach. Two declared simplifications: a resize of this terminal while attached is not re-forwarded to the guest, and output produced while detached is appended to the session log but not replayed on reconnect."
+    )]
     Attach {
         /// Container name
         container: String,

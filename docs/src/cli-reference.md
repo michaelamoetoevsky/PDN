@@ -25,7 +25,7 @@ because the suite does not drive them yet. Re-derive this table with `podnext --
 | `podnext search` | `[experimental]` | no automated test covers it yet |
 | `podnext image` | `[experimental]` | `pull` and `push` refuse: there is no OCI image store before v0.2.0 |
 | `podnext sessions` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
-| `podnext attach` | `[experimental]` | no automated test covers it yet |
+| `podnext attach` | `[experimental]` | the reattach path has no automated test; only its no-session refusal is covered (`crates/podnext/tests/stub_refusals.rs`) |
 | `podnext info` | `[experimental]` | no automated test covers it yet |
 | `podnext version` | `[experimental]` | no automated test covers it yet |
 | `podnext doctor` | `[stable]` | exercised by `crates/podnext/tests/doctor_contract.rs` |
@@ -114,12 +114,22 @@ podnext ls [OPTIONS]
 | `--no-all` | Hide stopped containers |
 | `--format <FORMAT>` | Output format: table, json, yaml, text |
 
-**Output:**
+**Output** (captured from `podnext list` on this device; one such block per container, separated
+by the `+---+` rules shown):
+
+```text
++------------------+--------+---------+---------+---------+------------------+
+| NAME             | DISTRO | VERSION | ARCH    | STATUS  | CREATED          |
++------------------+--------+---------+---------+---------+------------------+
+| alpine           | alpine | 3.24.3  | aarch64 | Stopped | 2026-11-02 19:13 |
++------------------+--------+---------+---------+---------+------------------+
+| deb-pdn          | debian | 13      | aarch64 | Stopped | 2026-11-03 06:36 |
++------------------+--------+---------+---------+---------+------------------+
 ```
-NAME       IMAGE              STATUS      CREATED
-ubuntu     ubuntu:22.04       stopped     2024-01-15 10:30:00
-alpine     alpine:latest      running     2024-01-15 11:00:00
-```
+
+The columns are `NAME DISTRO VERSION ARCH STATUS CREATED`. An earlier version of this page showed
+`NAME IMAGE STATUS CREATED`, which no code path printed. `--format json|yaml|text` emits the same
+fields.
 
 ### `podnext login`
 
@@ -156,7 +166,7 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 |--------|-------------|
 | `--name <NAME>` | Refused: `run` uses the named container it was given, so a second name would be ignored |
 | `--isolated` | Run in isolated mode (do not mount host storage or Termux home directory) |
-| `-d, --detach` | Run in background — not implemented yet: the command refuses rather than pretending |
+| `-d, --detach` | Run in the background under a supervised PTY; it prints the supervisor pid and returns. Reconnect with `podnext attach <container>` (Ctrl-P Ctrl-Q detaches again) |
 | `--rm` | Refused: removing the container after the run needs ephemeral containers, which PDN does not have yet |
 | `--volume <HOST:GUEST>` | Mount a host directory into the container (repeatable). A `:ro` suffix is refused — proot has no read-only bind form, and the suffix would become part of the guest path name |
 | `-e, --env <VAR=VALUE>` | Set environment variable (repeatable) |
@@ -204,11 +214,36 @@ podnext sessions [OPTIONS]
 
 ### `podnext attach`
 
-Attach to a container session.
+Reconnect to a running detached session (started with `podnext run --detach <container>`).
+`attach` never starts a session: with none running for the container it exits 1 and names the
+command that starts one.
 
 ```bash
-podnext attach <SESSION_ID> [OPTIONS]
+podnext attach <CONTAINER> [OPTIONS]
 ```
+
+The argument is the **container name**, not a session id. Inside the session, **Ctrl-P Ctrl-Q**
+detaches again and leaves the guest running; the same guest shell answers the next `attach`.
+
+```sh
+$ podnext run --detach alpine -- sh -c 'echo hello-detached; sleep 6'
+4157
+$ cat ~/.podnext/sessions/4157.log
+hello-detached
+$ podnext attach no-such-container
+Error: No running session for container 'no-such-container'. Start one with `podnext run --detach no-such-container -- <command>`.
+```
+
+`run --detach` prints the supervisor pid and returns; the guest's output is appended to
+`~/.podnext/sessions/<pid>.log`. `attach <container>` reconnects to that session, and **Ctrl-P
+Ctrl-Q** detaches again leaving the guest running. Measured in #57 (not re-run here): two `attach`
+connections are answered by the same guest shell pid, a marker written while attached survives a
+detach, and no `podnext` or `proot` process is left after the guest exits.
+
+Two **declared simplifications** of the current supervisor (not defects it reports): a resize of the
+attaching terminal while attached is not re-forwarded to the guest, and output produced while
+detached is appended to the session log (`~/.podnext/sessions/<pid>.log`) but not replayed on
+reconnect.
 
 ### `podnext kill`
 
@@ -531,32 +566,19 @@ Show system information.
 podnext info [OPTIONS]
 ```
 
-**Output:**
+**Output** (captured; a single-row table, not a feature list):
+
+```text
++---------+----------------+--------------+-------------------+------------------------------------------+
+| VERSION | PLATFORM       | RUST VERSION | BACKEND           | ISOLATION                                |
++---------+----------------+--------------+-------------------+------------------------------------------+
+| 0.1.8   | Termux/Android | 1.80+        | proot-distro-core | proot (unmapped host tree, masked /proc) |
++---------+----------------+--------------+-------------------+------------------------------------------+
 ```
-PDN Version: 1.0.0
-Host OS: Linux 6.1.0 (aarch64)
-Termux: 0.118.0
-PRoot: 5.4.0
-proot-distro: N/A (native)
 
-Containers: 3
-Images: 5
-Networks: 2
-Volumes: 4
-
-Resources:
-  CPU: 8 cores
-  Memory: 8.0 GB
-  Disk: 128 GB (45 GB free)
-
-Features:
-  GPU: ✓ (Adreno 730)
-  CRIU: ✓
-  Seccomp: ✓
-  AppArmor: ✗
-  SELinux: ✗
-  Cgroups v2: ✓
-```
+The five fields are `VERSION PLATFORM RUST VERSION BACKEND ISOLATION`; `--format json|yaml|text`
+emits the same. An earlier version of this page showed a multi-section feature report (`PDN
+Version: 1.0.0`, `GPU: ✓`, `CRIU: ✓`, cgroups), which no code path printed.
 
 ### `podnext dbus`
 
@@ -564,14 +586,21 @@ Manage D-Bus IPC broker and service forwarder.
 
 ```bash
 # Start standalone D-Bus broker on a specific UNIX socket
-podnext dbus serve --socket /tmp/pn-dbus.sock
+podnext dbus serve --socket $PREFIX/tmp/pn-dbus.sock
 
 # List registered D-Bus services
 podnext dbus list
 
 # Call a method over D-Bus
-podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service GetStatus --socket /tmp/pn-dbus.sock
+podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service GetStatus --socket $PREFIX/tmp/pn-dbus.sock
 ```
+
+The socket value is an explicit **host** path, so it uses the host temp base. `podnext dbus serve`
+is a host process and PDN's temp base is `$PREFIX/tmp`, never `/tmp` (see the `TMPDIR` row) — on
+Android `/tmp` is not writable on the host. `/tmp` is only meaningful *inside* a guest, where PDN
+binds a per-container directory; an earlier version of this page used `/tmp/pn-dbus.sock`, which is
+the guest's temp base, not the host's. Without `--socket`, `dbus serve` uses its own compiled
+default of `/run/pn-next/dbus/session` (`crates/pn-next/src/dbus/mod.rs`).
 
 ### `podnext gitops`
 

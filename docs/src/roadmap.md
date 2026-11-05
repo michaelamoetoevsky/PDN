@@ -370,13 +370,13 @@ start plus a full container load; `image ls` reports `SIZE` as a `stat` of the d
 
 Measuring fidelity found a **regression**, which is the useful part: a guest started with `login` had no prompt and could not read stdin, because `proot-core` gave the child its own process group while the tty foreground group was still the caller's, so the guest read stopped on `SIGTTIN` while writes and ioctls kept working. The installed v0.1.7 worked, which is what proved it was a regression rather than a mystery (#68). Fixed, with the harness as the oracle, and guarded by two pure functions and their unit tests in `crates/proot-core/src/lib.rs`. `TERM` was also hardcoded while `COLORTERM` passed through; it is now forwarded. One open question is recorded rather than claimed: the harness proves the guest sees the new winsize, not that `SIGWINCH` is delivered.
 
-Not done: real `--detach` plus `attach` (the command still refuses, #47; tracked as #57). The bindings and the `USER` story are documented (`/sdcard`, `/storage/emulated/0`, `/storage/self/primary` in `constants.rs`; `--user` refused with the mapped-root reason) but have never been measured **inside** a guest: that is **#66**. `known-limitations.md` lists the unmeasured items.
+**Landed: real `--detach` plus `attach` (#57).** `run --detach` starts the guest under a supervised PTY and prints the supervisor pid; `attach <container>` reconnects to the same live shell (same guest pid across two attaches, a marker written while attached survives a detach, no orphan after the guest exits). Two simplifications are declared rather than hidden — a resize of the attaching terminal is not re-forwarded while attached, and output produced while detached is written to the session log but not replayed — and are recorded in `known-limitations.md`. The bindings and the `USER` story are documented (`/sdcard`, `/storage/emulated/0`, `/storage/self/primary` in `constants.rs`; `--user` refused with the mapped-root reason) but have never been measured **inside** a guest: that is **#66**. `known-limitations.md` lists the unmeasured items.
 
 Being able to `login` is not the same as enjoying the shell daily. Ordered by what blocks people:
 
 | Work item | Acceptance criterion |
 |---|---|
-| Real `--detach` plus `attach` back into the same session (the session registry and `attach` already exist) | login → detach → attach returns to the same shell, no orphan session |
+| Real `--detach` plus `attach` back into the same session — **landed** (#57): `run --detach` → `attach` reconnects to the same shell | run → detach → attach returns to the same shell, no orphan session (measured, #57) |
 | Terminal fidelity: `SIGWINCH`/resize, `TERM`/`COLORTERM` passthrough, UTF-8 and locale, a sane default `PS1` | `vim`/`htop` render and resize correctly inside the guest |
 | Correct argv quoting for `podnext run … -- <cmd>` | a table of quoting cases passes, including embedded quotes and `;` |
 | Predictable bindings (`/sdcard`, `/storage`, shared home/tmp) and an honest `USER` story | documented, tested, and the build output states USER is not enforced |
@@ -429,7 +429,7 @@ command. The reference polygon is far wider, and this is where "mobility" is fel
 | `--hostname` | applications that care | `hostname` inside matches |
 | `--fix-low-ports`, `--redirect-ports` | servers on privileged ports | a listener on 80 inside is reachable as documented |
 | `--no-sysvipc`, `--no-link2symlink` | escape hatches for broken guests | documented and honoured |
-| `--detach` + `attach` | leaving a long job running | detach, then reattach to the same live shell (today the code prints "not fully implemented yet" and stays in the foreground) |
+| `--detach` + `attach` | leaving a long job running | detach, then reattach to the same live shell; **landed** as `run --detach` + `attach` (#57) — `login` itself still takes no `--detach` |
 | `--env` (repeatable) | per-session configuration | visible inside |
 | `--get-proot-cmd` | debuggability: print the exact proot invocation | prints a copy-pasteable command that reproduces the session |
 | `--user` semantics stated honestly | GUI-less guests often need root | `--user` documented with what PRoot can and cannot enforce |
@@ -465,7 +465,7 @@ section 5. What is taken is the *architecture*, module by module:
 | local archive install | raw rootfs tar and OCI layout, digests verified, reads bounded | `podnext install <archive>` |
 | build engine + layer differ | one layer per instruction, whiteouts, multi-stage with per-stage scopes | replaces the current single-rootfs builder |
 | login option polygon | isolated / shared / bindings / ports / detach / user | widen `login` to section 10.2 |
-| session registry | recorded sessions, consistent `ps`/`kill`, teardown | extend what exists; add detach/attach |
+| session registry | recorded sessions, consistent `ps`/`kill`, teardown | extend what exists; detach/attach landed in v0.1.9 (#57) |
 | sysdata, shm, l2s, dirfd | /proc stubs, shared memory, hardlink emulation, descriptor VFS | already ported in earlier rounds — verify parity, do not rewrite |
 | state dir + paths | honours `TERMUX__HOME`, `TERMUX__PREFIX`, XDG | replace 12 hard-coded Termux paths |
 | help pages + alias + completions | discoverability | section 10.4 |

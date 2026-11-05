@@ -70,9 +70,18 @@ run ...` also emits it. Verified with `podnext doctor --container test-alpine --
   selection: a volume is a directory under `$HOME/.podnext/volumes`.
 - **`network create`** takes driver, subnet and gateway. Carving an IP range inside the subnet is not
   implemented.
-- **`run --detach`** refuses: a detached session cannot be re-entered yet, so the command would
-  otherwise run in the foreground while reporting that it detached. Run in the foreground, or under
-  `podnext service` supervision.
+- **`run --detach` + `attach` reconnects, with two declared simplifications.** The round trip is
+  real (`9076b93`, #57): `run --detach` starts the guest under a supervised PTY and prints the
+  supervisor pid, and `attach <container>` reconnects to the same live shell — the same guest pid
+  answers two attaches, a marker written while attached survives a detach, and no `podnext` or
+  `proot` process is left after the guest exits. Two things are deliberately **not** done, declared
+  here rather than discovered: (1) a resize of the attaching terminal **is not re-forwarded** while
+  attached — a client sends its size once when it connects and the supervisor has no `SIGWINCH`
+  handler, so a full-screen program opened before a resize keeps the old geometry until the next
+  attach; (2) output produced while detached is appended to the session log
+  (`sessions_dir()/<pid>.log`) but **is not replayed** on reconnect, so lines printed while nobody
+  was attached do not appear — read the log file for them. Both are simplifications of the current
+  supervisor, not defects it reports.
 - **`image pull` / `image push`** refuse with an explanation instead of reporting a success they did
   not achieve: there is no OCI blob store yet, and `podnext install <image>` is the working path.
 - **`build submit|status|cancel|list|artifacts|logs`**, **`watchdog events`**, **`service logs`** and
@@ -157,7 +166,8 @@ than fixed in passing because the owning files (the `login`/`run` command path) 
 
 These are claims the project cannot currently make, listed so that the absence is visible:
 
-- `login --detach` (the command refuses today; the round trip is unmeasured).
+- `login --detach`: `login` takes no `--detach` flag (it exits 2, "unexpected argument"). The
+  detached round trip is `run --detach` + `attach`, which **is** measured (#57).
 - Terminal fidelity in the guest: `SIGWINCH` handling, `PS1`, `TERM`/`COLORTERM`, UTF-8 locale.
 - The `podnext run … -- <cmd>` quoting table.
 - A soak run proving no guest processes survive a forced stop.
@@ -168,7 +178,9 @@ These are claims the project cannot currently make, listed so that the absence i
   digest-addressed layers, pull/push transport. This is the spine of v0.2.0 — import/export and
   push/pull all depend on it.
 - **Login polygon** (roadmap section 10.2): shared home, shared tmp, shared X11, bind presets, work dir,
-  hostname, detach, and the rest of the mobility-parity flag set.
+  hostname, `detach` **as a `login` flag**, and the rest of the mobility-parity flag set. (The
+  detached round trip itself exists — `run --detach` + `attach`, #57 — but `login` takes no
+  `--detach`.)
 - **Remaining `/proc` and `/sys` stub cases** for unusual distributions. The current stubs cover the
   common paths; the remainder is documented rather than guessed at.
 - **No TUI** until the machine interface is stable (roadmap section 9.4).
