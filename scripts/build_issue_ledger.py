@@ -328,8 +328,10 @@ CHECKS: list[dict] = [
     dict(issue="46", claim="the daemon binary carries no hard-coded home path",
          cmd="! grep -rqF '/data/data/com.termux/files/home' crates/podnext/src/daemon.rs",
          needle=None),
+    # Scoped to the crate, not one file: the socket resolver moved to commands/service.rs when the
+    # CLI was split, and a predicate pinned to commands/mod.rs would have gone red by relocation.
     dict(issue="46", claim="the daemon socket is resolved from the environment",
-         cmd="grep -rqF 'paths::host::runtime_dir' crates/podnext/src/commands/mod.rs", needle=None),
+         cmd="grep -rqF 'paths::host::runtime_dir' crates/podnext/src", needle=None),
     dict(issue="46", claim="the prefix honours TERMUX__PREFIX before PREFIX",
          cmd="grep -rqF 'TERMUX__PREFIX' crates/proot-distro-core/src/paths.rs", needle=None),
     dict(issue="46", claim="the resolution order is unit tested",
