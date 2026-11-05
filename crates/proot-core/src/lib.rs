@@ -60,6 +60,7 @@ pub use vfs::VfsManager;
 
 use anyhow::Result;
 use parking_lot::Mutex;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use tokio::process::Command;
 
@@ -115,6 +116,31 @@ pub struct ProotEngine {
     tracee_manager: Arc<Mutex<TraceeStateManager>>,
     vfs_manager: Arc<Mutex<VfsManager>>,
     seccomp_filter: Arc<Mutex<SeccompFilter>>,
+}
+
+/// The process group the child should get.
+///
+/// A child in its own process group is not the terminal's foreground group, so its first read from
+/// the controlling tty stops on `SIGTTIN`: no prompt and no interactive stdin, while writes and
+/// ioctls keep working, so the failure looks partial (`stty size` still answers). Measured against
+/// v0.1.7, which had no such group and worked (issue #68). An interactive foreground run therefore
+/// stays in the caller's group, which is the foreground group and also receives `SIGWINCH`;
+/// anything else gets its own, because group-signalling is the point of it.
+fn child_owns_process_group(stdin_is_tty: bool) -> bool {
+    !stdin_is_tty
+}
+
+/// The `TERM` the guest should see: the caller's.
+///
+/// The caller's terminal is the one the guest draws to, so telling it anything else makes it ask
+/// for capabilities nothing has: measured, a caller at `TERM=footest` used to arrive as
+/// `xterm-256color`. An empty value counts as absent, because a guest told `TERM=` cannot render at
+/// all, and the fallback then applies.
+fn guest_term(caller: Option<&str>) -> String {
+    caller
+        .filter(|v| !v.is_empty())
+        .unwrap_or("xterm-256color")
+        .to_string()
 }
 
 impl ProotEngine {
@@ -237,7 +263,12 @@ impl ProotEngine {
             "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         );
         cmd.env("HOME", "/root");
-        cmd.env("TERM", "xterm-256color");
+        // TERM is forwarded rather than invented: the caller's terminal is the one the guest draws
+        // to, and a guest that asks for capabilities it does not have is worse than one told the
+        // truth. Measured (scripts/shell_fidelity.py): with the caller at `TERM=footest`, the guest
+        // reported `xterm-256color` while COLORTERM passed through untouched. The default applies
+        // only when the caller has no TERM at all, so a bare non-tty run still gets something sane.
+        cmd.env("TERM", guest_term(std::env::var("TERM").ok().as_deref()));
         for passthrough in ["LANG", "LC_ALL", "COLORTERM"] {
             if let Ok(v) = std::env::var(passthrough) {
                 cmd.env(passthrough, v);
@@ -380,7 +411,12 @@ impl ProotEngine {
             "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         );
         cmd.env("HOME", "/root");
-        cmd.env("TERM", "xterm-256color");
+        // TERM is forwarded rather than invented: the caller's terminal is the one the guest draws
+        // to, and a guest that asks for capabilities it does not have is worse than one told the
+        // truth. Measured (scripts/shell_fidelity.py): with the caller at `TERM=footest`, the guest
+        // reported `xterm-256color` while COLORTERM passed through untouched. The default applies
+        // only when the caller has no TERM at all, so a bare non-tty run still gets something sane.
+        cmd.env("TERM", guest_term(std::env::var("TERM").ok().as_deref()));
         for passthrough in ["LANG", "LC_ALL", "COLORTERM"] {
             if let Ok(v) = std::env::var(passthrough) {
                 cmd.env(passthrough, v);
@@ -438,13 +474,25 @@ impl ProotEngine {
         }
 
         // Spawn and wait for completion
-        let mut child = cmd
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .stdin(std::process::Stdio::inherit())
-            // Own process group (pgid == this pid) so callers can group-signal.
-            .process_group(0)
-            .spawn()?;
+        let stdin_is_tty = std::io::stdin().is_terminal();
+        let mut child = {
+            let mut c = cmd;
+            c.stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .stdin(std::process::Stdio::inherit());
+            // A child in its own process group is not the terminal's foreground group, so the first
+            // read from the controlling tty stops it with SIGTTIN: no prompt, no interactive stdin,
+            // while writes and ioctls keep working and the failure looks partial (issue #68, measured
+            // - v0.1.7 had no such group and worked; /proc showed the proot child `tpgid=<caller>`).
+            // The group is given only when stdin is not a terminal. An interactive foreground run
+            // then stays in the caller's group, which IS the foreground group and also receives
+            // SIGWINCH from the kernel. `start()` keeps its own group: a supervised or detached run
+            // has no terminal to own, and group-signalling it is the point.
+            if child_owns_process_group(stdin_is_tty) {
+                c.process_group(0);
+            }
+            c.spawn()?
+        };
         let pid = child
             .id()
             .ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
@@ -498,6 +546,29 @@ mod tests {
         assert!(config.command.is_empty());
         assert!(config.bind.is_empty());
         assert!(config.env.is_empty());
+    }
+
+    /// Issue #68: an interactive child must not be moved out of the terminal's foreground group,
+    /// or its reads stop on SIGTTIN. Inverting either assertion breaks real interactive use.
+    #[test]
+    fn an_interactive_run_does_not_take_its_own_process_group() {
+        assert!(
+            !child_owns_process_group(true),
+            "a child with a tty on stdin must stay in the caller's group"
+        );
+        assert!(
+            child_owns_process_group(false),
+            "a child without a tty should get its own group for group-signalling"
+        );
+    }
+
+    /// The guest inherits the caller's terminal, and an empty value is treated as absent.
+    #[test]
+    fn the_guest_inherits_the_callers_term() {
+        assert_eq!(guest_term(Some("footest")), "footest");
+        assert_eq!(guest_term(Some("xterm-kitty")), "xterm-kitty");
+        assert_eq!(guest_term(Some("")), "xterm-256color");
+        assert_eq!(guest_term(None), "xterm-256color");
     }
 
     #[test]

@@ -276,14 +276,31 @@ CHECKS: list[dict] = [
     dict(issue="63", claim="--no-kill-on-exit refuses instead of being silently dropped",
          cmd="grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src",
          needle="--no-kill-on-exit is not implemented"),
-    dict(issue="63", claim="the flag is refused on the manual direct path too",
-         cmd="grep -rnc 'kill_on_exit' crates/proot-core/src/lib.rs", needle=None),
+    dict(issue="63", claim="the manual direct path refuses it too, not only the parsed path",
+         cmd="grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src/main.rs",
+         needle="--no-kill-on-exit is not implemented"),
+    dict(issue="63", claim="proot-core still passes --kill-on-exit unconditionally, which is why the flag can only refuse",
+         cmd="grep -rnF -- '--kill-on-exit' crates/proot-core/src/lib.rs", needle=None),
     # ── #60: a seccomp profile in metadata is refused, not dropped ────────────
     dict(issue="60", claim="a seccomp profile in container metadata is refused, not dropped",
          cmd="grep -rnF 'assert_seccomp_profile_supported' crates/proot-distro-core/src/security.rs",
          needle="assert_seccomp_profile_supported"),
     dict(issue="60", claim="the guard is unit tested", cargo=True, needle=None,
          cmd="cargo test -p proot-distro-core --lib seccomp_profile_is_refused_not_dropped --locked"),
+    # ── #68: an interactive guest must keep the terminal it was given ─────────
+    dict(issue="68", claim="an interactive run keeps the caller's process group, asserted in code",
+         cmd="grep -rnF 'an_interactive_run_does_not_take_its_own_process_group' crates/proot-core/src/lib.rs",
+         needle="an_interactive_run_does_not_take_its_own_process_group"),
+    dict(issue="68", claim="the guest's TERM comes from the caller, asserted in code",
+         cmd="grep -rnF 'the_guest_inherits_the_callers_term' crates/proot-core/src/lib.rs",
+         needle="the_guest_inherits_the_callers_term"),
+    dict(issue="68", claim="both decisions are unit tested", cargo=True, needle=None,
+         cmd="cargo test -p proot-core --lib child_owns_process_group --locked"),
+    # ── #56 / #58: the harnesses are the deliverable, so they are checked ─────
+    dict(issue="56", claim="the fidelity harness exists and drives the real binary in a PTY",
+         cmd="grep -rnF 'PDNEXT_BIN' scripts/shell_fidelity.py", needle="PDNEXT_BIN"),
+    dict(issue="58", claim="the soak harness exists and can inject the leak it must catch",
+         cmd="grep -rnF -- '--inject-leak' scripts/soak_sessions.py", needle="--inject-leak"),
     # ── #62: --seccomp said nothing about being inert ─────────────────────────
     dict(issue="62", claim="--seccomp refuses instead of being silently dropped",
          cmd="grep -rnF -- '--seccomp is not implemented' crates/podnext/src",
@@ -397,10 +414,6 @@ NO_CHECK_REASON = {
           "every flag it parses except rootfs, the command and verbose. Each flag needs the "
           "honour-or-refuse decision made against the generated argv, one at a time; the method is "
           "written in the issue.",
-    "68": "OPEN regression, measured: a guest started with login cannot read stdin and gets no "
-          "prompt, because proot-core puts PRoot in its own process group while the tty foreground "
-          "group is still the caller (SIGTTIN). Being fixed with the fidelity harness as the "
-          "oracle; this reason is replaced by a predicate when that fix lands.",
     "39": "OPEN defect: push cannot work because the store holds no layer blobs. The CLI now refuses "
           "honestly instead of pretending (#42), and the blobs themselves are v0.2.0 work "
           "(roadmap section 4.4): the honest refusal is asserted by the stub checks, not here.",
