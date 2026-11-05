@@ -7,8 +7,8 @@ file is the prose form of the same thing, so a reader of the release does not ha
 Python. **It is generated, not maintained**: `scripts/build_issue_ledger.py --disposition`
 rewrites it from the same tables the ledger prints, so it cannot drift from the gate.
 
-Generated 2026-11-05 18:18:28Z against `f97a50e`: **68 issues**, of which 44 carry
-predicates, 13 are declined with a written reason, and 11 are wayfinder
+Generated 2026-11-05 21:43:36Z against `d982e59`: **70 issues**, of which 45 carry
+predicates, 13 are declined with a written reason, and 12 are wayfinder
 work items whose acceptance criteria live in the map issue (#48) rather than in a predicate.
 
 | # | state | title | disposition |
@@ -58,7 +58,7 @@ work items whose acceptance criteria live in the map issue (#48) rather than in 
 | 45 | CLOSED | [GAP §9.3] podnext doctor did not exist: no host/guest diagnostic report | predicate(s): the doctor command is dispatched; the doctor command is implemented; the reference documents it and names the test that covers it; a check that cannot run reports unknown, never ok; the command itself is exercised end to end; doctor reports the proot argv it actually ran |
 | 46 | CLOSED | [GAP §9.2] Path defaults were hard-coded to one machine's Termux home | predicate(s): the daemon binary carries no hard-coded home path; the daemon socket is resolved from the environment; the prefix honours TERMUX__PREFIX before PREFIX; the resolution order is unit tested; the binary follows a relocated home and the XDG variables; CI runs the suites with HOME, PREFIX and XDG relocated; the platform-owned TERMUX__PREFIX exclusion is documented |
 | 47 | CLOSED | [BUG] run accepted nine options and dropped all of them, while --help advertised each | predicate(s): the exit-code taxonomy is asserted against the real binary; every refusal class behaves as documented; the refusal names the options it cannot honour; the help no longer claims --detach runs in the background; every unhonoured option is marked refused in the reference; each refused option exits 1 without running the command |
-| 48 | OPEN | Wayfinder map: v0.1.9 shipped (roadmap section 9 met) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
+| 48 | OPEN | Wayfinder map: v0.2.0 in progress (section 9 is 14 met / 1 half / 1 exception, 0 not met) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 49 | CLOSED | CLI split: extract the observability domains (policy, quota, log, dbus, socket) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 50 | CLOSED | CLI split: extract the supervision domains (service, daemon, watchdog, boot, wakelock) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 51 | CLOSED | CLI split: move the Clap surface out of main.rs into cli.rs | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
@@ -67,20 +67,22 @@ work items whose acceptance criteria live in the map issue (#48) rather than in 
 | 54 | CLOSED | [dept/build] Extract the build, gitops and compose domains out of commands/mod.rs | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 55 | CLOSED | [shell] Assert the argv quoting table against a real guest (roadmap 9.3) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 56 | CLOSED | [shell] Measure terminal fidelity: resize, TERM, PS1, UTF-8 locale (roadmap 9.3) | predicate(s): the fidelity harness exists and drives the real binary in a PTY |
-| 57 | OPEN | [shell] detach/attach round trip and session hygiene (roadmap 9.3) | predicate(s): a detached run is spawned as its own session host; attach reconnects through the session host, instead of creating a session; the refusal that a detached session cannot be re-entered is gone |
+| 57 | CLOSED | [shell] detach/attach round trip and session hygiene (roadmap 9.3) | predicate(s): a detached run is spawned as its own session host; attach reconnects through the session host, instead of creating a session; the refusal that a detached session cannot be re-entered is gone |
 | 58 | CLOSED | [shell] Soak: repeated start/stop leaves nothing behind (roadmap 9.3) | predicate(s): the soak harness exists and can inject the leak it must catch |
 | 59 | CLOSED | [perf] Route read-only metadata through podnext-daemon (roadmap 9.2, last criterion) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 60 | CLOSED | [security] Decide the seccomp profiles: verify per distro or decline with the measurement | predicate(s): a seccomp profile in container metadata is refused, not dropped; the guard is unit tested |
 | 61 | CLOSED | [docs] Record the v0.1.9 dispositions: what is fixed, what is declined, what moved to v0.2 | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 62 | CLOSED | [BUG] run --seccomp is accepted and never applied | predicate(s): --seccomp refuses instead of being silently dropped; the refusal is asserted against the real binary; the limitation is written down where a user looks |
 | 63 | CLOSED | [BUG] direct-execution argv scanner parses --no-kill-on-exit and never uses it | predicate(s): --no-kill-on-exit refuses instead of being silently dropped; the manual direct path refuses it too, not only the parsed path; proot-core still passes --kill-on-exit unconditionally, which is why the flag can only refuse |
-| 64 | OPEN | [criterion gap] cli-reference examples are documented but never executed | predicate(s): every fenced example is executed or excluded, with a reason; a missing binary is a printed skip, never a pass |
-| 65 | OPEN | [criterion gap] the ~800-line ceiling is not met: cli.rs 1445, commands/mod.rs 1945, main. | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
-| 66 | OPEN | [criterion gap] the sample and USER story of section 9.3 is documented but not measured | predicate(s): the bindings check can tell a mapped path from an unmapped one; the documentation states that storage and the host home are not mounted |
-| 67 | OPEN | [BUG] the direct-execution scanner drops every flag it parses except rootfs/cmd/verbose | predicate(s): --trace refuses on the direct-execution path instead of being dropped; --qemu refuses for the same reason, naming the missing engine field; an honoured flag's value reaches the generated proot argv |
+| 64 | CLOSED | [criterion gap] cli-reference examples are documented but never executed | predicate(s): every fenced example is executed or excluded, with a reason; a missing binary is a printed skip, never a pass |
+| 65 | CLOSED | [criterion gap] the ~800-line ceiling: cli.rs 1450, main.rs 1170 (commands/mod.rs already  | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
+| 66 | CLOSED | [criterion gap] the sample and USER story of section 9.3 is documented but not measured | predicate(s): the bindings check can tell a mapped path from an unmapped one; the documentation states that storage and the host home are not mounted |
+| 67 | CLOSED | [BUG] the direct-execution scanner drops every flag it parses except rootfs/cmd/verbose | predicate(s): --trace refuses on the direct-execution path instead of being dropped; --qemu refuses for the same reason, naming the missing engine field; an honoured flag's value reaches the generated proot argv |
 | 68 | CLOSED | [BUG] interactive login has no prompt and cannot read stdin: the guest is a background pro | predicate(s): an interactive run keeps the caller's process group, asserted in code; the guest's TERM comes from the caller, asserted in code; both decisions are unit tested |
-| 69 | OPEN | The workspace builds with 290 warnings and nothing counts them, so the split's own residue | predicate(s): the warning ratchet can actually fail, not merely report; ceilings are stored per toolchain, so a rustc change reads as cannot-measure rather than as a pass; a toolchain with no recorded ceiling is not silently treated as clean; CI runs the comparison, so the number cannot grow unnoticed |
-| 70 | OPEN | A conflict marker is committed inside FAKE_STAT_TAIL, invisible because the constant is de | predicate(s): no conflict marker is committed in tracked source |
+| 69 | CLOSED | The workspace builds with 290 warnings and nothing counts them, so the split's own residue | predicate(s): the warning ratchet can actually fail, not merely report; ceilings are stored per toolchain, so a rustc change reads as cannot-measure rather than as a pass; a toolchain with no recorded ceiling is not silently treated as clean; CI runs the comparison, so the number cannot grow unnoticed |
+| 70 | CLOSED | A conflict marker is committed inside FAKE_STAT_TAIL, invisible because the constant is de | predicate(s): no conflict marker is committed in tracked source |
+| 71 | CLOSED | Three scripts resolve their temp base into /tmp/tmp on any host without $PREFIX | predicate(s): the temp-base expression that broke three times is gone from scripts; the rule lives in one module and its self-check can fail |
+| 72 | CLOSED | [criterion gap] section 9.2 says no file over ~800 lines; native.rs is 1605, grown from 11 | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 
 **A row is not a resolution.** `predicate(s)` means the fix is asserted by a check that this
 ledger runs and that can fail; `declined` means the reason is written down. Neither is a
