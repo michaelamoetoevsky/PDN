@@ -1243,6 +1243,9 @@ enum ConfigCommands {
     Validate {
         /// Configuration file to check (defaults to $PN_GATEWAY_CONFIG)
         path: Option<PathBuf>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
     },
 }
 
@@ -1966,7 +1969,7 @@ fn execute_config_command(cmd: ConfigCommands) -> Result<()> {
     use pn_gateway::config::GatewayConfig;
 
     match cmd {
-        ConfigCommands::Validate { path } => {
+        ConfigCommands::Validate { path, format } => {
             let path = match path.or_else(|| {
                 // Same variable the gateway reads, so the check and the start-up
                 // path cannot disagree about which file is in play.
@@ -1991,6 +1994,18 @@ fn execute_config_command(cmd: ConfigCommands) -> Result<()> {
                     std::process::exit(2);
                 }
             };
+
+            match format {
+                OutputFormat::Json => {
+                    output_json(&config)?;
+                    return Ok(());
+                }
+                OutputFormat::Yaml => {
+                    output_yaml(&config)?;
+                    return Ok(());
+                }
+                _ => {}
+            }
 
             use pn_gateway::duration_fmt::format_duration;
             println!("{} is valid", path.display());
