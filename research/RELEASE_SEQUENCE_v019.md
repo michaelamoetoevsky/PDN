@@ -199,6 +199,48 @@ section out of `CHANGELOG.md` via `scripts/extract_changelog.sh` (five controls:
 `Unreleased`, missing version -> exit 1 with empty stdout, no arguments -> exit 2), falling back to the
 commit list only when the section is absent - and saying so in the body when it does.
 
+### S6 executed - v0.2.0 tagged
+
+**Preflight, before the tag existed** (`sh scripts/preflight_release.sh 087bc0a 0.2.0`):
+
+```
+run 42114547149 conclusion: success
+artifact: 19905784 bytes, aarch64 match: 1
+  version                            rc=0   ok (podnext 0.2.0)
+  install alpine                     rc=0   ok
+  run -- echo                        rc=0   ok (marker seen)
+  login -- true                      rc=0   ok
+  doctor --container                 rc=0   ok
+  run --detach                       rc=0   ok
+  attach round trip                  ok (55 bytes, marker seen)
+  sessions (one live)                rc=0   ok
+  remove --force                     rc=0   ok
+  container is gone                  ok
+PREFLIGHT PASSED - safe to tag 0.2.0
+```
+
+Fourteen of fourteen steps against the CI-built release-mode aarch64 binary. Note the step that is new since
+the withdrawn attempt: the detach/attach round trip is exercised by the smoke test itself (55 bytes, marker
+seen), so the reattach path has coverage that runs at release time rather than a claim in a document.
+
+**Why the artifact comes from `087bc0a` and not from the tag's commit.** `ci.yml` filters on paths
+(`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`, `deny.toml`, `.github/workflows/**`) and has no
+`workflow_dispatch`, so a documentation-only commit produces no artifact at all. The release commit
+(`0881275`) touches documentation only, and the proof that this is the same code is a diff rather than a
+promise:
+
+```
+$ git diff --quiet 087bc0a..HEAD -- crates/ Cargo.toml Cargo.lock && echo "the code is unchanged"
+the code is unchanged
+```
+
+That workaround is in `research/PATH_TRANSLATION_AND_SHIM_INTEGRITY.md` section 4 as an infrastructure gap
+worth one line of YAML.
+
+**Tag**: annotated `v0.2.0` on `0881275`, pushed. The release body is generated from the `[0.2.0]` section of
+`CHANGELOG.md` by `scripts/extract_changelog.sh` - verified by reading the published release's body, which is
+the check that the fix from `e64bb47` actually reaches a release rather than only a test.
+
 ## 4. The standing protocol for every batch
 
 - One worktree and one branch per department, cut from the base named in its ticket; the child
