@@ -10,7 +10,7 @@ that carries it, so it can be re-derived with `git show <sha>`.
 
 ## [0.2.0] - 2026-11-06
 
-Tag `v0.2.0`. 113 commits since `v0.1.8` (`git log --oneline v0.1.8..v0.2.0 | wc -l`) across 129 files, and
+Tag `v0.2.0`. 122 commits since `v0.1.8` (`git log --oneline v0.1.8..v0.2.0 | wc -l`) across 138 files, and
 the scope is roadmap section 9.
 
 This is a stability, honesty and shape release rather than a feature release: exactly **one** command was

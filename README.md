@@ -13,8 +13,8 @@ Built entirely in Rust, PDN unifies the PRoot (C) ecosystem, the `proot-distro` 
 
 ## What's New
 
-`v0.2.0` (`Cargo.toml` reads `0.2.0`; `podnext version` prints `podnext 0.2.0`). 113 commits since `v0.1.8`
-across 129 files. Every figure below names the command that produced it.
+`v0.2.0` (`Cargo.toml` reads `0.2.0`; `podnext version` prints `podnext 0.2.0`). 122 commits since `v0.1.8`
+across 138 files. Every figure below names the command that produced it.
 
 This is a stability, honesty and shape release rather than a feature release: exactly one command was added.
 Roadmap section 9 is the scope, and it is now **15 met, 1 recorded exception, 0 not met** - the exception is
