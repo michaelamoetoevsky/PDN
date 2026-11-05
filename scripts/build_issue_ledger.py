@@ -297,6 +297,40 @@ CHECKS: list[dict] = [
          needle="no baseline recorded for this toolchain"),
     dict(issue="69", claim="CI runs the comparison, so the number cannot grow unnoticed",
          cmd="grep -rnF 'check_warnings.py compare' .github/workflows", needle="check_warnings.py compare"),
+
+    # ── #57: detach + attach is a round trip, and the refusal is gone ──────────
+    dict(issue="57", claim="a detached run is spawned as its own session host",
+         cmd="grep -rnF 'fn spawn_detached_session' crates/podnext/src/native.rs",
+         needle="fn spawn_detached_session"),
+    dict(issue="57", claim="attach reconnects through the session host, instead of creating a session",
+         cmd="grep -rnF 'fn run_session_host' crates/podnext/src/native.rs", needle="fn run_session_host"),
+    dict(issue="57", claim="the refusal that a detached session cannot be re-entered is gone",
+         cmd="grep -rnF 'a detached session cannot be re-entered' crates/podnext/src || echo GONE",
+         needle="GONE"),
+    # ── #64: the reference's examples run or are excluded with a reason ────────
+    dict(issue="64", claim="every fenced example is executed or excluded, with a reason",
+         cmd="grep -nF 'fenced blocks' scripts/check_doc_examples.py", needle="fenced blocks"),
+    dict(issue="64", claim="a missing binary is a printed skip, never a pass",
+         cmd="grep -nF 'a skip is not a pass' scripts/check_doc_examples.py", needle="a skip is not a pass"),
+    # ── #66: bindings and the USER story are measured, not assumed ────────────
+    dict(issue="66", claim="the bindings check can tell a mapped path from an unmapped one",
+         cmd="grep -nF 'ABSENT' scripts/check_bindings.py", needle="ABSENT"),
+    dict(issue="66", claim="the documentation states that storage and the host home are not mounted",
+         cmd="grep -nF 'Storage and the host home are not mounted into a guest by default' docs/src/known-limitations.md",
+         needle="not mounted into a guest by default"),
+    # ── #67: every flag the direct path parses is honoured or refused ─────────
+    dict(issue="67", claim="--trace refuses on the direct-execution path instead of being dropped",
+         cmd="grep -rnF -- '--trace is not implemented on the direct-execution path' crates/podnext/src/main.rs",
+         needle="--trace is not implemented on the direct-execution path"),
+    dict(issue="67", claim="--qemu refuses for the same reason, naming the missing engine field",
+         cmd="grep -rnF -- '--qemu is not implemented on the direct-execution path' crates/podnext/src/main.rs",
+         needle="--qemu is not implemented on the direct-execution path"),
+    dict(issue="67", claim="an honoured flag's value reaches the generated proot argv",
+         cmd="grep -rnF 'config.cwd = pwd.map(Into::into)' crates/podnext/src/main.rs",
+         needle="config.cwd = pwd.map(Into::into)"),
+    # ── #70: an unresolved conflict must not sit in the source tree ───────────
+    dict(issue="70", claim="no conflict marker is committed in tracked source",
+         cmd="git grep -nE '^<{7}|^={7}$|^>{7}' -- . || echo NO_MARKERS", needle="NO_MARKERS"),
     # ── #68: an interactive guest must keep the terminal it was given ─────────
     dict(issue="68", claim="an interactive run keeps the caller's process group, asserted in code",
          cmd="grep -rnF 'an_interactive_run_does_not_take_its_own_process_group' crates/proot-core/src/lib.rs",
@@ -420,10 +454,6 @@ NO_CHECK_REASON = {
     "37": "OPEN defect: image ls/push said they could not see any image because ImageManager read only "
           "the store. image ls is fixed (#44), but a real image store does not exist until v0.2.0 "
           "(roadmap section 4.4), so the remaining push/tag/rm/history behaviour has nothing to assert.",
-    "67": "OPEN defect, measured while closing #63: the manual direct-execution scanner drops "
-          "every flag it parses except rootfs, the command and verbose. Each flag needs the "
-          "honour-or-refuse decision made against the generated argv, one at a time; the method is "
-          "written in the issue.",
     "39": "OPEN defect: push cannot work because the store holds no layer blobs. The CLI now refuses "
           "honestly instead of pretending (#42), and the blobs themselves are v0.2.0 work "
           "(roadmap section 4.4): the honest refusal is asserted by the stub checks, not here.",
