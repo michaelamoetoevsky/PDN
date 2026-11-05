@@ -54,8 +54,13 @@ of its own. Nothing in the polygon changed except its number.
 - **Shape.** `main.rs` 4,679 → 479 and the whole Clap surface moved into `cli.rs`, then into eight `cli/`
   domain modules (`a455d10`, `17476f1`, `181d2fe`, `472d9b3`, `dc40a06`, `892549a`, `17ed375`, `82122eb`,
   `9be459a`); `commands/mod.rs` 3,719 → 813 (`d8f84d5`); `cli.rs` 1,450 → 687 and `main.rs` 1,170 → 479
-  (`fc6d288`; #65). The split is held to a byte-identical `--help` dump, so a moved screen is either a
-  defect or a fix that has to be named line by line.
+  (`fc6d288`; #65). The last file above the ceiling, `native.rs` at 1,605 - grown from 1,151 by the
+  detach/attach work, so this project's own doing - was split along the OCI-install versus container-session
+  seam already present in it into `native/image.rs` 579, `native/session.rs` 623 and `native/meta.rs` 184,
+  behind a 261-line module root (`eaf3e2d`; #72). The largest file in `crates/podnext/src` is now
+  `commands/mod.rs` at **813** - the module root, where re-exports live by necessity, 13 lines over a `~`800
+  guideline; it is stated rather than smoothed. Both splits are held to a byte-identical `--help` dump, so a
+  moved screen is either a defect or a fix that has to be named line by line.
 - Six metadata queries (`list` / `info` / `ps`, table and JSON) are routed through `podnext-daemon` with an
   empty diff against the in-process path and constant round trips (`83827a1`). **Latency independence is a
   recorded exception**: at ten containers the daemon path is slower (in-process p50 5.20 ms against

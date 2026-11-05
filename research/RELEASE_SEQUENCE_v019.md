@@ -34,7 +34,7 @@ there is no `v0.1.10`.
 | 9.1 exit-code contract | met | `crates/podnext/tests/exit_codes.rs`, now 7 classes - the phantom `3` from `config validate` was removed by moving the CODE to the documented `2`; `665b3ba` |
 | 9.1 contract test incl. examples | met | commands and flags gated by `28c4594`; the 50 example blocks are now executed or excluded with a printed reason by `scripts/check_doc_examples.py` (`10 executed / 41 excluded, 0 failures`), and the harness runs in CI; it found two genuinely wrong examples - #64, `c9108ec` |
 | 9.1 triage of the audit | met | the ledger fails on an untriaged issue; 0 untriaged of 69 issues, and the disposition document is generated rather than hand-kept (`build_issue_ledger.py --disposition`) |
-| 9.2 split, no file over ~800 lines | **half** | `main.rs` 4,679 to 1,040, `commands/mod.rs` 3,719 to **813**, Clap surface in `cli.rs` 1,445; 123 help screens byte-identical - two files are still above the ceiling, #65 |
+| 9.2 split, no file over ~800 lines | met | `main.rs` 4,679 to **479**, `commands/mod.rs` 3,719 to **813**, `cli.rs` 1,450 to **687**, `native.rs` 1,605 to **261** behind `native/{image,session,meta}.rs` (579/623/184); the largest file in `crates/podnext/src` is `commands/mod.rs` at **813**, a module root holding re-exports, 13 lines over a `~`800 guideline. Every screen byte-identical to the tracked fixture throughout, including through the two splits (#65 `fc6d288`, #72 `eaf3e2d`) |
 | 9.2 index cache p50 under 10 ms | met in-process | `cf3f487`: 1.3-2.2 ms in-process with ten containers; process start alone is 31-36 ms, so end-to-end belongs to #59 |
 | 9.2 honest image size | met | `#44`: a measured size, a `>=` bound, or `unknown` |
 | 9.2 metadata through the daemon | **exception, recorded** | routed: six queries diff empty against the fallback, round trips constant (1 vs 0), never stale; latency independence NOT met (5.20 vs 1.48 ms at n=10) and left unmet on purpose, with the reason |
@@ -46,9 +46,11 @@ there is no `v0.1.10`.
 | 9.3 session hygiene and soak | met | `scripts/soak_sessions.py` - 20/20 iterations with zero container processes left, and an injected leak caught at iteration 7 |
 | 9.3 doctor | met | `#45`: host and guest checks including the proot argv |
 
-**14 met, 1 half, 1 recorded exception, 0 not met.** The half row and the exception are the ones a
-status paragraph tends to round up, which is why they are rows here. The half is the line ceiling (#65);
-the exception is the daemon's latency independence, measured and left unmet on purpose.
+**15 met, 1 recorded exception, 0 half, 0 not met.** The exception is the one a status paragraph tends
+to round up, which is why it is a row here: the daemon's latency independence, measured and left
+unmet on purpose with its numbers. The one place a criterion meets the letter of its ceiling rather
+than sitting comfortably under it is `commands/mod.rs` at 813 - stated with the number rather than
+smoothed, because a reader who counts the files should not have to discover it.
 
 ## 3. The sequence
 

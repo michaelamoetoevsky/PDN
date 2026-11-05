@@ -345,11 +345,11 @@ plausible, and could not do what it claimed (`image push`, benchmark reporting, 
 
 ### 9.2 Simplicity and performance — one source of truth, one module per domain
 
-**Status (5 Nov 2026, third round): the split is done, the latency criterion is recorded as an exception, and metadata is routed.** `main.rs` 4,679 to **1,040** lines, the whole Clap surface in a new `cli.rs` (1,445), and `commands/mod.rs` 3,719 to **813** across eight extractions (`image` / `volume` / `network` / `sync` / `container`, then `policy` / `quota` / `log` / `dbus` / `socket`, then `service` / `watchdog` / `power`, then `build` / `gitops`). Every `--help` screen is byte-identical before and after; the 123-screen dump is the gate, and as of this round it is a **tracked fixture** (`research/cli-help-baseline.txt`, 123 screens, sha256 `8236a573...`) compared in CI, so a help text change cannot land without updating it in the same commit. That comparison settled one question by measurement rather than assumption: the dump is **platform-independent** - the fixture generated on the device (aarch64) is byte-identical to the runner's dump (x86_64) - so one fixture suffices and it does not need keying per platform the way the warning ceiling does. The cached container index landed (`cf3f487`) with mtime invalidation proved in both directions: in-process p50 **1.3-2.2 ms** with ten containers, against a criterion of under 10 ms. What that criterion cannot mean here is end-to-end: process start alone is p50 31-36 ms, so the 42-53 ms baseline was never the store scan.
+**Status (6 Nov 2026, after four rounds): the split is done, the latency criterion is recorded as an exception, and metadata is routed.** `main.rs` 4,679 to **1,040** lines, the whole Clap surface in a new `cli.rs` (1,445), and `commands/mod.rs` 3,719 to **813** across eight extractions (`image` / `volume` / `network` / `sync` / `container`, then `policy` / `quota` / `log` / `dbus` / `socket`, then `service` / `watchdog` / `power`, then `build` / `gitops`). Every `--help` screen is byte-identical before and after; the 123-screen dump is the gate, and as of this round it is a **tracked fixture** (`research/cli-help-baseline.txt`, 123 screens, sha256 `8236a573...`) compared in CI, so a help text change cannot land without updating it in the same commit. That comparison settled one question by measurement rather than assumption: the dump is **platform-independent** - the fixture generated on the device (aarch64) is byte-identical to the runner's dump (x86_64) - so one fixture suffices and it does not need keying per platform the way the warning ceiling does. The cached container index landed (`cf3f487`) with mtime invalidation proved in both directions: in-process p50 **1.3-2.2 ms** with ten containers, against a criterion of under 10 ms. What that criterion cannot mean here is end-to-end: process start alone is p50 31-36 ms, so the 42-53 ms baseline was never the store scan.
 
 **Daemon routing landed** and the criterion attached to it is recorded as an exception rather than claimed. All six metadata queries (`list` / `info` / `ps` x json/table) produce an empty diff between the daemon path and the in-process fallback, round trips are constant (1 with the daemon, 0 without) at one and ten containers, and a container created after the daemon started appears in the next answer - never stale. Latency independence is **not** met: with ten containers the daemon path is slower (in-process p50 5.20 ms against 1.48 ms) and still grows with the container count, because freshness revalidates each `metadata.json` over IPC. An O(1) freshness key would serve in-place metadata rewrites stale, a regression against the index cache above, so the criterion is left unmet on purpose with the measurement beside it. `SIZE` honesty landed earlier (#44); environment paths landed (#46).
 
-The file-length half of the first row is **met** for the two files **#65** named, in a fourth round:
+The file-length row is **met**, in a fourth round, at every file in `crates/podnext/src`:
 `cli.rs` 1,450 to **687** and `main.rs` 1,170 to **479**, with the surplus in `direct.rs` (390),
 `cli/system.rs` (218), `cli/service.rs` (219), `subcommands.rs` (208), `dispatch.rs` (120) and seven
 smaller `cli/` modules - no file over 800 among them. The move was text-only and the help dump is
@@ -358,13 +358,19 @@ byte-identical to the tracked fixture (`sha256 8236a573be5952cdd983c5c8f6cd3833f
 Measured and **not** claimed closed: `commands/mod.rs` is 813 lines and `native.rs` (a pre-existing
 file the ticket did not name) is 1,605.
 
-Measured and **not** claimed closed, both stated because the criterion reads "no file over ~800 lines"
-rather than "no file named by #65": `commands/mod.rs` is 813 - 13 lines over a *guideline*, and the module
-root, where re-exports live by necessity - and `native.rs` is 1,605, up from 1,151 before the detach/attach
-round, so this project is what grew it. `native.rs` contradicts the criterion as written, so the row in
-`research/RELEASE_SEQUENCE_v019.md` stays **half** until it is split (**#72**, which names the guards that
-apply there: not the help fixture, which proves nothing about a file with no Clap surface, but the 84 test
-targets, `shell_fidelity.py`, `soak_sessions.py` and the quoting table).
+`native.rs` was the last one, and it was this project's own doing - 1,151 lines before the detach/attach
+round, 1,605 after - so it was split rather than excused (#72, `eaf3e2d`): 261 lines of module root behind
+`native/image.rs` 579, `native/session.rs` 623 and `native/meta.rs` 184, along the OCI-install vs
+container-session seam already present in the file. The guard there is deliberately **not** the help
+fixture, which proves nothing about a file with no Clap surface: it is the 84 test targets,
+`shell_fidelity.py`, `soak_sessions.py`, the quoting table, and the detach/attach round trip re-measured on
+the split binary (same shell pid across two attaches, marker survives, no orphan after a supervisor
+SIGKILL).
+
+What remains above the guideline is one file, and it is stated rather than smoothed: `commands/mod.rs` is
+**813** lines - 13 over a `~`800 guideline, and the module root, where the re-exports live by necessity.
+The same is true of `cli.rs` at 687, whose 453-line `Commands` enum cannot leave the root without changing
+the rendered surface. Both are floors of their design, not places the split stopped.
 
 Measured baseline: `image ls` 28.6 ms, `list -a` 42–53 ms for ten containers, dominated by process
 start plus a full container load; `image ls` reports `SIZE` as a `stat` of the directory (3.4 KB for a

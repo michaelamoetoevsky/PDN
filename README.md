@@ -13,34 +13,44 @@ Built entirely in Rust, PDN unifies the PRoot (C) ecosystem, the `proot-distro` 
 
 ## What's New
 
-The measured state of `master` after the `v0.1.8` tag (`Cargo.toml` still reads `0.1.8`;
-`podnext version` prints `podnext 0.1.8`). Every figure below names the command that produced
-it. This is roadmap section 9, and **section 9 is not complete**: section 9.2 (the split, plus
-cache and daemon routing) and section 9.3 (terminal fidelity, detach/attach, the quoting table,
-a soak run) remain open.
+`v0.2.0` (`Cargo.toml` reads `0.2.0`; `podnext version` prints `podnext 0.2.0`). 113 commits since `v0.1.8`
+across 129 files. Every figure below names the command that produced it.
 
-- **The CLI is being split by domain (section 9.2).** `main.rs` fell from 4,679 to 2,474 lines,
-  and five domains are now their own modules: `commands/image.rs` 755, `commands/sync.rs` 580,
-  `commands/container.rs` 473, `commands/volume.rs` 260, `commands/network.rs` 237.
-  `commands/mod.rs` is still 3,719 lines and two further extractions are in flight.
-  (`wc -l crates/podnext/src/main.rs crates/podnext/src/commands/*.rs`; baseline from
-  `git show a6c4fa6:crates/podnext/src/main.rs | wc -l`.)
-- **`podnext doctor` exists** and reports 12 checks with a container named: six host checks and
-  six guest checks including the proot argv; host-only it reports 7.
-  (`podnext doctor --container test-alpine --format json`.)
-- **`--bind` / `--volume` now reach the guest** (#43); the `:rw` suffix that PRoot misread as part
-  of the guest path is gone (`a29ee6d`).
-- **`image ls` reports a measured size**, or `>=` when subtrees could not be read, or `unknown`
-  - never a directory `stat` presented as a size (#44, `8477181`).
-- **`run` refuses the seven options it cannot honour** instead of dropping them, and `--help` no
-  longer claims `--detach` runs in the background (#47, `7960de8`).
-- **Daemon path defaults follow the environment** (`TERMUX__HOME`, `XDG_*`), not hard-coded
-  Termux paths (#46, `285720a`).
-- **Verification ledger:** 80 PASS / 0 FAIL / 13 SKIPPED of 93 measured offline; the 13 are
-  cargo-gated and get verdicts only in CI, where the last full run (commit `892549a`) was
-  93 PASS / 0 FAIL / 0 SKIPPED.
-  (`python3 scripts/build_issue_ledger.py --offline | tail -1`;
-  `gh run view 42032340292 --log | grep 'checks:'`.)
+This is a stability, honesty and shape release rather than a feature release: exactly one command was added.
+Roadmap section 9 is the scope, and it is now **15 met, 1 recorded exception, 0 not met** - the exception is
+stated with its number below rather than rounded up.
+
+- **Shape (section 9.2).** `main.rs` 4,679 -> **479**, with the whole Clap surface in eight `cli/` modules
+  (`cli.rs` itself 1,450 -> **687**); `commands/mod.rs` 3,719 -> **813**; `native.rs` 1,605 -> **261** behind
+  `native/{image,session,meta}.rs` (579/623/184). The largest file in `crates/podnext/src` is
+  `commands/mod.rs` at 813 - a module root holding re-exports, 13 lines over a `~`800 guideline.
+  (`find crates/podnext/src -name '*.rs' -exec wc -l {} + | sort -rn | head -3`.)
+- **The help contract is enforced, not remembered.** All 123 `--help` screens stayed byte-identical to the
+  tracked fixture `research/cli-help-baseline.txt` through both splits, and CI compares it
+  (`IDENTICAL: 210617 bytes, sha256 8236a573...`).
+- **`run --detach` + `attach` is a real round trip** (#57): the same shell pid answers two attaches, a marker
+  written while detached survives, and a supervisor SIGKILL leaves no orphan. The simplifications are
+  declared, not hidden - no `SIGWINCH` re-forwarding, no replay of output written while detached, and attach
+  needs its stdin open (a closed pipe reconnects and exits 0 with no output).
+- **Guest bindings and the `USER` story are measured inside a guest** (#66), with a control that goes red
+  when falsified, and the documented examples are executed in CI (#64): 10 blocks run, 41 excluded with a
+  printed reason - and it found two genuinely wrong examples.
+- **`podnext doctor`** reports host checks and, with `--container <name>`, the guest side including the proot
+  argv.
+- **Gates that can fail.** The issue ledger (129 checks; an untriaged issue fails the build - CI reports
+  `129 PASS / 0 FAIL / 0 SKIPPED`), the warning ratchet keyed by toolchain (266 warnings on the runner's
+  toolchain, measured cold), the tracked help fixture, `scripts/local_gate.sh`, and
+  `scripts/preflight_release.sh`, which smoke-tests the release artifact **before** the tag exists because
+  the tag publishes a release marked latest immediately.
+- **One criterion is a recorded exception, not a claim.** Daemon metadata routing produces identical output
+  with constant round trips, but latency independence is unmet: in-process p50 5.20 ms against 1.48 ms at ten
+  containers, because freshness revalidates each `metadata.json` over IPC. An O(1) freshness key would serve
+  in-place rewrites stale, a regression against the cached index (p50 1.3-2.2 ms), so the criterion is left
+  unmet on purpose with the measurement beside it.
+- **Deferred to `v0.3.0`** (roadmap section 10): the mobility polygon - alias-deriving installs, install from
+  a local tarball / OCI layout / URL with checksum, multi-arch through the emulator, the wider `login`
+  polygon, portable export/import, and registry `push`/`pull` (blocked until the image store retains layer
+  blobs, #37/#39).
 
 ---
 
