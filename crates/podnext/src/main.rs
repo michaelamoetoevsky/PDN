@@ -3220,8 +3220,18 @@ async fn cmd_network_inspect(networks: Vec<String>, format: OutputFormat) -> Res
 async fn cmd_network_rm(networks: Vec<String>) -> Result<()> {
     let mut core = proot_distro_core::ProotDistroCore::new()?;
     let mut errors = 0;
+    let validator = proot_distro_core::NameValidator::new();
 
     for name in &networks {
+        if let Err(e) = validator.validate_network_name(name) {
+            eprintln!(
+                "Failed to remove network {}: {}",
+                proot_distro_core::escape_name(name),
+                e
+            );
+            errors += 1;
+            continue;
+        }
         match core.network_manager().remove(name) {
             Ok(_) => println!("Removed network: {}", proot_distro_core::escape_name(name)),
             Err(e) => {
@@ -3936,8 +3946,18 @@ async fn cmd_volume_inspect(volumes: Vec<String>, format: OutputFormat) -> Resul
 async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
     let mut core = proot_distro_core::ProotDistroCore::new()?;
     let mut errors = 0;
+    let validator = proot_distro_core::NameValidator::new();
 
     for name in &volumes {
+        if let Err(e) = validator.validate_volume_name(name) {
+            eprintln!(
+                "Failed to remove volume {}: {}",
+                proot_distro_core::escape_name(name),
+                e
+            );
+            errors += 1;
+            continue;
+        }
         if !force {
             print!(
                 "Remove volume '{}'? [y/N]: ",

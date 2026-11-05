@@ -91,6 +91,7 @@ impl NetworkManager {
     }
 
     pub fn remove(&mut self, name: &str) -> Result<()> {
+        crate::names::NameValidator::new().validate_network_name(name)?;
         if self.networks.remove(name).is_some() {
             self.save()?;
             Ok(())
@@ -118,6 +119,7 @@ impl NetworkManager {
     }
 
     pub fn inspect(&self, name: &str) -> Result<NetworkInfo> {
+        crate::names::NameValidator::new().validate_network_name(name)?;
         if let Some(config) = self.networks.get(name) {
             Ok(NetworkInfo {
                 name: config.name.clone(),
@@ -287,6 +289,16 @@ mod tests {
         assert!(resolv.contains("8.8.8.8"));
 
         let _ = std::fs::remove_dir_all(&rootfs);
+        let _ = std::fs::remove_dir_all(m.config_path.parent().unwrap());
+    }
+
+    #[test]
+    fn network_inspect_and_remove_reject_empty_or_invalid() {
+        let mut m = tmp_manager("empty");
+        assert!(m.inspect("").is_err());
+        assert!(m.remove("").is_err());
+        assert!(m.inspect("..").is_err());
+        assert!(m.remove("..").is_err());
         let _ = std::fs::remove_dir_all(m.config_path.parent().unwrap());
     }
 }

@@ -112,6 +112,7 @@ impl StorageManager {
     }
 
     pub fn remove_volume(&mut self, name: &str) -> Result<()> {
+        crate::names::NameValidator::new().validate_volume_name(name)?;
         if self.volumes.remove(name).is_some() {
             let mountpoint = self.mountpoint(name);
             if mountpoint.is_dir() {
@@ -146,6 +147,7 @@ impl StorageManager {
     }
 
     pub fn inspect_volume(&self, name: &str) -> Result<VolumeInfo> {
+        crate::names::NameValidator::new().validate_volume_name(name)?;
         if let Some(config) = self.volumes.get(name) {
             Ok(VolumeInfo {
                 name: config.name.clone(),
@@ -223,6 +225,16 @@ mod tests {
         let res = sm.remove_volume("ghostvol");
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("not found"));
+        let _ = std::fs::remove_dir_all(sm.storage_root.parent().unwrap());
+    }
+
+    #[test]
+    fn inspect_and_rm_reject_empty_or_invalid_names() {
+        let mut sm = StorageManager::tmp_manager("empty");
+        assert!(sm.inspect_volume("").is_err());
+        assert!(sm.remove_volume("").is_err());
+        assert!(sm.inspect_volume("..").is_err());
+        assert!(sm.remove_volume("..").is_err());
         let _ = std::fs::remove_dir_all(sm.storage_root.parent().unwrap());
     }
 }
