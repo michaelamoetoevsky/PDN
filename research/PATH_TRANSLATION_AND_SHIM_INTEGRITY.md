@@ -215,59 +215,154 @@ Two design rules fall out of the measurements, and they are cheap to hold:
 
 ---
 
-## 3. Feature expansion - where the reference is ahead, and what is worth taking
+## 3. Feature expansion - measured against the reference, not against a wish list
 
-Already itemised with acceptance tests in roadmap section 10 (now `v0.3.0`), so this section adds only what
-this round's measurements say about the *shape* of the work:
+The reference ships **18 commands** (**measured**, `proot-distro --help`):
 
-- **Install surface is narrow. Measured**: `podnext install --help` takes a registry reference only
-  (`install <IMAGE>`), with `--name` and `--force`; the reference also installs a local rootfs tarball, an
-  OCI image-layout archive with digest verification, and a URL with a checksum. The first of those three is
-  the cheapest and the most useful on a phone with a slow connection: it turns "install" into a file
-  operation.
-- **Multi-arch is one flag away from useless. Measured**: `--qemu <PATH>` exists, and the reference's
-  emulator path additionally binds `/apex`, `/linkerconfig/ld.config.txt`, `$TERMUX_PREFIX`, `/system`,
-  `/vendor`, `/plat_property_contexts`, `/property_contexts` (**read**, `arch.py:308-315`) - i.e. making
-  QEMU work under Android needs a bind set `podnext` does not have. Taking the flag without the binds would
-  ship a documented feature that cannot work.
-- **Export/import and registry `push`/`pull` are blocked by the same missing thing: the store keeps no layer
-  blobs** (#37, #39). Both features are cheap once that exists and impossible before it, so the image store
-  is the spine - as section 4.4 already says.
+    help search install list login run ps kill remove rename reset backup restore clear-cache copy sync build push
 
-## 4. Ecosystem and infrastructure - the gaps that actually bit this round
+`podnext` ships **39** (**measured**, `podnext --help`). The parity question is therefore not "what is
+missing" but "which of the missing ones change what a user can do", and the answer is a short list:
 
-Measured during the release work, not theorised:
+| reference capability | `podnext` today | evidence | why it matters |
+|---|---|---|---|
+| `install` from a **rootfs archive** or a local OCI layout | registry reference only (`install <IMAGE>`, `--name`, `--force`) | `podnext install --help`; the reference's own text says "OCI image **or rootfs archive**" | the cheapest way to install on a phone with a slow link is a file you already have |
+| `restore` (container from a TAR) | `backup` exists, no counterpart | command list above | a backup that cannot be restored is half a feature |
+| `clear-cache` | none (a cache directory exists under `~/.podnext/cache`) | `ls ~/.podnext` shows `cache`, `backups`, `containers` | storage on a phone is finite and the cache has no eviction path |
+| `--architecture` + emulator | `--qemu <PATH>` only | `podnext run --help` | and it is not a one-flag gap: the reference's emulator path additionally binds `/apex`, `/linkerconfig/ld.config.txt`, `$TERMUX_PREFIX`, `/system`, `/vendor`, `/plat_property_contexts`, `/property_contexts` (`arch.py:308-315`, **read**) |
+| `push` to a registry | refused, honestly | `image push` refuses and says why | blocked by the store, not by the CLI |
 
-1. **The release body was `git log -n 50`.** Fixed this round: the curated `[version]` section is used, with
-   an explicit fallback that says it is a fallback. Infrastructure that describes a release badly is
-   infrastructure nobody trusts.
-2. **`ci.yml` cannot be run deliberately.** It triggers on push paths (`crates/**`, `tests/**`,
-   `Cargo.toml`, `Cargo.lock`, `deny.toml`, `.github/workflows/**`) and has no `workflow_dispatch`
-   (**measured**, `sed -n '1,25p' .github/workflows/ci.yml`). Consequence, hit in this release: the final
-   commit touched only documentation, so no Android artifact existed for it, and the pre-tag smoke test had
-   to use the artifact of the last commit that touched code - with `git diff --quiet <that sha>..HEAD --
-   crates/ Cargo.toml Cargo.lock` as the proof that the code was the same. That is a workaround for a
-   missing button. Adding `workflow_dispatch` costs one line and removes the argument.
-3. **The runner's warning ceiling is loose and cannot be re-recorded** because the ratchet step discards
-   the raw cargo output it measures (the device's entry was re-recorded this round at 266, cold). **#73**
-   carries it. The general lesson for infrastructure: if a gate measures something, keep the measurement.
-4. **`pd` does not exist**, the short alias the reference has. Trivial, and it is the difference between a
-   tool people use and a tool they forget.
+**And the other direction, which the roadmap does not record.** `podnext` has fourteen commands the
+reference has no equivalent for - `doctor`, `service`, `daemon`, `watchdog`, `quota`, `log`, `dbus`, `socket`,
+`boot`, `wakelock`, `policy`, `config`, `gitops`, `dashboard` - plus `network`, `volume` and a Dockerfile
+`build`. That is where its own feature expansion should be judged: not by closing a parity table, but by
+whether a supervision surface (`service`/`watchdog`/`quota`) is worth 39 commands of discovery cost. Section
+5 measures that cost.
 
-## 5. User-facing simplification - what the current surface costs
+**A structural observation that decides sequencing.** `install` is a single large function over the registry
+path, and the three missing install sources are three different *shapes* of input (a tarball, an OCI layout,
+a URL with a checksum) that all end in the same place: "unpack into a clean rootfs". The cheapest expansion
+is to make the parse step explicit and add the shapes one at a time, each with the test that refuses a bad
+digest - which is what section 10.1 already asks for, with the difference that the OCI-layout case should
+come **before** the URL case: a local file can be verified byte-for-byte, a remote one only by the checksum
+the user supplies, and the local case is therefore both easier and stronger evidence.
 
-Measured this round, in the order a new user meets them:
+## 4. Ecosystem and infrastructure - what this round measured, including two live defects
 
-| friction | evidence | candidate |
+The project's infrastructure is not thin; **measured**, `.github/workflows/` holds eight workflows: `ci.yml`
+(PDN CI/CD), `cross-compile.yml` (Android Cross-Compile Matrix), `benchmark.yml`, `benchmark-report.yml`,
+`dependency-updates.yml`, `devcontainer-test.yml`, `issue-ledger.yml`, `release.yml`. Fuzzing, security
+audit, cross-compilation for four targets, benchmarks and a documentation build all run. The gaps found
+while making a release are specific:
+
+### 4.1 `install.sh` verifies nothing, and its primary path cannot exist
+
+**Measured**: `grep -n "sha256\|sha512\|checksum\|gpg" install.sh` returns nothing, and the installer
+downloads a binary from `releases/download/<tag>/podnext-<target>` and installs it. HTTPS is the whole of the
+integrity story.
+
+**Measured**: `install.sh` tries, first, to download `pdn_<version>_<target>.deb`, and
+`grep -rn "\.deb" .github/workflows/*.yml` matches **nothing** - no workflow produces a `.deb`. The release's
+real assets for `v0.1.8` are `install.sh`, `install-short.sh`, `podnext-aarch64-linux-android`,
+`podnext-x86_64-linux-android`. So the preferred path is dead code that falls through to the binary, and the
+preflight loop (`for cmd in curl tar dpkg`) still requires `dpkg` for a path that can never succeed.
+
+**Measured, and this is the sharpest version of the problem**: checksums *are* produced - `cross-compile.yml`
+has a job named "Aggregate Artifacts & Checksums" that downloads every artifact and writes combined digests -
+and they are stored as a **workflow artifact**, not a release asset. The project computes the numbers a user
+would need to verify a download, and publishes them where only a maintainer with a GitHub login can find
+them.
+
+**Fix, in that order**: publish `SHA256SUMS` as a release asset; make `install.sh` fetch it and verify before
+installing, refusing on mismatch; delete the `.deb` path or make the workflow produce the `.deb`; drop `dpkg`
+from the preflight if it goes. Acceptance: a tampered download fails with the digest it expected and the
+digest it got.
+
+### 4.2 Documentation is built and never published
+
+**Measured**: `docs/book.toml` and `docs/src/SUMMARY.md` exist (so the mdBook scaffold is real, 16 pages
+including getting-started, architecture, roadmap, known limitations, CLI reference), and `ci.yml` has a "Build
+Documentation" job - but nothing in `.github/workflows/` mentions `pages` or `deploy`. The documentation is
+proved to compile and is then thrown away with the runner.
+
+**Fix**: a Pages deployment from the tag or from `master`, one workflow file. This is worth more than most of
+section 10: a project whose whole argument is honesty about its own limits should have those limits reachable
+at a URL.
+
+### 4.3 No distribution channel
+
+**Measured**: `pkg show podnext` finds no such package; there is no Termux package, no Homebrew formula, no
+container image of `podnext` itself. Installation is a `curl | bash` of a script that verifies nothing
+(4.1). For a tool whose pitch is "the safe way to run a distro on Termux", that is the weakest link in the
+chain, and it is the same link `install.sh` sits on.
+
+### 4.4 `ci.yml` cannot be run deliberately
+
+**Measured**: it triggers on push paths (`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`, `deny.toml`,
+`.github/workflows/**`) with no `workflow_dispatch`. Consequence, hit during this release: the release commit
+touched documentation only, so no Android artifact existed for it, and the pre-tag smoke test used the last
+commit that touched code - with `git diff --quiet <sha>..HEAD -- crates/ Cargo.toml Cargo.lock` as proof the
+code was identical. One line of YAML removes the workaround.
+
+### 4.5 Extension surface: none, and that may be right
+
+`podnext` has no plugin mechanism, no distro definition format and no template system; `install` takes a
+registry reference, `build` takes a Dockerfile, and everything else is a fixed subcommand. The reference's
+`$PREFIX/etc/proot-distro/` directory - historically the place distro plugins live - is **empty on this
+device** (**measured**), and no `PLUGINS` symbol appears in its Python package (**measured**, grep over
+`*.py`), so the "extensible distro plugin" story I expected to find as the reference's ecosystem advantage is
+not visible here. The honest conclusion is that neither tool has an extension surface today, and that adding
+one is a design question (what would a plugin be allowed to do, and who verifies it?) rather than a parity
+gap. Given section 1, a plugin mechanism that runs third-party code as the host user is a decision to make
+with the shim findings in hand.
+
+## 5. User-facing simplification - the cost measured, per command
+
+Two numbers decide this section, both **measured** over all 39 commands:
+
+- **16 of 39** commands have an `EXAMPLES` block in their own `--help`;
+- **21 of 39** repeat their `stable` / `experimental` label in their own `--help` (the label is always in the
+  parent listing, so this measures consistency, not absence).
+
+And one comparison: the reference exposes **18** commands, `podnext` exposes **39**. The extra surface is not
+padding - it is supervision and observability the reference does not have - but it is 2.2x the discovery cost
+for a person who wants a shell, and nothing in the top-level `--help` says "start here".
+
+What is already good, **measured**: two steps to a shell on both tools (`install <name>` then `login <name>`);
+`podnext search alpine` returns installable names with description, stars, pulls and an official flag, so the
+"curated distro names" item in section 10.4 is largely answered by search; every stub refuses with a named
+reason and a non-zero exit; and the `doctor` command exists, which the reference does not have at all.
+
+Friction found by using it, in the order a new user meets it:
+
+| friction | evidence | what to do |
 |---|---|---|
-| `remove` refuses without a tty unless `-f`/`-y` is given | `Error: stdin is not a tty: use -f/--force or -y/--yes ...` (the refusal is correct; the recipe is what a script has to discover) | keep the refusal, add `--yes` to the docs' examples for scripted use |
-| `attach` silently ends when stdin closes | measured: closed pipe `rc=0`, 0 bytes; open pipe 33 bytes with the marker | already declared in known-limitations; consider printing a one-line hint on a non-tty stdin |
-| `login --user` is refused | section 10.2; `--user` belongs to the login polygon | state the *reason* at the point of use (already in `--help`) |
-| 39 subcommands, three tiers | `--help` listing | a `podnext help getting-started` path, and examples in every `--help` (the status labels already landed) |
-| one command to memorise per task | - | `pd shell <c>` and `pd run <c> <cmd>` aliases; `install` alias derivation (section 10.1) |
+| no entry point for a beginner | `podnext --help` has no getting-started pointer (**measured**) | one line in the top-level help, and a `getting-started` page that already exists and is unpublished (4.2) |
+| 23 commands have no example | the count above | an example in every `--help`; it is mechanical, and the CLI reference contract test already parses those blocks |
+| `remove` refuses a non-tty | `stdin is not a tty: use -f/--force or -y/--yes ...` | keep the refusal, put `--yes` in the documented scripted example |
+| `attach` ends silently on closed stdin | measured: closed pipe rc=0, 0 bytes; open pipe 33 bytes with the marker | already declared; a one-line hint on a non-tty stdin would turn a mystery into a sentence |
+| 18 commands do not repeat their own status label | 21 of 39 do (the count above) | print the label from the parent listing in each command's own help, generated rather than retyped |
+| `pd` does not exist | `pkg show`/`command -v pd` (**measured**) | a two-letter alias is the cheapest adoption feature in this document |
 
-Everything above is cheap and none of it needs new architecture. The expensive one is PATH translation,
-which is why it is the only item in this document with a threat model.
+**The one simplification that is not cheap is the one this document leads with.** Every attempt to shorten
+the path between the guest and the host tools - a translated PATH, a shim directory, a shared prefix - lands
+in section 1: a name the guest can take. Any UX feature that reaches across that boundary should be designed
+as IPC with a token (option C), not as a file on a path.
+
+## 7. What to file first, in the order the measurements argue for
+
+1. **The installer verifies nothing, and its preferred path cannot exist** (section 4.1). Two defects in one
+   file: no checksum, and a `.deb` download that no workflow produces while the preflight still requires
+   `dpkg`. Filed as an issue from this document.
+2. **Publish the checksums the project already computes.** `cross-compile.yml` aggregates digests and leaves
+   them as a workflow artifact. One step to attach `SHA256SUMS` to the release, and it is the piece that makes
+   (1) fixable rather than merely regrettable.
+3. **Deploy the documentation.** `docs/book.toml` and 16 pages exist; nothing publishes them (section 4.2).
+4. **`workflow_dispatch` on `ci.yml`** (section 4.4). One line, removes the release-time workaround.
+5. **A `pd` alias and an example in the 23 commands that lack one** (section 5). The cheapest adoption work
+   in the document, and the CLI reference contract test already parses those blocks.
+6. **`restore`, `clear-cache`, and install from a local archive** (section 3), in that order: a backup without
+   a restore is the one that looks like a bug to a user.
 
 ## 6. Unknowns worth naming
 
