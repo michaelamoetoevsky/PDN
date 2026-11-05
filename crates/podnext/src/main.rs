@@ -727,17 +727,23 @@ fn execute_config_command(cmd: ConfigCommands) -> Result<()> {
                         "no configuration file given: pass a path or set {}",
                         GatewayConfig::CONFIG_ENV
                     );
-                    std::process::exit(3);
+                    // A missing required argument is the usage-error class the taxonomy names
+                    // for exit 2 (cli-reference.md "Exit Codes": 2 = `Invalid arguments`). It is
+                    // not a code of its own: exit 3 was documented nowhere and is asserted absent
+                    // by `cli_reference_contract`, so it was the code that was wrong, not the doc.
+                    std::process::exit(2);
                 }
             };
 
             let config = match GatewayConfig::from_toml_file(&path) {
                 Ok(config) => config,
                 Err(err) => {
-                    // Exit code 3 keeps "invalid configuration" distinguishable
-                    // from generic application errors (1) and clap usage (2).
+                    // A path that cannot be loaded is an invalid argument, which is exit 2
+                    // (cli-reference.md: "an invalid one names the offending key with its line
+                    // and column and exits 2"). Exit 3 was a phantom: the taxonomy is 0/1/2 plus
+                    // the child's code, and no doc may name a code above 2.
                     eprintln!("invalid gateway configuration: {err}");
-                    std::process::exit(3);
+                    std::process::exit(2);
                 }
             };
 

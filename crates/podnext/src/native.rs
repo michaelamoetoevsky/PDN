@@ -662,7 +662,6 @@ pub fn parse_mount_specs(specs: &[String]) -> Result<Vec<proot_distro_core::cont
 
 pub async fn login_container_native(
     container_name: &str,
-    user: Option<String>,
     isolated: bool,
     command: Vec<String>,
     mounts: Vec<proot_distro_core::container::BindMount>,
@@ -689,9 +688,9 @@ pub async fn login_container_native(
     };
     pn_trace!("[DEBUG native] Final command: {:?}", options.command);
 
-    if let Some(u) = user {
-        options.user = Some(u);
-    }
+    // `--user` is refused at the command boundary (`cmd_login`): the runtime passes
+    // `--change-id=0:0:0` unconditionally, mapping every guest id to the single host uid, so there
+    // is no user value to set here and none is accepted (#66).
 
     pn_trace!("[DEBUG native] Calling login");
     distro_core.login(options).await?;
@@ -1299,7 +1298,7 @@ pub async fn run_session_host(container: &str) -> Result<()> {
     let master_file = unsafe { std::fs::File::from_raw_fd(master) };
     let afd = tokio::io::unix::AsyncFd::new(master_file)?;
 
-    let guest = login_container_native(container, None, isolated, command, mounts);
+    let guest = login_container_native(container, isolated, command, mounts);
     tokio::pin!(guest);
 
     let (in_tx, mut in_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);

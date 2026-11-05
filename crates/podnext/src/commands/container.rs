@@ -138,6 +138,17 @@ pub async fn cmd_list(_all: bool, no_all: bool, format: OutputFormat) -> Result<
     Ok(())
 }
 
+/// Printed once by `run`/`login`, on **stderr** so the machine-readable stdout stream is
+/// untouched, before the guest takes the terminal (roadmap section 9.3: the build/run output
+/// must state which user the guest runs as; `build local` already does).
+///
+/// There is exactly one answer: proot-core's runtime passes `--change-id=0:0:0`
+/// (`crates/proot-core/src/lib.rs`), so every guest id is the single host uid and the guest is
+/// root. A request for any other user changes nothing, which is why `run`/`login` refuse `--user`.
+pub(crate) const MAPPED_USER_NOTE: &str =
+    "NOTE: the guest runs as root (uid 0): PRoot maps every guest id to the single host uid via \
+     `--change-id=0:0:0`, so there is no privilege separation";
+
 pub async fn cmd_login(
     container: String,
     user: Option<String>,
@@ -145,6 +156,22 @@ pub async fn cmd_login(
     command: Vec<String>,
     binds: Vec<String>,
 ) -> Result<()> {
+    // `--user` was parsed and then dropped: the value reached `LoginOptions.user`, nothing read it,
+    // and the runtime hard-codes `--change-id=0:0:0` (proot-core), so `podnext login alpine
+    // --user 1000 -- id` printed `uid=0(root)` — byte-identical to the same login without the flag
+    // (measured inside the guest, PDN#66). `run` refuses the same flag; a flag the caller supplied
+    // that changes nothing, with no signal from the exit status, is the class this project refuses
+    // (#62/#63). Refuse rather than silently discard.
+    if let Some(u) = user {
+        anyhow::bail!(
+            "--user {u} is not implemented for `login`: the guest would run as the mapped root. \
+             PRoot maps every guest id to the single host uid via `--change-id=0:0:0`, so the \
+             requested user changes nothing (measured: `podnext login <container> --user 1000 \
+             -- id` prints `uid=0(root)`). `run` refuses the same flag for the same reason. Drop \
+             `--user` so the login does what it says"
+        );
+    }
+
     let cmd = if command.is_empty() {
         vec!["/bin/sh".to_string()]
     } else {
@@ -153,7 +180,9 @@ pub async fn cmd_login(
 
     // A bad spec must stop the login, not be dropped: it used to be accepted and ignored.
     let mounts = parse_mount_specs(&binds)?;
-    login_container_native(&container, user, isolated, cmd, mounts).await
+
+    eprintln!("{MAPPED_USER_NOTE}");
+    login_container_native(&container, isolated, cmd, mounts).await
 }
 
 pub async fn cmd_run(
@@ -219,6 +248,10 @@ pub async fn cmd_run(
     let mut specs = binds;
     specs.extend(volume);
     let mounts = parse_mount_specs(&specs)?;
+
+    // State the user the guest runs as (roadmap 9.3). Build/run output is otherwise silent about
+    // it; the flag checks above have already refused any request for a different user.
+    eprintln!("{MAPPED_USER_NOTE}");
 
     // `--detach` starts the guest in the background under a supervised PTY and returns; the
     // session is then reachable with `podnext attach <container>` (PDN#57). The mount specs and

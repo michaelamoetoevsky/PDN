@@ -141,3 +141,61 @@ fn a_guest_exit_code_reaches_the_caller() {
         String::from_utf8_lossy(&ok.stdout)
     );
 }
+
+#[test]
+fn a_missing_or_unloadable_config_is_a_usage_error_not_code_three() {
+    // Measured 2026-11-06 (target/debug/podnext on device): `config validate` with no file and
+    // with an unloadable path both exited 3 — a code the taxonomy does not contain and that
+    // cli_reference_contract asserts absent from the reference. The reference already names 2 for
+    // an invalid file, and the Exit Codes table names 2 for a missing argument, so the code moved.
+    let mut no_file = Command::new(bin());
+    no_file.args(["config", "validate"]);
+    no_file.env_remove("PN_GATEWAY_CONFIG");
+    let out = no_file.output().expect("failed to execute podnext");
+    assert_eq!(
+        code(&out),
+        2,
+        "no configuration file is a usage error: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "a usage error must not write to stdout"
+    );
+
+    let out = run(&["config", "validate", "/nonexistent/podnext-gateway.toml"]);
+    assert_eq!(
+        code(&out),
+        2,
+        "an unloadable configuration file is a usage error: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn the_mapped_user_is_stated_on_stderr_not_stdout() {
+    // Roadmap section 9.3: run/login state which user the guest runs as. It must not reach stdout,
+    // because the guest's own stdout is the caller's payload (asserted directly above). Skips with
+    // a printed reason when no container is installed: an unrunnable test is not a pass.
+    let installed = Command::new(bin())
+        .args(["list"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("alpine"))
+        .unwrap_or(false);
+    if !installed {
+        eprintln!("skipped: no container named alpine on this host; the user note needs a guest");
+        return;
+    }
+    let out = run(&["run", "alpine", "--", "true"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("runs as root"),
+        "run must state the mapped user on stderr: {err}"
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "the user note must not reach stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}

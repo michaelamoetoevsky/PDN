@@ -104,14 +104,18 @@ fn test_exit_code_unification() {
         .unwrap();
     assert_eq!(clap_err.status.code(), Some(2));
 
-    // 3: config error
+    // 2: an unloadable configuration file is the same usage-error class as a missing argument.
+    // There is no separate "config error" code: the taxonomy (roadmap section 9.1, asserted in
+    // tests/exit_codes.rs) is 0 success / 1 documented refusal or domain error / 2 usage error,
+    // plus the guest's own status. cli-reference.md documents 2 for an invalid file and
+    // tests/cli_reference_contract.rs forbids documenting any code above 2.
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), "invalid_toml = = =").unwrap();
     let config_err = podnext()
         .args(["config", "validate", &tmp.path().to_string_lossy()])
         .output()
         .unwrap();
-    assert_eq!(config_err.status.code(), Some(3));
+    assert_eq!(config_err.status.code(), Some(2));
 }
 
 #[test]
