@@ -345,7 +345,7 @@ plausible, and could not do what it claimed (`image push`, benchmark reporting, 
 
 ### 9.2 Simplicity and performance — one source of truth, one module per domain
 
-**Status (5 Nov 2026): in progress, not done.** The module split has started: `main.rs` 4,679 to 2,474 lines, with `image` / `volume` / `network` / `sync` / `container` extracted (`17476f1`, `181d2fe`, `472d9b3`, `dc40a06`, `892549a`); `commands/mod.rs` is still 3,719 lines and the `build` / `shell` / `service` / `policy` / `system` domains are not split. The environment-variable half of the paths item landed (`TERMUX__HOME` / `XDG_*`, #46, `285720a`); the cached container index and the daemon routing of read-only queries did not. (`wc -l crates/podnext/src/main.rs crates/podnext/src/commands/*.rs`.)
+**Status (5 Nov 2026, second round): the split is done, the performance criterion is met in-process only.** `main.rs` 4,679 to **1,040** lines, with the whole Clap surface in a new `cli.rs` (1,445) and `commands/mod.rs` 3,719 to **1,972** across seven extractions (`image` / `volume` / `network` / `sync` / `container`, then `policy` / `quota` / `log` / `dbus` / `socket`, then `service` / `watchdog` / `power`). Every `--help` screen is byte-identical before and after; the 123-screen dump is the gate. The cached container index landed (`cf3f487`) with mtime invalidation proved in both directions: in-process p50 **1.3-2.2 ms** with ten containers, against a criterion of under 10 ms. What that criterion cannot mean here is end-to-end: process start alone is p50 31-36 ms, so the 42-53 ms baseline was never the store scan. The end-to-end answer is daemon routing, tracked as #59. `SIZE` honesty landed earlier (#44). Environment paths landed (#46).
 
 Measured baseline: `image ls` 28.6 ms, `list -a` 42–53 ms for ten containers, dominated by process
 start plus a full container load; `image ls` reports `SIZE` as a `stat` of the directory (3.4 KB for a
@@ -362,7 +362,7 @@ start plus a full container load; `image ls` reports `SIZE` as a `stat` of the d
 
 ### 9.3 The interactive shell — the largest untapped value
 
-**Status (5 Nov 2026): open.** One item landed: `podnext doctor` on the host and inside the guest, 12 checks with a container (`285720a`, `a6c4fa6`; #45). The rest is not done: real `--detach` plus `attach` (the command still refuses, #47), terminal fidelity (`SIGWINCH` resize, `TERM` / `COLORTERM`, UTF-8 locale, a default `PS1`), the `run ... -- <cmd>` quoting table, and the soak run. `known-limitations.md` lists these under "Not measured yet".
+**Status (5 Nov 2026, second round): partly done.** Two items landed: `podnext doctor` on the host and inside the guest, 12 checks with a container (`285720a`, `a6c4fa6`; #45), and the `run ... -- <cmd>` **argv quoting table** (`5c34115`): fifteen arguments - quotes, a semicolon, a dollar-variable and a command substitution that must not expand, a glob, an empty argument, a newline, a tab, a backslash, multi-byte text - compared against what the guest actually received, NUL-separated so a newline inside one argument cannot read as two, with a second test asserting nothing expanded and no host identity leaked. Not done: real `--detach` plus `attach` (the command still refuses, #47; tracked as #57), terminal fidelity (`SIGWINCH` resize, `TERM` / `COLORTERM`, UTF-8 locale, a default `PS1`; #56), and the soak run (#58). `known-limitations.md` lists these under "Not measured yet".
 
 Being able to `login` is not the same as enjoying the shell daily. Ordered by what blocks people:
 
