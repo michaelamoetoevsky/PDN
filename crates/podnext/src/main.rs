@@ -3036,23 +3036,64 @@ async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<
     Ok(())
 }
 
-fn du_size_bytes(path: &std::path::Path) -> u64 {
-    std::process::Command::new("du")
+/// Bytes used by `path`: `Some((bytes, is_lower_bound))`, or `None` when the size
+/// cannot be measured at all.
+///
+/// `du -sb` is the measurement of record. It fails on a container rootfs that carries
+/// Android system directories an app uid cannot read, and the previous fallback printed
+/// the directory's own inode size as the size (3.4 KB for a 402 MB rootfs) with nothing
+/// to mark it as not-a-measurement. When `du` fails we sum the readable regular files and
+/// report the result as a lower bound, because the unreadable subtrees are missing from it.
+fn du_size_bytes(path: &std::path::Path) -> Option<(u64, bool)> {
+    match std::process::Command::new("du")
         .args(["-sb", &path.to_string_lossy()])
         .output()
-        .ok()
-        .and_then(|out| {
-            if out.status.success() {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                stdout
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.parse::<u64>().ok())
-            } else {
-                None
+    {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            match stdout
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                Some(bytes) => Some((bytes, false)),
+                // `du` succeeded but printed something unparseable: do not invent a number.
+                None => walk_size_bytes(path).map(|b| (b, true)),
             }
-        })
-        .unwrap_or_else(|| path.metadata().map(|m| m.len()).unwrap_or(0))
+        }
+        _ => walk_size_bytes(path).map(|b| (b, true)),
+    }
+}
+
+/// Sum the sizes of the readable regular files under `path`, skipping everything that
+/// cannot be read or followed (unreadable directories, dangling symlinks, devices).
+fn walk_size_bytes(path: &std::path::Path) -> Option<u64> {
+    let mut total = 0u64;
+    let mut saw_file = false;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            match entry.file_type() {
+                // A symlink is not followed: its target is counted where it lives.
+                Ok(ft) if ft.is_dir() => stack.push(entry.path()),
+                Ok(ft) if ft.is_file() => {
+                    if let Ok(meta) = entry.metadata() {
+                        saw_file = true;
+                        total += meta.len();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if saw_file {
+        Some(total)
+    } else {
+        None
+    }
 }
 
 async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
@@ -3065,7 +3106,9 @@ async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
         repository: String,
         #[tabled(rename = "TAG")]
         tag: String,
-        #[tabled(rename = "IMAGE ID")]
+        // This column held the container name under a header that claimed it was an image
+        // ID. No image ID exists: the metadata carries the image name and tag and no digest.
+        #[tabled(rename = "CONTAINER")]
         image_id: String,
         #[tabled(rename = "CREATED")]
         created: String,
@@ -3097,7 +3140,13 @@ async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
             };
             let repository = repo.unwrap_or_else(|| c.distro.clone());
             let tag = tag.unwrap_or_else(|| c.version.clone());
-            let size = format_size(du_size_bytes(&c.rootfs_path));
+            let size = match du_size_bytes(&c.rootfs_path) {
+                Some((bytes, false)) => format_size(bytes),
+                // `>=` marks a figure the unreadable subtrees are missing from: honest
+                // about being a bound instead of a number that merely looks precise.
+                Some((bytes, true)) => format!(">={}", format_size(bytes)),
+                None => "unknown".to_string(),
+            };
             ImageRow {
                 repository,
                 tag,
@@ -4226,6 +4275,60 @@ async fn cmd_volume_prune(force: bool) -> Result<()> {
     }
     println!("Pruned {} volume(s)", pruned);
     Ok(())
+}
+
+#[cfg(test)]
+mod size_measurement_tests {
+    use super::{du_size_bytes, walk_size_bytes};
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let base = std::env::var_os("TMPDIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("PREFIX").map(|p| std::path::PathBuf::from(p).join("tmp")))
+            .unwrap_or_else(std::env::temp_dir);
+        let dir = base.join(format!("pdn-size-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    fn a_du_measurement_is_reported_as_measured_not_as_a_bound() {
+        let dir = scratch("measured");
+        std::fs::write(dir.join("blob"), vec![7u8; 4096]).expect("write");
+        let (bytes, is_bound) = du_size_bytes(&dir).expect("du must measure this directory");
+        assert!(
+            !is_bound,
+            "du succeeded, so the figure is not a lower bound"
+        );
+        assert!(bytes >= 4096, "measured {bytes} for a 4096-byte file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unmeasurable_path_produces_no_number() {
+        // The old code returned the inode size here and printed it as the size.
+        assert_eq!(
+            du_size_bytes(std::path::Path::new("/definitely/not/here")),
+            None
+        );
+    }
+
+    #[test]
+    fn the_fallback_walk_sums_the_readable_files_and_nothing_else() {
+        let dir = scratch("walk");
+        std::fs::write(dir.join("a"), vec![0u8; 1000]).expect("write a");
+        std::fs::create_dir_all(dir.join("nested")).expect("nested");
+        std::fs::write(dir.join("nested/b"), vec![0u8; 24]).expect("write b");
+        assert_eq!(walk_size_bytes(&dir), Some(1024));
+        // An empty tree yields no figure at all rather than a confident zero.
+        let empty = scratch("walk-empty");
+        let nested_empty = empty.join("only/dirs");
+        std::fs::create_dir_all(&nested_empty).expect("dirs");
+        assert_eq!(walk_size_bytes(&empty), None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
 }
 
 #[cfg(test)]

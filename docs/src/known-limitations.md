@@ -22,8 +22,9 @@ The full trace, including the captured PRoot argv, is in
 `research/PROOT_BIND_SUFFIX_MEASUREMENT.md`. The documented short form was wrong as well:
 `podnext run ubuntu -v /sdcard:/mnt/sdcard` exited 2 because `-v` is `--verbose`, not `--volume`.
 
-**`image ls` can print a meaningless size.** The size comes from `du -sb` on the rootfs; when `du`
-exits non-zero the code falls back to the directory's inode size and prints it as if it were real:
+**`image ls` printed a meaningless size and called the container name an `IMAGE ID`.** The size came
+from `du -sb` on the rootfs; when `du` exited non-zero the code fell back to the directory's inode
+size and printed it as if it were a measurement:
 
 ```sh
 $ podnext image ls
@@ -36,9 +37,10 @@ $ stat -c '%s bytes' ~/.podnext/containers/deb-pdn/rootfs
 ```
 
 The container carries Android system directories inside its rootfs, an app uid cannot read them, and
-the failure is invisible in the output. A size that cannot be measured should say so.
-
-**`image ls` labels the container name as `IMAGE ID`.**
+the failure was invisible in the output. Now `du` is the measurement of record, a walk over the
+readable files supplies a figure marked `>=` when subtrees could not be read, and a rootfs that cannot
+be measured at all prints `unknown`. The column that held the container name is now `CONTAINER`; no
+image ID exists to print, because the metadata carries the image name and tag and no digest.
 
 **`podnext doctor` does not exist.** The roadmap (§9.3) expects a host-and-guest report covering DNS,
 `/dev/shm`, `os-release`, cgroups, `TMPDIR` and the proot argv.

@@ -280,6 +280,16 @@ CHECKS: list[dict] = [
          cmd="cargo test -p proot-distro-core --lib argument_tests", needle=None, cargo=True),
     dict(issue="43", claim="a malformed or read-only mount spec is refused",
          cmd="cargo test -p podnext --bin podnext mount_spec_tests", needle=None, cargo=True),
+    # ── #44: image ls reports what it measured, not what it assumed ──────────
+    dict(issue="44", claim="no column claims to be an image ID",
+         cmd='! grep -qF \'rename = "IMAGE ID"\' crates/podnext/src/main.rs', needle=None),
+    dict(issue="44", claim="the inode size is no longer used as the size",
+         cmd='! grep -qF \'path.metadata().map(|m| m.len())\' crates/podnext/src/main.rs',
+         needle=None),
+    dict(issue="44", claim="an unmeasurable rootfs prints unknown",
+         cmd='grep -qF \'None => "unknown"\' crates/podnext/src/main.rs', needle=None),
+    dict(issue="44", claim="a failed measurement is reported as a bound, never as a bare number",
+         cmd="cargo test -p podnext --bin podnext size_measurement_tests", needle=None, cargo=True),
 ]
 
 # Issues with no honest automated check, and why. Every key is an issue that exists.
