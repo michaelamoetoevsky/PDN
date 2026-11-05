@@ -381,6 +381,10 @@ NO_CHECK_REASON = {
     "37": "OPEN defect: image ls/push said they could not see any image because ImageManager read only "
           "the store. image ls is fixed (#44), but a real image store does not exist until v0.2.0 "
           "(roadmap section 4.4), so the remaining push/tag/rm/history behaviour has nothing to assert.",
+    "63": "OPEN defect of the compiler-warning class: the direct-execution scanner assigns "
+          "`no_kill_on_exit` and never reads it. The honest check is a build-warning gate, which "
+          "this ledger does not have - its predicates are grep-shaped and cargo-test-shaped, and a "
+          "warning is neither. Reported with the compiler output instead of being asserted.",
     "39": "OPEN defect: push cannot work because the store holds no layer blobs. The CLI now refuses "
           "honestly instead of pretending (#42), and the blobs themselves are v0.2.0 work "
           "(roadmap section 4.4): the honest refusal is asserted by the stub checks, not here.",
