@@ -1300,7 +1300,7 @@ enum BuildCommands {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Submit a build
+    /// [stub] Submit a build (not yet implemented)
     Submit {
         /// Build specification file
         #[arg(short, long)]
@@ -1309,7 +1309,7 @@ enum BuildCommands {
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    /// Show build status
+    /// [stub] Show build status (not yet implemented)
     Status {
         /// Build ID
         build_id: String,
@@ -1317,12 +1317,12 @@ enum BuildCommands {
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    /// Cancel a build
+    /// [stub] Cancel a build (not yet implemented)
     Cancel {
         /// Build ID
         build_id: String,
     },
-    /// List builds
+    /// [stub] List builds (not yet implemented)
     List {
         /// Filter by status
         #[arg(long)]
@@ -1331,12 +1331,12 @@ enum BuildCommands {
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    /// Show build artifacts
+    /// [stub] Show build artifacts (not yet implemented)
     Artifacts {
         /// Build ID
         build_id: String,
     },
-    /// Show build logs
+    /// [stub] Show build logs (not yet implemented)
     Logs {
         /// Build ID
         build_id: String,

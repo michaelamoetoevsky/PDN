@@ -775,6 +775,7 @@ async fn cmd_watchdog_reset(name: String) -> Result<()> {
 }
 
 async fn cmd_watchdog_events(limit: usize) -> Result<()> {
+    eprintln!("warning: 'watchdog events' is not yet implemented (stub)");
     println!("Watchdog events (last {}):", limit);
     println!("(Event streaming not yet implemented)");
     Ok(())
@@ -2669,23 +2670,27 @@ fn substitute_build_args(content: &str, args: &[(String, String)]) -> String {
 }
 
 async fn cmd_build_submit(spec: PathBuf, _format: crate::OutputFormat) -> Result<()> {
+    eprintln!("warning: 'build submit' is not yet implemented (stub)");
     println!("Submitting build from spec '{}'...", spec.display());
     println!("(Build submission not yet implemented)");
     Ok(())
 }
 
 async fn cmd_build_status(build_id: String, _format: crate::OutputFormat) -> Result<()> {
+    eprintln!("warning: 'build status' is not yet implemented (stub)");
     println!("Build '{}' status: (not yet implemented)", build_id);
     Ok(())
 }
 
 async fn cmd_build_cancel(build_id: String) -> Result<()> {
+    eprintln!("warning: 'build cancel' is not yet implemented (stub)");
     println!("Cancelling build '{}'...", build_id);
     println!("(Build cancellation not yet implemented)");
     Ok(())
 }
 
 async fn cmd_build_list(status: Option<String>, _format: crate::OutputFormat) -> Result<()> {
+    eprintln!("warning: 'build list' is not yet implemented (stub)");
     println!(
         "Listing builds{}...",
         status
@@ -2698,11 +2703,13 @@ async fn cmd_build_list(status: Option<String>, _format: crate::OutputFormat) ->
 }
 
 async fn cmd_build_artifacts(build_id: String) -> Result<()> {
+    eprintln!("warning: 'build artifacts' is not yet implemented (stub)");
     println!("Build '{}' artifacts: (not yet implemented)", build_id);
     Ok(())
 }
 
 async fn cmd_build_logs(build_id: String, follow: bool) -> Result<()> {
+    eprintln!("warning: 'build logs' is not yet implemented (stub)");
     println!(
         "Showing logs for build '{}'{}...",
         build_id,
