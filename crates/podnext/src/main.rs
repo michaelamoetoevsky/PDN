@@ -290,6 +290,22 @@ async fn run() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // A global flag can ask for something PDN cannot deliver, and the honest place to say so is
+    // before any work happens: `--seccomp` promises syscall filtering, and this PRoot build applies
+    // none. Measured on this device: the generated proot argv is byte-identical with and without the
+    // flag (0 seccomp tokens), `proot --help` lists no seccomp option, and the field the flag used to
+    // set is never read (`crates/proot-core/src/seccomp.rs` warns `field filter_program is never
+    // read`). Refusing here rather than in the engine setup also means the answer does not depend on
+    // the container existing, so a caller sees the real reason instead of "container not found"
+    // (issue #62).
+    if cli.seccomp {
+        anyhow::bail!(
+            "--seccomp is not implemented: this PRoot build applies no seccomp filter, so the flag \
+             would be accepted and never enforced (the generated proot argv is byte-identical with \
+             and without it). Drop the flag, or use a runtime that can enforce it."
+        );
+    }
+
     // Direct execution mode (like proot) - clap parsed case
     if cli.command.is_none() && cli.rootfs.is_some() {
         return execute_direct(&cli, &cli_trailing_args).await;

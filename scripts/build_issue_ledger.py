@@ -272,6 +272,15 @@ CHECKS: list[dict] = [
          cmd="grep -rqF 'known-limitations.md' docs/src/SUMMARY.md", needle=None),
     dict(issue="42", claim="every documented command and option exists in the real CLI",
          cmd="cargo test -p podnext --test cli_reference_contract", needle=None, cargo=True),
+    # ── #62: --seccomp said nothing about being inert ─────────────────────────
+    dict(issue="62", claim="--seccomp refuses instead of being silently dropped",
+         cmd="grep -rnF -- '--seccomp is not implemented' crates/podnext/src",
+         needle="--seccomp is not implemented"),
+    dict(issue="62", claim="the refusal is asserted against the real binary", cargo=True, needle=None,
+         cmd="cargo test -p podnext --test stub_refusals --locked"),
+    dict(issue="62", claim="the limitation is written down where a user looks",
+         cmd="grep -rnF 'Seccomp filtering is not available' docs/src/known-limitations.md",
+         needle="Seccomp filtering is not available"),
     # ── #47: run refuses what it cannot honour - and each refusal is a class, not a string ───
     dict(issue="47", claim="the exit-code taxonomy is asserted against the real binary",
          cmd="grep -rnF 'a_documented_refusal_is_one_with_a_reason' crates/podnext/tests/exit_codes.rs",

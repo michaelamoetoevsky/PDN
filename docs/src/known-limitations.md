@@ -90,6 +90,14 @@ run ...` also emits it. Verified with `podnext doctor --container test-alpine --
   portable override, and it takes precedence after `TERMUX__PREFIX`.
 - **Temporary files live in `$PREFIX/tmp`.** `/tmp` exists on Android but is not writable by an app
   uid, and `std::env::temp_dir()` falls back to it when `TMPDIR` is unset.
+- **Seccomp filtering is not available, and `--seccomp` says so instead of pretending.** Measured:
+  the proot argv is token-for-token identical with and without the flag and contains no seccomp
+  token (0 occurrences), and this PRoot build has no seccomp option — `proot --help` lists
+  `--sysvipc` and `--kernel-release` and nothing else in that family. The flag was parsed and
+  dropped; it now refuses with that measurement on stderr, like the other unsupported `run` flags
+  (issue #62). The metadata field `security.seccomp_profile` is inert for the same reason and is
+  recorded for #60, which owns the seccomp decision: enforcing it would need container loading on
+  the run path, so it is not silently upgraded here.
 
 ## Not measured yet
 

@@ -103,11 +103,32 @@ what is landed, what is missing, and where the rest is tracked.
 | 6.7 networking | DNS resolution inside the guest | userspace TCP/IP (gvproxy/slirp) | not in this release; belongs with the UML backend |
 | 6.8 storage | overlay-free extraction; whiteouts are now *obeyed* on extract | layer dedup, opaque-directory marker, import | #54 and the v0.2.0 import work |
 | 7.1 zero-trust boundary | profiles, path-traversal refusal, no-exec policy | measurement of what is enforced | #60 |
-| 7.2 seccomp | profile and rule types | per-distro tailoring, unverified | #60 |
+| 7.2 seccomp | profile and rule types, a `--seccomp` flag | **measured inert** (below); per-distro tailoring absent | #60 |
 | 8 (phases 2-4) | builders, dual-runtime client, boot and wakelock | dedup/prune, gvproxy, runit unit not installed, CRI | #54, #59, #60 |
 | 9.1 | labels, stub refusals, honest sizes, path env, doctor, **exit-code taxonomy**, **triage enforced** | documented examples not executed | this release |
 | 9.2 | size measurement, path resolution, CI relocation proof | the CLI split (#49-#51), the index cache (#52), daemon routing (#59) | in flight |
-| 9.3 | `doctor` including the proot argv | quoting table, terminal fidelity, detach/attach, soak | #55, #56, #57, #58 |
+| 9.3 | `doctor` including the proot argv, **argv quoting table** | terminal fidelity, detach/attach, soak | #56, #57, #58 |
+
+## The seccomp flag is inert, measured
+
+`podnext run --seccomp` changes nothing. Measured on this device, not read out of the source:
+
+- the captured proot argv is token-for-token identical with and without the flag, and contains no
+  seccomp token at all (0 occurrences; 133 `--bind` entries both times);
+- this PRoot build has no seccomp option: `proot --help` lists `--sysvipc` and `--kernel-release`
+  and nothing else in that family;
+- the flag is destructured nowhere on the run path, so it was parsed and dropped;
+- `docs/src/cli-reference.md` shows `seccomp_profile = "default"` in a configuration example,
+  which is a field no code path enforces;
+- no container on this device sets `security.seccomp_profile`, and no test expects the flag to
+  work, so refusing it breaks nothing.
+
+This is the one class of defect this project has decided it will not tolerate: an option that is
+accepted and never applied, so the caller cannot tell from the exit status. It belongs with the
+eight stubs that already refuse with a reason, and it is handled that way - refused with the
+measurement named - rather than left as a claim in a table. Roadmap sections 7.1 and 7.2 stay
+declined for v0.1.9 until a real filter exists to assert.
+
 
 ## What this document does not claim
 

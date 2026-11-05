@@ -73,7 +73,7 @@ fn run_detach_refuses_instead_of_quietly_running_in_the_foreground() {
 /// the one the caller asked for. They are refused by name now, and the refusal names the flag.
 #[test]
 fn run_refuses_the_options_it_cannot_honour() {
-    let cases: [&[&str]; 7] = [
+    let cases: [&[&str]; 8] = [
         &["run", "no-such-container-xyz", "--rm", "--", "true"],
         &[
             "run",
@@ -116,6 +116,9 @@ fn run_refuses_the_options_it_cannot_honour() {
             "--",
             "true",
         ],
+        // Issue #62: this one was parsed and dropped, so "accepted" and "enforced" were the same
+        // word. It refuses like the rest now.
+        &["run", "no-such-container-xyz", "--seccomp", "--", "true"],
     ];
     for args in cases {
         let (code, stdout, stderr) = run(args);

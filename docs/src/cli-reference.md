@@ -167,6 +167,7 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 | `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.2.0) |
 | `-t, --tty` | Accepted for compatibility: stdio is inherited, so a TTY is used when the caller has one |
 | `-i, --interactive` | Accepted for compatibility: stdin is inherited unless the caller redirects it |
+| `--seccomp` | Refused: this PRoot build applies no seccomp filter, and the flag used to be accepted and dropped. The proot argv is byte-identical with and without it (0 seccomp tokens; 133 `--bind` entries either way) and `proot --help` lists no seccomp option at all (issue #62) |
 
 A **refused** flag exits 1 with the reason on stderr and does not run the command. Accepting a flag and
 then ignoring it is what `run` used to do, and a caller cannot tell that from success.
