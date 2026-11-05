@@ -242,9 +242,26 @@ CHECKS: list[dict] = [
          cmd="cargo test -p proot-distro-core --test deep_fs_recursion --locked"),
     dict(issue="31", claim="the abnormal-restart test passes", cargo=True, needle=None,
          cmd="cargo test -p pn-next --test supervisor_e2e test_restart_policy_on_abnormal --locked"),
+    # ── #42: the CLI reference describes the real binary ──────────────────────
+    dict(issue="42", claim="no exit code outside 0/1/2 is documented",
+         cmd="! sed -n '/## Exit Codes/,/## Environment Variables/p' docs/src/cli-reference.md | "
+            "grep -qE '^\\| (3|4|5|6|7|8|9|1[0-2]) \\| '",
+         needle=None),
+    dict(issue="42", claim="no environment variable is documented that no crate reads",
+         cmd="! grep -qE '^\\| `(PN_CONFIG_DIR|PN_DATA_DIR|PN_CACHE_DIR|PN_LOG_LEVEL|PN_GATEWAY_ADDR|"
+            "PN_RUNTIME|PN_SECURITY_PROFILE|PN_NO_COLOR)`' docs/src/cli-reference.md",
+         needle=None),
+    dict(issue="42", claim="the version section does not document --short/--json",
+         cmd="! sed -n '/### `podnext version`/,/^## /p' docs/src/cli-reference.md | "
+            "grep -qE '^\\| `--(short|json)`'",
+         needle=None),
+    dict(issue="42", claim="known-limitations.md is registered in the book summary",
+         cmd="grep -qF 'known-limitations.md' docs/src/SUMMARY.md", needle=None),
+    dict(issue="42", claim="every documented command and option exists in the real CLI",
+         cmd="cargo test -p podnext --test cli_reference_contract", needle=None, cargo=True),
 ]
 
-# Issues with no honest automated check, and why. Every key is an issue that exists.
+    # Issues with no honest automated check, and why. Every key is an issue that exists.
 NO_CHECK_REASON = {
     "1": "OPEN feature request (PowerShell completion) — nothing on the tree to verify.",
     "2": "OPEN documentation task (example service configs) — no code fix to assert.",
