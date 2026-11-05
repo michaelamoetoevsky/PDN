@@ -368,7 +368,8 @@ Being able to `login` is not the same as enjoying the shell daily. Ordered by wh
 - No expansion of `cluster`, `dbus`, `gitops` or `multiarch_build` (`pn-next` is already 23,760 lines).
   Complexity that is not exercised rots, and the project has the receipts: a benchmark target drifted
   through 26 compile errors behind a green check.
-- No new top-level commands. v0.1.9 makes the existing 37 honest before adding a 38th.
+- No new top-level commands beyond `doctor`, which section 9.3 requires: that is the 38th, and it is
+  already labelled and gated. Everything else new waits — v0.1.9 makes the existing 37 honest first.
 - No TUI until section 9.2 lands, no OCI store until the next major version (section 4.4).
 
 The audit run that accompanies this section supplies the concrete defect list; its findings are

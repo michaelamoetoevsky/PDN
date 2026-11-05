@@ -175,3 +175,50 @@ criteria and the release checklist before creating a public artifact, not after.
 
 Next: the section 9 work items above, in the order 9.1 (labels, contract test) → 9.2 (paths, split, index) →
 9.3 (`doctor`, shell), then the release checklist and a single v0.1.9 tag.
+
+## 6. Where section 9 stands now (measured 2026-11-05, head `7960de8`)
+
+Section 5 records the withdrawal. This section is the live state, re-measured rather than carried
+forward: every row below was produced by the command named in its evidence column, on this device.
+
+| section 9 work item | Acceptance criterion | State | Evidence |
+|---|---|---|---|
+| 9.1 labelling | no command unlabelled | **met** | `podnext --help` labels 38/38; clap's own `help` carries none, which the reference states; gated by `the_documented_stability_table_matches_the_binary` |
+| 9.1 stubs | zero "not fully implemented" in user-facing output | **met** | `grep` of `crates/podnext/src` excluding comments: 0; `stub_refusals` 5/5 covers build subcommands, `watchdog events`, `login/runs --detach`, and the seven `run` options |
+| 9.1 exit codes | a test asserts the code for each failure class | **partial** | 0/1/2 documented and the contract test rejects documented codes outside that set; `stub_refusals` pins 1; no single test walks a failure of each class |
+| 9.1 contract test | every command, flag and example in the reference exists and runs | **partial** | `cli_reference_contract` 6/6 checks commands, options, stability labels, exit codes and env vars; the documented **examples** are not executed |
+| 9.1 triage | every audit finding fixed, filed or declined with a reason | **partial** | 44 issues (29 closed, 15 open); 11 carry an explicit "no honest automated check, and why" in the ledger script; no single disposition table for the 13-agent audit |
+| 9.2 CLI split | no CLI file over ~800 lines; `--help` byte-identical | **not met** | `main.rs` 4638, `commands/mod.rs` 3714 |
+| 9.2 cached index | metadata query p50 < 10 ms with 10 containers | **not met** | no index cache exists (`grep` for one: 0) |
+| 9.2 honest size | a real size, or an explicit `unknown` | **met** | `du -sb` is the measurement of record; a failed measurement prints `>= X` or `unknown`; 3 tests; issue #44 |
+| 9.2 daemon routing | CLI latency independent of container count | **not met** | the socket is used for daemon control only; metadata queries still load containers in-process |
+| 9.2 env paths | honour `TERMUX__*`/`XDG_*` instead of 12 hard-coded paths; suite passes with `HOME`/`PREFIX` relocated | **partial** | 11 hard-coded paths → 8 occurrences, and those are the documented defaults (`paths.rs`, `constants.rs`) and two uml4termux paths; resolvers + 5 unit tests + `relocated_paths` 2/2; the relocated **suite** job is not in CI |
+| 9.3 `detach`/`attach` | login → detach → attach returns to the same shell | **not met** | `--detach` refuses with a reason (honest, but not the feature) |
+| 9.3 terminal fidelity | `vim`/`htop` render and resize correctly | **not met** | no `SIGWINCH`/`PS1`/`TERM` work or test |
+| 9.3 argv quoting | a table of quoting cases passes | **not met** | 0 tests mention it |
+| 9.3 bindings and USER | `/sdcard`/`/storage` and shared home/tmp documented and tested; build output states USER is not enforced | **partial** | `--volume`/`--bind` now reach the guest (issue #43) and `:ro` is refused with a reason; `podnext info` prints "User (recorded, not enforced)"; the storage presets have no test |
+| 9.3 session hygiene | a soak run leaves no processes behind | **not met** | no soak test |
+| 9.3 `doctor` | reports DNS, `/dev/shm`, `os-release`, cgroup, TMPDIR, **proot argv** with pass/fail | **partial** | `doctor` reports all of them except the argv; `PN_DEBUG=1 podnext run …` prints the argv instead |
+| 9.4 non-goals | no new top-level commands | **amended** | `doctor` is the 38th and section 9.3 requires it; the roadmap text now says so |
+| release checklist | section 9 marked shipped, `CHANGELOG.md`, README "What's New", manual smoke test | **not met** | `CHANGELOG.md` absent; README unchanged; section 9 unmarked; smoke test not run |
+
+Commits that moved these rows, each with the evidence that closed it:
+
+| Commit | Change | Proof |
+|---|---|---|
+| `a29ee6d` | `--bind`/`--volume` reach the guest (issue #43); the rendered bind lost the `:rw` suffix PRoot turns into part of the target name | guest sees `MARKER-OK` via `--volume`, global `-b` and `login -b`; control run shows nothing; `:ro` exits 1; `research/PROOT_BIND_SUFFIX_MEASUREMENT.md` |
+| `8477181` | `image ls` reports a measured size or says so; column renamed `CONTAINER` (issue #44) | `3.4 KB` for a 291 MB rootfs became `>=291.2 MB`; 3 tests |
+| `285720a` | `podnext doctor` (issue #45) and environmental path defaults (issue #46) | 11 checks on a real container; `relocated_paths` 2/2, `host_path_tests` 5/5 |
+| `d1df756` | the doctor test asserts the verdict-to-status relationship, not a fixed status | CI run `42020474716` failed 85/1 because a runner has no proot; test rewritten, ledger 86/86 |
+| `5d75652` | "section" instead of the `§` sign (it reads as "ss") | 118 occurrences in 24 files; nothing depended on it |
+| `7960de8` | `run` refuses the seven options it cannot honour (issue #47) | `run alpine --rm -- true` exits 1 naming the flag; `-t -i` still runs; `stub_refusals` 5/5 |
+
+What the remainder still requires, in the order that least wastes work:
+
+1. **section 9.2 CLI split** — the only item that blocks a release on its own; mechanical, but it must keep
+   `--help` byte-identical, which the contract test already enforces.
+2. **section 9.2 cache and daemon routing** — the two performance criteria, both measurable (p50 < 10 ms).
+3. **section 9.3 terminal fidelity, `detach`/`attach`, quoting table, soak** — the interactive shell, the
+   largest remaining value and the reason section 9.4 keeps the TUI out.
+4. **Release checklist** — `CHANGELOG.md`, README "What's New", section 9 marked shipped, the manual
+   smoke test, and only then a version bump.
