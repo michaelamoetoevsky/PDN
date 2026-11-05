@@ -24,6 +24,18 @@
 //! Ownership is not restored — an unprivileged Android app cannot `chown`.
 //! Modes are applied, after the content is written so a read-only bit cannot
 //! block the write.
+//!
+//! OCI whiteout markers are obeyed. `layer_diff.rs` writes them when it diffs
+//! two trees, and until this side read them the loop was open: a layer that
+//! deleted `/etc/old.conf` produced `.wh.old.conf`, extraction created that
+//! marker as an ordinary empty file, and the deleted file was still there
+//! afterwards. See `remove_whiteouted`.
+//!
+//! The *opaque directory* marker (`.wh..wh..opq`) is deliberately not handled:
+//! nothing in this project emits it, and only a foreign layer could carry one.
+//! That arrives with the layer import in v0.2.0, and it needs a test that shows
+//! the lower layer's contents disappearing — which cannot be written against a
+//! code path that does not exist yet.
 
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
@@ -70,6 +82,18 @@ pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result
         }
         if let Some(parent) = target.parent() {
             ensure_dir(parent, &mut created)?;
+        }
+
+        // An OCI whiteout is an instruction, not a file: `.wh.<name>` means `<name>` is gone in
+        // this layer. Creating the marker instead is how a deleted file comes back one extraction
+        // later, wearing a `.wh.` prefix.
+        if let Some(hidden) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix(".wh."))
+        {
+            remove_whiteouted(dest, &target, hidden, &mut created)?;
+            continue;
         }
 
         match kind {
@@ -144,6 +168,40 @@ fn ensure_dir(dir: &Path, created: &mut HashSet<PathBuf>) -> io::Result<()> {
     // contents, so the ancestor is normally already known; an out-of-order
     // archive just pays the walk it paid before.
     created.insert(dir.to_path_buf());
+    Ok(())
+}
+
+/// Apply one whiteout: delete what the marker names, and never create the marker.
+///
+/// This is the only place in this module that removes something the archive did not put there, so
+/// the victim is re-checked against `dest` after the `.wh.` prefix is stripped — `is_inside` ran on
+/// the marker's own path, which is not the path being deleted. Deletion does not follow symlinks:
+/// `symlink_metadata` classifies the entry itself, so a whiteout on a name that is a symlink
+/// removes the link and leaves its target alone.
+fn remove_whiteouted(
+    dest: &Path,
+    marker: &Path,
+    hidden: &str,
+    created: &mut HashSet<PathBuf>,
+) -> Result<()> {
+    if hidden.is_empty() {
+        return Ok(()); // ".wh." names nothing
+    }
+    let victim = marker.with_file_name(hidden);
+    if !is_inside(dest, &victim) {
+        return Ok(());
+    }
+    match fs::symlink_metadata(&victim) {
+        Ok(meta) if meta.is_dir() => {
+            fs::remove_dir_all(&victim)?;
+            // A later entry under this name must `mkdir` again rather than trust the cache.
+            created.remove(&victim);
+        }
+        Ok(_) => fs::remove_file(&victim)?,
+        // Already absent: a whiteout for a name no lower layer had. Nothing to do, and not an
+        // error — the layer states an absence that already holds.
+        Err(_) => {}
+    }
     Ok(())
 }
 
@@ -318,4 +376,117 @@ mod tests {
         assert!(!is_inside(root, Path::new("/tmp/root/../escaped")));
         assert!(!is_inside(root, Path::new("/tmp/elsewhere")));
     }
+
+    fn whiteout_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pdn-untar-wh-{}-{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The defect this closes: `layer_diff` writes `.wh.old.conf` for a deleted file, and the
+    /// extractor used to create that marker as an empty file — so the layer's deletion was lost
+    /// and the marker leaked into the guest's filesystem.
+    #[test]
+    fn a_whiteout_removes_what_the_lower_layer_had() {
+        let dir = whiteout_dir("file");
+        fs::create_dir_all(dir.join("etc")).unwrap();
+        fs::write(dir.join("etc/old.conf"), b"lower layer").unwrap();
+        fs::write(dir.join("etc/keep.conf"), b"still here").unwrap();
+
+        let mut builder = Builder::new(Vec::new());
+        append(&mut builder, "etc/.wh.old.conf", EntryType::Regular, 0);
+        let tar = builder.into_inner().unwrap();
+
+        extract(tar.as_slice(), &dir).expect("extract");
+
+        assert!(
+            !dir.join("etc/old.conf").exists(),
+            "the whiteout did not delete the file"
+        );
+        assert!(
+            !dir.join("etc/.wh.old.conf").exists(),
+            "the marker became a file in the tree"
+        );
+        assert!(
+            dir.join("etc/keep.conf").exists(),
+            "an unrelated file was removed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_whiteout_removes_a_directory_and_everything_under_it() {
+        let dir = whiteout_dir("dir");
+        fs::create_dir_all(dir.join("data/deep")).unwrap();
+        fs::write(dir.join("data/deep/x"), b"x").unwrap();
+
+        let mut builder = Builder::new(Vec::new());
+        append(&mut builder, ".wh.data", EntryType::Regular, 0);
+        let tar = builder.into_inner().unwrap();
+
+        extract(tar.as_slice(), &dir).expect("extract");
+        assert!(
+            !dir.join("data").exists(),
+            "the directory survived its whiteout"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Deletion must not follow a symlink: the whiteout names the link, so the link goes and
+    /// whatever it pointed at (outside the destination) stays.
+    #[test]
+    fn a_whiteout_does_not_follow_a_symlink_out_of_the_tree() {
+        let dir = whiteout_dir("symlink");
+        let outside = dir
+            .parent()
+            .unwrap()
+            .join(format!("pdn-wh-outside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("keep.txt"), b"outside the destination").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("victim")).unwrap();
+
+        let mut builder = Builder::new(Vec::new());
+        append(&mut builder, ".wh.victim", EntryType::Regular, 0);
+        let tar = builder.into_inner().unwrap();
+
+        extract(tar.as_slice(), &dir).expect("extract");
+
+        assert!(
+            !dir.join("victim").exists(),
+            "the symlink itself should be gone"
+        );
+        assert!(
+            outside.join("keep.txt").exists(),
+            "the whiteout followed the link and deleted outside the destination"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    /// The negative control for the whiteout branch: a marker naming something no lower layer had
+    /// is a no-op, not an error. Without it, a delete that silently failed every time would leave
+    /// the tests above still passing, because the names they assert on would simply be absent.
+    #[test]
+    fn a_whiteout_for_a_name_that_never_existed_is_a_no_op() {
+        let dir = whiteout_dir("absent");
+        fs::write(dir.join("unrelated.txt"), b"present").unwrap();
+
+        let mut builder = Builder::new(Vec::new());
+        append(&mut builder, ".wh.never-existed", EntryType::Regular, 0);
+        let tar = builder.into_inner().unwrap();
+
+        extract(tar.as_slice(), &dir).expect("a whiteout for an absent name must not fail");
+        assert!(dir.join("unrelated.txt").exists());
+        assert!(!dir.join(".wh.never-existed").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // A whiteout whose own path escapes the destination cannot be built with this crate: the `tar`
+    // builder refuses `..` in a name (see `sample_tar`) and refuses absolute names too. The guard
+    // that would stop such an archive, `is_inside`, has its own unit test instead, and it runs
+    // before the whiteout branch, on the marker's own path. Hand-assembling header bytes to defeat
+    // the builder would exercise a path reachable only from a foreign layer, which arrives with
+    // the v0.2.0 import work - where a real hostile-layer fixture belongs.
 }

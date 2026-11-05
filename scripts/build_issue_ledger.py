@@ -58,6 +58,17 @@ CHECKS: list[dict] = [
          cmd="grep -rnF 'Apache License' LICENSE", mode="absent", needle="Apache License"),
     dict(issue="40", claim="the README states the same licence",
          cmd="grep -rnF 'GPL-2.0-or-later' README.md", needle="GPL-2.0-or-later"),
+    # ── #41: a non-UTF-8 byte in any argument must not abort the process ──────
+    dict(issue="41", claim="the regression test for an invalid-UTF-8 argument exists",
+         cmd="grep -rnF 'argv_with_invalid_utf8_does_not_panic' crates/podnext/tests/argv_nonutf8.rs",
+         needle="argv_with_invalid_utf8_does_not_panic"),
+    dict(issue="41", claim="argv is read as bytes so an invalid sequence cannot abort",
+         cmd="grep -rnF 'args_os' crates/podnext/src", needle="args_os"),
+    dict(issue="41", claim="the panicking reader is gone from the tree",
+         cmd="grep -rnF 'std::env::args()' crates/podnext/src",
+         mode="absent", needle="std::env::args()"),
+    dict(issue="41", claim="both regression tests pass", cargo=True, needle=None,
+         cmd="cargo test -p podnext --test argv_nonutf8 --locked"),
     # ── #38: a locally built image is visible to run/list/remove ──────────────
     dict(issue="38", claim="container detection is metadata-based, not an etc/bin/usr guess",
          cmd="grep -rnF 'pub fn is_container_dir' crates/proot-distro-core/src/container.rs",
@@ -261,6 +272,12 @@ CHECKS: list[dict] = [
          cmd="grep -rqF 'known-limitations.md' docs/src/SUMMARY.md", needle=None),
     dict(issue="42", claim="every documented command and option exists in the real CLI",
          cmd="cargo test -p podnext --test cli_reference_contract", needle=None, cargo=True),
+    # ── #47: run refuses what it cannot honour - and each refusal is a class, not a string ───
+    dict(issue="47", claim="the exit-code taxonomy is asserted against the real binary",
+         cmd="grep -rnF 'a_documented_refusal_is_one_with_a_reason' crates/podnext/tests/exit_codes.rs",
+         needle="a_documented_refusal_is_one_with_a_reason"),
+    dict(issue="47", claim="every refusal class behaves as documented", cargo=True, needle=None,
+         cmd="cargo test -p podnext --test exit_codes --locked"),
     dict(issue="42", claim="no command reports a not-implemented stub on stdout",
          cmd="! (grep -rn 'not yet implemented' crates/podnext/src --include=*.rs "
              "| grep -vE ':[0-9]+:[[:space:]]*//[^/]' | grep -q .)",
@@ -350,6 +367,12 @@ NO_CHECK_REASON = {
           "no fix landed, so a fix-present predicate has nothing to assert.",
     "28": "OPEN defect: empty command yields a null Compose service in export_to_compose; no fix landed.",
     "29": "OPEN defect: podnext build local reports success without an image; no fix landed.",
+    "37": "OPEN defect: image ls/push said they could not see any image because ImageManager read only "
+          "the store. image ls is fixed (#44), but a real image store does not exist until v0.2.0 "
+          "(roadmap section 4.4), so the remaining push/tag/rm/history behaviour has nothing to assert.",
+    "39": "OPEN defect: push cannot work because the store holds no layer blobs. The CLI now refuses "
+          "honestly instead of pretending (#42), and the blobs themselves are v0.2.0 work "
+          "(roadmap section 4.4): the honest refusal is asserted by the stub checks, not here.",
 }
 
 
@@ -504,8 +527,25 @@ def main() -> int:
     for r in results:
         per_issue.setdefault(r["issue"], []).append(r)
     checked = {int(n) for n in per_issue}
-    uncovered = sorted(i["number"] for i in issues if i["number"] not in checked)
+
+    def is_wayfinder(n: int) -> bool:
+        """Wayfinder tickets are work items, not audit findings: their acceptance criteria live in
+        their own bodies and are tracked by the map issue. Holding them to the audit triage rule
+        would demand a source predicate for work that has not been done yet."""
+        return any(l["name"].startswith("wayfinder:") for l in by_num[n]["labels"])
+
+    uncovered_all = sorted(i["number"] for i in issues if i["number"] not in checked)
+    uncovered = [n for n in uncovered_all if not is_wayfinder(n)]
+    tracked_by_map = [n for n in uncovered_all if is_wayfinder(n)]
     uncovered_open = [n for n in uncovered if by_num[n]["state"] == "OPEN"]
+
+    # Every finding must be fixed with a check, or declined with a reason written down by hand.
+    # A generated fallback sentence is not a disposition: it made the table look complete while
+    # three issues (#37, #39, #41) had in fact never been triaged.
+    missing_reasons = [n for n in uncovered if str(n) not in NO_CHECK_REASON]
+    thin_reasons = [n for n in uncovered
+                    if str(n) in NO_CHECK_REASON and len(NO_CHECK_REASON[str(n)]) < 40]
+    nfail += len(missing_reasons) + len(thin_reasons)
 
     def issue_line(n: str) -> str:
         i = by_num.get(int(n))
@@ -598,12 +638,37 @@ def main() -> int:
         "| # | state | reason | title |",
         "|---|---|---|---|",
     ]
+    for n in missing_reasons:
+        lines.append(f"| {n} | {by_num[n]['state']} | **UNTRIAGED - no reason recorded** | "
+                     f"{by_num[n]['title'][:70]} |")
+    for n in thin_reasons:
+        lines.append(f"| {n} | {by_num[n]['state']} | **reason too thin to be a disposition** | "
+                     f"{by_num[n]['title'][:70]} |")
     for n in uncovered:
+        if n in missing_reasons or n in thin_reasons:
+            continue
         i = by_num[n]
-        reason = NO_CHECK_REASON.get(str(n), "no honest source-level predicate identified.")
+        reason = NO_CHECK_REASON[str(n)]
         reason = reason[5:] if reason.startswith("OPEN ") else reason
         lines.append(f"| {n} | {i['state']} | {reason} | {i['title'][:70]} |")
     lines.append("")
+    if tracked_by_map:
+        lines += [
+            f"The {len(tracked_by_map)} issues labelled `wayfinder:*` "
+            f"({', '.join('#' + str(n) for n in tracked_by_map)}) are work items, not findings: "
+            "the map issue holds their acceptance criteria, and they are not subject to this "
+            "triage list.",
+            "",
+        ]
+    if missing_reasons or thin_reasons:
+        lines += [
+            f"**This ledger FAILS: {len(missing_reasons)} untriaged and {len(thin_reasons)} "
+            "thinly-reasoned issue(s)**. Every finding must be either covered by a predicate above "
+            "or declined in `NO_CHECK_REASON` in a sentence that names what would have to exist for "
+            "the check to be possible. Regenerate with a hand-written reason - never with a "
+            "default.",
+            "",
+        ]
 
     lines += [
         "## How to re-run this (CI-friendly)",
