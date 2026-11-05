@@ -225,7 +225,20 @@ pub fn sysdata_dir(container_dir: &Path) -> PathBuf {
 }
 
 /// True when `path` can be opened and a byte read from it.
+///
+/// A character device short-circuits on metadata: probing one by reading can
+/// block forever (a PTY master waits for data the slave never sends), and the
+/// guest needs the real node bound rather than judged by a read probe.
 fn readable(path: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        if let Ok(meta) = fs::metadata(path) {
+            if meta.file_type().is_char_device() {
+                return true;
+            }
+        }
+    }
     match fs::File::open(path) {
         Ok(mut f) => {
             let mut byte = [0u8; 1];
@@ -676,8 +689,11 @@ mod tests {
         let b = bindings(&tmp);
         // Truthful mounts table bound directly
         assert!(b.iter().any(|a| a.ends_with(":/proc/mounts!")));
-        // SELinux empty dir bound
-        assert!(b.iter().any(|a| a.ends_with(":/sys/fs/selinux")));
+        // SELinux state is unreachable: the empty dir masks the whole /sys tree
+        // when the host denies listing it (Android), otherwise just the subtree.
+        assert!(b
+            .iter()
+            .any(|a| a.ends_with(":/sys/fs/selinux") || a.ends_with(":/sys")));
         // Every entry whose host file is blocked is bound.
         for (_, guest_path) in ENTRIES {
             if !readable(guest_path) {
