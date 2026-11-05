@@ -423,7 +423,8 @@ impl BindMount {
     ///
     /// A source containing ':' cannot be expressed and would be silently dropped
     /// by PRoot, taking `/dev/shm` and the `/proc` stubs with it (#35), so it is
-    /// an error here rather than a warning nobody reads.
+    /// an error here rather than a warning nobody reads. A read-only mount is an
+    /// error too: see [`crate::bindings::argument`] for the measurement.
     pub fn to_argument(&self) -> anyhow::Result<String> {
         crate::bindings::argument(&self.source, &self.target, self.readonly)
     }

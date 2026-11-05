@@ -116,21 +116,33 @@ pub fn ensure_bindable(source: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build a `<source>:<target>:<ro|rw>` bind argument, refusing anything PRoot
-/// would silently drop. The single implementation behind
+/// Build the `<source>:<target>` bind argument PRoot actually understands, refusing
+/// anything it would silently drop or misplace. The single implementation behind
 /// [`BindMount::to_argument`] and `container::BindMount::to_argument`, so the two
 /// mount types cannot drift apart.
+///
+/// There is no read-write/read-only field in this PRoot's bind syntax. Measured on
+/// proot 5.1.107.101 (Termux): `--bind=HOST:/mnt:rw` mounts at the literal guest path
+/// `/mnt:rw`, not `/mnt` - a `:rw`/`:ro` suffix becomes part of the target name, so
+/// the mount looks absent at the path the caller asked for and the read-only intent
+/// is lost without a warning. A read-only request is therefore an error here rather
+/// than a suffix that quietly changes where the mount lands and whether it is
+/// writable. The `!` suffix used for the `/proc/mounts` stubs is a separate feature
+/// (do not resolve the final component) and is not affected.
 pub fn argument(source: &str, target: &str, readonly: bool) -> anyhow::Result<String> {
     ensure_bindable(source)?;
     if target.contains(':') {
         anyhow::bail!("bind target '{target}' contains ':', which PRoot cannot express");
     }
-    Ok(format!(
-        "{}:{}:{}",
-        source,
-        target,
-        if readonly { "ro" } else { "rw" }
-    ))
+    if readonly {
+        anyhow::bail!(
+            "read-only bind '{source}:{target}' cannot be expressed: proot 5.1.107.101 has no \
+             read-only bind form, so a ':ro' suffix would become part of the guest path name \
+             ('{target}:ro'), leaving the target unmounted and writable. Drop the read-only \
+             request or use a PRoot version that supports it"
+        );
+    }
+    Ok(format!("{source}:{target}"))
 }
 
 impl BindMount {
@@ -140,5 +152,38 @@ impl BindMount {
     /// the source or target contains a colon.
     pub fn to_argument(&self) -> anyhow::Result<String> {
         argument(&self.source, &self.target, self.readonly)
+    }
+}
+
+#[cfg(test)]
+mod argument_tests {
+    use super::argument;
+
+    #[test]
+    fn the_rendered_form_is_exactly_host_colon_target() {
+        // proot 5.1.107.101 splits the bind argument once. Anything after the target
+        // becomes part of the guest path name, so the rendered string must hold a single
+        // ':' and no suffix.
+        let rendered = argument("/srv/data", "/data", false).expect("expressible");
+        assert_eq!(rendered, "/srv/data:/data");
+        assert_eq!(rendered.matches(':').count(), 1);
+    }
+
+    #[test]
+    fn a_read_only_request_is_an_error_not_a_suffix() {
+        let err = argument("/srv/data", "/data", true)
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("read-only bind"), "{err}");
+        assert!(
+            err.contains(":ro"),
+            "the reason explains what the suffix would do: {err}"
+        );
+    }
+
+    #[test]
+    fn a_colon_in_the_source_is_still_refused() {
+        assert!(argument("/a:b", "/data", false).is_err());
+        assert!(argument("/srv/data", "/da:ta", false).is_err());
     }
 }

@@ -1,6 +1,9 @@
 //! Login management for PRoot Distro
 
-use crate::bindings::BindMount;
+// The container config's BindMount, not bindings::BindMount: `ProotDistroCore::login`
+// merges these straight into `container.config.bind_mounts`, and two same-named types
+// there forced a conversion at every call site.
+use crate::container::BindMount;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 

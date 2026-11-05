@@ -147,7 +147,7 @@ impl ProotDistroCore {
         Ok(())
     }
 
-    pub async fn login(&mut self, options: LoginOptions) -> Result<()> {
+    pub async fn login(&mut self, mut options: LoginOptions) -> Result<()> {
         let mut container = self.container_manager.get(&options.container_name).await?;
         if options.isolated {
             container.config.isolated = true;
@@ -171,6 +171,16 @@ impl ProotDistroCore {
             options.command
         };
         pn_trace!("[DEBUG login] Command: {:?}", command);
+
+        // Binds the caller asked for on the command line. `execute_container` renders
+        // `config.bind_mounts`, so leaving them only in `options` meant `--bind` and
+        // `--volume` were accepted and then ignored: the login ran without them. Taken
+        // here, after `options` has supplied the session and the command, so nothing else
+        // reads it afterwards.
+        container
+            .config
+            .bind_mounts
+            .append(&mut options.bind_mounts);
 
         let exit_code = self
             .container_manager

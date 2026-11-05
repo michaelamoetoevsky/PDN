@@ -265,6 +265,21 @@ CHECKS: list[dict] = [
          needle=None),
     dict(issue="42", claim="a stub must refuse with a reason, not exit 0",
          cmd="cargo test -p podnext --test stub_refusals", needle=None, cargo=True),
+    # ── #43: a mount argument reaches the guest ──────────────────────────────
+    dict(issue="43", claim="the run flag is no longer discarded",
+         cmd="! grep -qF '_volume: Vec<String>,' crates/podnext/src/main.rs", needle=None),
+    dict(issue="43", claim="run folds --volume into the mounts it passes on",
+         cmd="grep -qF 'specs.extend(volume)' crates/podnext/src/main.rs", needle=None),
+    dict(issue="43", claim="login folds its binds into the container config",
+         cmd="grep -qF 'append(&mut options.bind_mounts)' crates/proot-distro-core/src/lib.rs",
+         needle=None),
+    dict(issue="43", claim="the renderer no longer appends a :ro/:rw suffix",
+         cmd='! grep -qF \'if readonly { "ro" }\' crates/proot-distro-core/src/bindings.rs',
+         needle=None),
+    dict(issue="43", claim="the rendered bind form is exactly host:target, pinned by a test",
+         cmd="cargo test -p proot-distro-core --lib argument_tests", needle=None, cargo=True),
+    dict(issue="43", claim="a malformed or read-only mount spec is refused",
+         cmd="cargo test -p podnext --bin podnext mount_spec_tests", needle=None, cargo=True),
 ]
 
 # Issues with no honest automated check, and why. Every key is an issue that exists.

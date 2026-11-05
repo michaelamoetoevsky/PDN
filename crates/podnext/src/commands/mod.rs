@@ -3657,11 +3657,25 @@ mod build_local_tests {
         let good = proot_distro_core::bindings::BindMount {
             source: "/srv/data".to_string(),
             target: "/data".to_string(),
+            readonly: false,
+            recursive: false,
+            private: false,
+        };
+        // Measured on proot 5.1.107.101: a `:ro` suffix becomes part of the guest name,
+        // so `to_argument` renders plain and refuses the read-only request instead.
+        assert_eq!(good.to_argument().unwrap(), "/srv/data:/data");
+
+        let read_only = proot_distro_core::bindings::BindMount {
+            source: "/srv/data".to_string(),
+            target: "/data".to_string(),
             readonly: true,
             recursive: false,
             private: false,
         };
-        assert_eq!(good.to_argument().unwrap(), "/srv/data:/data:ro");
+        let err = read_only
+            .to_argument()
+            .expect_err("a read-only bind must be refused, not mounted writable elsewhere");
+        assert!(err.to_string().contains("read-only bind"), "{err}");
     }
 
     #[tokio::test]

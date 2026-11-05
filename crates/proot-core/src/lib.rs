@@ -263,8 +263,10 @@ impl ProotEngine {
             cmd.args(&self.config.command[1..]);
         }
 
-        // Debug output
-        if self.config.verbose > 0 {
+        // Debug output. Reachable when PN_DEBUG is set, not only under `verbose`: the
+        // container paths never set `verbose`, so the argv a failing bind actually
+        // produced could not be printed at all.
+        if self.config.verbose > 0 || std::env::var_os("PN_DEBUG").is_some() {
             pn_trace!("[DEBUG] Starting proot command: {:?}", cmd);
             pn_trace!("[DEBUG] Rootfs: {:?}", rootfs);
             pn_trace!("[DEBUG] Env: {:?}", self.config.env);
@@ -414,8 +416,10 @@ impl ProotEngine {
         cmd.arg("-c");
         cmd.arg(command_str);
 
-        // Debug output
-        if self.config.verbose > 0 {
+        // Debug output. Reachable when PN_DEBUG is set, not only under `verbose`: the
+        // container paths never set `verbose`, so the argv a failing bind actually
+        // produced could not be printed at all.
+        if self.config.verbose > 0 || std::env::var_os("PN_DEBUG").is_some() {
             pn_trace!("[DEBUG] Executing proot command: {:?}", cmd);
             pn_trace!("[DEBUG] Rootfs: {:?}", rootfs);
             pn_trace!("[DEBUG] Env: {:?}", self.config.env);

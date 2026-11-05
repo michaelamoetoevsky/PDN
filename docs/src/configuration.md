@@ -280,6 +280,9 @@ stop_timeout = 10
 # Bind mounts: host_path = { target = "guest_path", readonly = false, recursive = true, propagation = "rprivate" }
 "/sdcard" = { target = "/mnt/sdcard", readonly = false }
 "/data/data/com.termux/files/home" = { target = "/home/termux", readonly = false }
+
+# `readonly = true` is refused rather than honoured: proot 5.1.107.101 has no read-only bind
+# form, so a read-only request cannot be expressed. Restrict access inside the guest instead.
 "/tmp" = { target = "/tmp", readonly = false, propagation = "rshared" }
 
 # Volumes

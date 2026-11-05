@@ -33,7 +33,7 @@ mod utils;
 
 use native::{
     install_image_native, kill_container_native, list_containers_native, list_sessions_native,
-    list_sessions_native_full, login_container_native, remove_container_native,
+    list_sessions_native_full, login_container_native, parse_mount_specs, remove_container_native,
     run_container_native, search_docker_hub, verify_image_available,
 };
 use utils::format_size;
@@ -1723,7 +1723,9 @@ async fn run() -> Result<()> {
     // Subcommand mode
     if let Some(cmd) = cli.command {
         pn_trace!("DEBUG main: Executing command: {:?}", cmd);
-        return execute_command(cmd).await;
+        // `-b/--bind` is a global option, so `login` and `run` must see it too; it used to
+        // reach only the direct-execution path below.
+        return execute_command(cmd, cli.bind.clone()).await;
     }
 
     print_help();
@@ -1869,7 +1871,7 @@ async fn execute_direct_manual(rootfs: String, cmd_args: &[String], verbose: boo
     Ok(())
 }
 
-async fn execute_command(cmd: Commands) -> Result<()> {
+async fn execute_command(cmd: Commands, global_binds: Vec<String>) -> Result<()> {
     pn_trace!("DEBUG execute_command: START {:?}", cmd);
     match cmd {
         // Container commands
@@ -1884,7 +1886,7 @@ async fn execute_command(cmd: Commands) -> Result<()> {
             user,
             isolated,
             command,
-        } => cmd_login(container, user, isolated, command).await,
+        } => cmd_login(container, user, isolated, command, global_binds).await,
         Commands::Run {
             container,
             command,
@@ -1916,6 +1918,7 @@ async fn execute_command(cmd: Commands) -> Result<()> {
                 user,
                 workdir,
                 isolated,
+                global_binds,
             )
             .await
         }
@@ -2173,6 +2176,7 @@ async fn cmd_login(
     user: Option<String>,
     isolated: bool,
     command: Vec<String>,
+    binds: Vec<String>,
 ) -> Result<()> {
     let cmd = if command.is_empty() {
         vec!["/bin/sh".to_string()]
@@ -2180,7 +2184,9 @@ async fn cmd_login(
         command
     };
 
-    login_container_native(&container, user, isolated, cmd).await
+    // A bad spec must stop the login, not be dropped: it used to be accepted and ignored.
+    let mounts = parse_mount_specs(&binds)?;
+    login_container_native(&container, user, isolated, cmd, mounts).await
 }
 
 async fn cmd_run(
@@ -2190,7 +2196,7 @@ async fn cmd_run(
     detach: bool,
     _name: Option<String>,
     _network: Option<String>,
-    _volume: Vec<String>,
+    volume: Vec<String>,
     _publish: Vec<String>,
     _entrypoint: Option<String>,
     _tty: bool,
@@ -2198,6 +2204,7 @@ async fn cmd_run(
     _user: Option<String>,
     _workdir: Option<String>,
     isolated: bool,
+    binds: Vec<String>,
 ) -> Result<()> {
     if detach {
         // Refusing beats the previous behaviour, which printed a warning and ran in the
@@ -2210,7 +2217,13 @@ async fn cmd_run(
         );
     }
 
-    run_container_native(&container, command, isolated).await
+    // `--volume` (run) and `--bind` (global) are the same thing; both were parsed and
+    // dropped, so the guest never saw them. A malformed spec is a hard error.
+    let mut specs = binds;
+    specs.extend(volume);
+    let mounts = parse_mount_specs(&specs)?;
+
+    run_container_native(&container, command, isolated, mounts).await
 }
 
 async fn cmd_ps(format: OutputFormat) -> Result<()> {
@@ -2348,7 +2361,7 @@ async fn cmd_attach(container: String, user: Option<String>, command: Vec<String
         command
     };
 
-    login_container_native(&container, user, false, cmd).await
+    login_container_native(&container, user, false, cmd, Vec::new()).await
 }
 
 async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result<()> {

@@ -611,11 +611,59 @@ pub async fn list_containers_native(all: bool) -> Result<Vec<proot_distro_core::
     Ok(containers)
 }
 
+/// Parse a mount spec from the command line: `HOST:GUEST[:ro|rw]`.
+///
+/// PRoot splits a bind argument on `:`, so the guest half must contain none; the
+/// host half is validated by [`proot_distro_core::bindings::argument`], the single
+/// place the splitting rules live. The guest path must be absolute, because PRoot
+/// resolves it inside the traced root.
+pub fn parse_mount_spec(spec: &str) -> Result<proot_distro_core::container::BindMount> {
+    let (body, readonly) = if let Some(rest) = spec.strip_suffix(":ro") {
+        (rest, true)
+    } else if let Some(rest) = spec.strip_suffix(":rw") {
+        (rest, false)
+    } else {
+        (spec, false)
+    };
+    let Some((source, target)) = body.split_once(':') else {
+        anyhow::bail!("invalid mount '{spec}': expected HOST:GUEST[:ro|rw]");
+    };
+    if source.is_empty() || target.is_empty() {
+        anyhow::bail!("invalid mount '{spec}': the host and guest paths are both required");
+    }
+    if !target.starts_with('/') {
+        anyhow::bail!("invalid mount '{spec}': the guest path must be absolute (got '{target}')");
+    }
+    if !std::path::Path::new(source).exists() {
+        anyhow::bail!("mount source '{source}' does not exist");
+    }
+    if readonly {
+        anyhow::bail!(
+            "read-only mounts are not supported: proot 5.1.107.101 has no read-only bind form, \
+             so the ':ro' would become part of the guest path name and the mount would land at \
+             '{target}:ro' instead of '{target}'. Drop the ':ro' suffix to mount read-write, or \
+             restrict access inside the guest"
+        );
+    }
+    let _ = proot_distro_core::bindings::argument(source, target, readonly)?;
+    Ok(proot_distro_core::container::BindMount {
+        source: source.to_string(),
+        target: target.to_string(),
+        readonly,
+    })
+}
+
+/// Parse every `--bind`/`--volume` spec, reporting the first bad one.
+pub fn parse_mount_specs(specs: &[String]) -> Result<Vec<proot_distro_core::container::BindMount>> {
+    specs.iter().map(|s| parse_mount_spec(s)).collect()
+}
+
 pub async fn login_container_native(
     container_name: &str,
     user: Option<String>,
     isolated: bool,
     command: Vec<String>,
+    mounts: Vec<proot_distro_core::container::BindMount>,
 ) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     if let Ok(c) = container_mgr.get(container_name).await {
@@ -628,6 +676,9 @@ pub async fn login_container_native(
     let mut options = proot_distro_core::LoginOptions::default();
     options.container_name = container_name.to_string();
     options.isolated = isolated;
+    // `ProotDistroCore::login` folds these into the container config it loads, which is
+    // what the runtime renders into `--bind` arguments.
+    options.bind_mounts = mounts;
     pn_trace!("[DEBUG native] Default command: {:?}", options.command);
     options.command = if command.is_empty() {
         vec!["/bin/sh".to_string()]
@@ -741,10 +792,14 @@ pub async fn run_container_native(
     container_name: &str,
     command: Vec<String>,
     isolated: bool,
+    mounts: Vec<proot_distro_core::container::BindMount>,
 ) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     let mut container = container_mgr.get(container_name).await?;
     let _ = proot_distro_core::network::ensure_resolv_conf(&container.rootfs_path);
+    // The runtime renders `config.bind_mounts`; a mount the caller asked for has to be
+    // in there or the run happens without it (it used to be dropped in `cmd_run`).
+    container.config.bind_mounts.extend(mounts);
     // The loader does not carry the image's recorded ENV/WORKDIR; reinstate them
     // so `podnext run` behaves as the image was built (#30 residual gap 1).
     apply_image_runtime_config(&mut container);
@@ -877,6 +932,87 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
 /// `podnext run` must behave as the image was built: the ENV/WORKDIR recorded in
 /// the image's `metadata.json` must reach the container's runtime config. These
 /// exercise the loader gap directly (offline, no proot).
+#[cfg(test)]
+mod mount_spec_tests {
+    use super::{parse_mount_spec, parse_mount_specs};
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let base = std::env::var_os("TMPDIR")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("PREFIX").map(|p| std::path::PathBuf::from(p).join("tmp")))
+            .unwrap_or_else(std::env::temp_dir);
+        let dir = base.join(format!("pdn-mountspec-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    fn a_plain_spec_renders_the_only_form_proot_understands() {
+        let host = scratch("rw");
+        let m = parse_mount_spec(&format!("{}:/probe", host.display())).expect("parses");
+        assert_eq!(m.source, host.display().to_string());
+        assert_eq!(m.target, "/probe");
+        assert!(!m.readonly);
+        // Measured: proot 5.1.107.101 splits the argument once, so a suffix would become
+        // part of the guest name. The rendered form must be exactly `<host>:<target>`.
+        assert_eq!(
+            m.to_argument().expect("expressible"),
+            format!("{}:/probe", host.display())
+        );
+        let _ = std::fs::remove_dir_all(&host);
+    }
+
+    #[test]
+    fn the_ro_suffix_is_refused_because_proot_cannot_express_it() {
+        let host = scratch("ro");
+        let err = parse_mount_spec(&format!("{}:/probe:ro", host.display()))
+            .expect_err("must refuse instead of mounting at '/probe:ro'")
+            .to_string();
+        assert!(err.contains("read-only mounts are not supported"), "{err}");
+        assert!(
+            err.contains("/probe:ro"),
+            "the reason names where it would land: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&host);
+    }
+
+    #[test]
+    fn a_spec_without_a_colon_names_the_expected_shape() {
+        let err = parse_mount_spec("/tmp")
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("expected HOST:GUEST"), "{err}");
+    }
+
+    #[test]
+    fn a_relative_guest_path_is_refused() {
+        let host = scratch("rel");
+        let err = parse_mount_spec(&format!("{}:relative", host.display()))
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("absolute"), "{err}");
+        let _ = std::fs::remove_dir_all(&host);
+    }
+
+    #[test]
+    fn a_missing_source_is_refused() {
+        let err = parse_mount_spec("/definitely/not/here:/probe")
+            .expect_err("must refuse")
+            .to_string();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn one_bad_spec_fails_the_whole_list() {
+        let host = scratch("list");
+        let ok = format!("{}:/probe", host.display());
+        assert!(parse_mount_specs(&[ok.clone(), ok.clone()]).is_ok());
+        assert!(parse_mount_specs(&[ok, "garbage".to_string()]).is_err());
+        let _ = std::fs::remove_dir_all(&host);
+    }
+}
+
 #[cfg(test)]
 mod image_runtime_config_tests {
     use super::*;

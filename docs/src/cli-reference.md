@@ -155,9 +155,9 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 |--------|-------------|
 | `--name <NAME>` | Assign a name to the container |
 | `--isolated` | Run in isolated mode (do not mount host storage or Termux home directory) |
-| `-d, --detach` | Run in background (note: currently runs in foreground with warning) |
+| `-d, --detach` | Run in background — not implemented yet: the command refuses rather than pretending |
 | `--rm` | Remove container after exit |
-| `-v, --volume <HOST:GUEST>` | Mount a volume into container |
+| `--volume <HOST:GUEST>` | Mount a host directory into the container (repeatable). A `:ro` suffix is refused — proot has no read-only bind form, and the suffix would become part of the guest path name |
 | `-e, --env <VAR=VALUE>` | Set environment variable (repeatable) |
 | `-w, --workdir <DIR>` | Working directory inside container |
 | `--network <NETWORK>` | Connect container to a network |
@@ -166,7 +166,7 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 ```bash
 podnext run ubuntu -- apt update
 podnext run ubuntu -e "DEBIAN_FRONTEND=noninteractive" -- apt install -y curl
-podnext run ubuntu -v /sdcard:/mnt/sdcard -- ls /mnt/sdcard
+podnext run ubuntu --volume /sdcard:/mnt/sdcard -- ls /mnt/sdcard
 podnext run ubuntu --isolated -- echo "isolated run"
 ```
 

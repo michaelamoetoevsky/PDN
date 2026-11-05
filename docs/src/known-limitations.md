@@ -4,20 +4,23 @@ Measured against `podnext 0.1.8` on Termux/Android 16 (aarch64), 5 Nov 2026. Eac
 observation that produced it, so it can be re-checked rather than believed. The raw captures behind
 these entries are in `research/v019_GAP_BASELINE.md`.
 
-## Defects being fixed in v0.1.9
+## Defects fixed in v0.1.9
 
-**`--bind` and `--volume` are accepted but do nothing.** Both `run` flags are listed in `--help`, and
-the container starts successfully, but the guest does not see the mounted path:
+**`--bind` and `--volume` were accepted and did nothing.** Two independent causes, both
+measured: `cmd_run` took the argument as `_volume` and never read it, and the rendered bind
+argument carried a `:rw` suffix that this PRoot turns into part of the guest path name. The
+guest evidence that separated them:
 
 ```sh
-$ echo MARKER-OK > $PREFIX/tmp/bindtest/marker.txt
-$ podnext run test-alpine --bind $PREFIX/tmp/bindtest:/probe -- cat /probe/marker.txt
-cat: can't open '/probe/marker.txt': No such file or directory
+$ podnext run test-alpine --volume $PREFIX/tmp/bindtest:/mnt -- ls -l "/mnt:rw"   # old build
+-rw-------    1 root     root            10 Nov  5 10:30 marker.txt               # landed here
+$ podnext run test-alpine --volume $PREFIX/tmp/bindtest:/mnt -- ls -l /mnt        # old build
+total 0                                                                           # not here
 ```
 
-The same output is produced with `--volume`, and with neither flag, which is what identifies the
-no-op. The documented short form is wrong too: `podnext run ubuntu -v /sdcard:/mnt/sdcard` exits 2
-because `-v` is `--verbose`.
+The full trace, including the captured PRoot argv, is in
+`research/PROOT_BIND_SUFFIX_MEASUREMENT.md`. The documented short form was wrong as well:
+`podnext run ubuntu -v /sdcard:/mnt/sdcard` exited 2 because `-v` is `--verbose`, not `--volume`.
 
 **`image ls` can print a meaningless size.** The size comes from `du -sb` on the rootfs; when `du`
 exits non-zero the code falls back to the directory's inode size and prints it as if it were real:
@@ -60,6 +63,10 @@ the failure is invisible in the output. A size that cannot be measured should sa
 - **`build submit|status|cancel|list|artifacts|logs`**, **`watchdog events`**, **`service logs`** and
   **`dbus monitor`** refuse and name the reason, with a working alternative where one exists. They
   used to print a not-implemented note on stdout and exit 0, which a script cannot tell from success.
+- **Read-only mounts are not available.** `--volume HOST:GUEST:ro` is refused, not silently mounted
+  writable: proot 5.1.107.101 has no read-only bind form, and a `:ro` suffix would become part of the
+  guest path name (`GUEST:ro`), leaving the requested path unmounted. Restrict access inside the guest
+  instead, or use a PRoot that supports read-only binds.
 - **Temporary files live in `$PREFIX/tmp`.** `/tmp` exists on Android but is not writable by an app
   uid, and `std::env::temp_dir()` falls back to it when `TMPDIR` is unset.
 
