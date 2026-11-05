@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Measure PDN's guest bindings and its USER story in a real guest (ticket PDN#66).
+
+Roadmap section 9.3 asks for predictable bindings (`/sdcard`, `/storage`, shared home/tmp) and an
+honest `USER` story - documented, tested, and with the build/run output stating which user the guest
+runs as. This drives the REAL binary (`podnext run <container> -- ...`) and records what is actually
+inside the guest, then holds the documentation to it:
+
+  1. `ls -ld` of the documented storage paths, and proof they are the guest's OWN rootfs directories
+     (`/proc/mounts` carries no `sdcard`/`storage` bind and their device is the rootfs device),
+     not the phone's storage.
+  2. That the host home is not mounted (a host marker file must be invisible in the guest).
+  3. The guest<->host file exchange for `/tmp` and `$HOME`, both directions, with the exact host
+     paths (`~/.podnext/containers/<name>/tmp` and `.../rootfs/root`).
+  4. The USER story: `id` in the guest is the mapped root and `doctor` records `--change-id=0:0:0`;
+     the build output that states `USER` is not enforced is left to the unit tests, and whether
+     `run` states the user is reported as an observation (it does not today).
+
+Negative control: `/mnt/sdcard` and `/nonexistent_pdn_probe` are NOT mapped and must be ABSENT -
+proving the check distinguishes mapped from unmapped paths.
+
+CI: needs an installed container. With no binary or no container this prints `SKIP: ...` and exits 0
+(a skip is NOT a pass). A measured claim that fails exits 1.
+
+Env overrides: PDNEXT_BIN (path to podnext), PDN_CONTAINER (container name, default alpine).
+Temp files go under $PREFIX/tmp (never /tmp on Android).
+"""
+
+import os
+import pathlib
+import subprocess
+import sys
+
+ENV = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
+BIN = os.environ.get("PDNEXT_BIN")
+CONTAINER = os.environ.get("PDN_CONTAINER", "alpine")
+PREFIX = os.environ.get("PREFIX", "/data/data/com.termux/files/usr")
+
+# Documented storage paths (constants.rs `STORAGE_PERMISSIONS`) plus the mount root.
+DOCUMENTED = ["/sdcard", "/storage", "/storage/emulated/0", "/storage/self/primary"]
+# Deliberately NOT mapped: the negative control.
+UNMAPPED = ["/mnt/sdcard", "/nonexistent_pdn_probe"]
+
+
+def run_guest(script: str) -> tuple[int, str]:
+    """`podnext run <container> -- sh -c <script>`, capturing stdout+stderr."""
+    p = subprocess.run([BIN, "run", CONTAINER, "--", "sh", "-c", script],
+                       capture_output=True, text=True, env=ENV, timeout=180)
+    return p.returncode, p.stdout + p.stderr
+
+
+def run_host(args: list[str]) -> tuple[int, str]:
+    p = subprocess.run([BIN, *args], capture_output=True, text=True, env=ENV, timeout=180)
+    return p.returncode, p.stdout + p.stderr
+
+
+def main() -> int:
+    if not BIN or not os.access(BIN, os.X_OK):
+        print(f"SKIP: no podnext binary (PDNEXT_BIN={BIN!r}); a skip is not a pass")
+        return 0
+
+    rc, _ = run_guest("true")
+    if rc != 0:
+        print(f"SKIP: container {CONTAINER!r} not usable (podnext run exited {rc}); a skip is not a pass")
+        return 0
+
+    checks: list[tuple[str, str, str]] = []   # (name, PASS/FAIL, detail)
+
+    def add(name: str, ok: bool, detail: str) -> None:
+        checks.append((name, "PASS" if ok else "FAIL", detail))
+
+    home = pathlib.Path.home()
+    store = home / ".podnext" / "containers" / CONTAINER
+    guest_home = store / "rootfs" / "root"
+    guest_tmp = store / "tmp"
+    probe = f"pdn-check-{os.getpid()}"
+
+    # 1. Documented paths exist, and are the guest's own rootfs, not the phone's storage.
+    rc, out = run_guest(
+        "ls -ld " + " ".join(DOCUMENTED) + " 2>&1; "
+        "echo DEV=$(stat -c %d /) $(stat -c %d /sdcard 2>/dev/null); "
+        "echo BOUND=$(grep -cE 'sdcard|/storage' /proc/mounts)")
+    present = all(any(line.rstrip().endswith(p) for line in out.splitlines()) for p in DOCUMENTED)
+    add("documented paths exist", present, out.strip().replace("\n", " | "))
+    root_dev = same_dev = None
+    for line in out.splitlines():
+        if line.startswith("DEV="):
+            parts = line[4:].split()
+            if len(parts) == 2:
+                root_dev, same_dev = parts
+    add("storage is rootfs, not a bind",
+        same_dev == root_dev and "BOUND=0" in out,
+        f"root dev={root_dev} /sdcard dev={same_dev}; mounts matching sdcard|storage: "
+        f"{out.split('BOUND=')[-1].strip() if 'BOUND=' in out else '?'}")
+
+    rc, out = run_guest("; ".join(f"[ -e {p} ] && echo PRESENT {p} || echo ABSENT {p}"
+                                  for p in UNMAPPED))
+    add("negative control: unmapped paths absent",
+        out.count("ABSENT") == len(UNMAPPED), out.strip().replace("\n", " | "))
+
+    # 2. The host home is not mounted: a host marker must be invisible in the guest.
+    marker = home / probe
+    marker.write_text("h\n")
+    rc, out = run_guest(f"cat /data/data/com.termux/files/home/{probe} 2>&1 || echo INVISIBLE")
+    add("host home not mounted", "INVISIBLE" in out or f"No such file" in out, out.strip())
+    marker.unlink(missing_ok=True)
+
+    # 3. /tmp and $HOME exchange both ways, with the exact host paths.
+    if guest_tmp.is_dir() and guest_home.is_dir():
+        run_guest(f"echo g-tmp-{probe} > /tmp/{probe}; echo g-home-{probe} > /root/{probe}")
+        host_tmp = (guest_tmp / probe).read_text().strip()
+        host_home = (guest_home / probe).read_text().strip()
+        (guest_tmp / probe).write_text(f"h-tmp-{probe}\n")
+        (guest_home / probe).write_text(f"h-home-{probe}\n")
+        rc, out = run_guest(f"cat /tmp/{probe}; cat /root/{probe}")
+        add("guest writes /tmp -> host reads " + str(guest_tmp), host_tmp == f"g-tmp-{probe}", host_tmp)
+        add("guest writes $HOME -> host reads " + str(guest_home), host_home == f"g-home-{probe}", host_home)
+        add("host writes /tmp+$HOME -> guest reads",
+            f"h-tmp-{probe}" in out and f"h-home-{probe}" in out, out.strip().replace("\n", " | "))
+        for f in (guest_tmp / probe, guest_home / probe):
+            f.unlink(missing_ok=True)
+    else:
+        checks.append(("host/guest exchange", "SKIP",
+                       f"store not at {store}; is PDN_ROOT redeclared?"))
+
+    # 4. USER story: the guest runs as the mapped root, and doctor records how.
+    rc, out = run_guest("id")
+    add("guest runs as mapped root", "uid=0(root)" in out, out.strip())
+    rc, out = run_host(["doctor", "--container", CONTAINER, "--format", "json"])
+    add("doctor records --change-id=0:0:0", "--change-id=0:0:0" in out,
+        "present" if "--change-id=0:0:0" in out else "absent")
+    rc, out = run_guest("true")
+    print(f"NOTE  `podnext run {CONTAINER} -- true` stdout/stderr: {out!r} "
+          f"(run does not state the user; roadmap 9.3 wants it to)")
+
+    width = max(len(n) for n, _, _ in checks)
+    for name, status, detail in checks:
+        print(f"{status:4}  {name:<{width}}  {detail}")
+    failed = [n for n, s, _ in checks if s == "FAIL"]
+    skipped = [n for n, s, _ in checks if s == "SKIP"]
+    print(f"\n{len(checks)} checks: {len(checks) - len(failed) - len(skipped)} passed, "
+          f"{len(failed)} failed, {len(skipped)} skipped")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

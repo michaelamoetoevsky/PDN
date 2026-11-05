@@ -78,6 +78,15 @@ pub mod termux {
     pub const TMP: &str = "/data/data/com.termux/files/usr/tmp";
     pub const PACKAGE: &str = "com.termux";
 
+    /// The directories Termux grants access to after `termux-setup-storage`.
+    ///
+    /// These are Termux's own paths, not mounts PDN performs: PDN binds no `/sdcard` or
+    /// `/storage` into a guest, so this list is not a set of guest bind targets. Measured inside
+    /// an `alpine` guest on 5 Nov 2026 (`podnext run alpine -- ls -ld /sdcard /storage ...`), all
+    /// three appear only as the guest's **own rootfs directories** — `/sdcard`,
+    /// `/storage/emulated/0` and `/storage/self/primary` with mode `000`, on the rootfs device,
+    /// not the phone's storage. Reach the phone's storage with an explicit
+    /// `--volume /sdcard:/mnt/sdcard`; see `docs/src/known-limitations.md`.
     pub const STORAGE_PERMISSIONS: &[&str] =
         &["/sdcard", "/storage/emulated/0", "/storage/self/primary"];
 

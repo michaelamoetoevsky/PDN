@@ -82,6 +82,34 @@ run ...` also emits it. Verified with `podnext doctor --container test-alpine --
   writable: proot 5.1.107.101 has no read-only bind form, and a `:ro` suffix would become part of the
   guest path name (`GUEST:ro`), leaving the requested path unmounted. Restrict access inside the guest
   instead, or use a PRoot that supports read-only binds.
+- **Storage and the host home are not mounted into a guest by default.** PDN binds `/dev`,
+  `/proc`, `/sys`, the Android system directories, and a per-container `/tmp` and `/dev/shm`; it
+  binds no `/sdcard` and no `/storage`. A guest sees the documented storage paths as **empty
+  directories from its own rootfs**, not the phone's storage. Measured inside `alpine`
+  (`podnext run alpine -- ls -ld /sdcard /storage/emulated/0 /storage/self/primary /storage`):
+
+  ```text
+  d---------    2 root     root          3452 Nov  4 00:30 /sdcard
+  drwx------    4 root     root          3452 Nov  4 00:30 /storage
+  d---------    2 root     root          3452 Nov  4 00:30 /storage/emulated/0
+  d---------    2 root     root          3452 Nov  4 00:30 /storage/self/primary
+  ```
+
+  All four are on the rootfs device (`stat -c %d` matches `/`), while on the host `/sdcard` is a
+  symlink to `/storage/self/primary` -> `/storage/emulated/0` on a different filesystem. The guest's
+  `/proc/mounts` lists only `rootfs`, `proc`, `sysfs`, `devtmpfs /dev`, `tmpfs /dev/shm` and
+  `tmpfs /tmp`. The host home is not visible either: a file written on the host under
+  `/data/data/com.termux/files/home` does not appear at that path in the guest, though a directory of
+  that name exists in the rootfs. Reach the phone's storage with an explicit mount —
+  `podnext run alpine --volume /sdcard:/mnt/sdcard -- ls /mnt/sdcard` — and note that without it
+  `/mnt/sdcard` is absent (it is the negative control in `scripts/check_bindings.py`).
+- **`/tmp` and `/dev/shm` are per-container, and the guest `$HOME` is not the Termux home.** The
+  guest's `/tmp` is `$HOME/.podnext/containers/<name>/tmp` and its `/dev/shm` is
+  `.../<name>/shm`; neither is the host's `$PREFIX/tmp`. A file written in the guest at `/tmp/x` is
+  readable on the host at `~/.podnext/containers/<name>/tmp/x`, and a host file written there is
+  readable in the guest at `/tmp/x` (the same holds for `/root` <-> `.../rootfs/root`); the guest's
+  `$HOME` is `/root`, not `/data/data/com.termux/files/home`. The "shared home/tmp" of the login
+  polygon is not implemented (see Deferred to v0.2.0).
 - **`TERMUX__PREFIX` cannot be relocated while the app runs.** It is not a PDN setting: Termux
   exports it beside `LD_PRELOAD=…/libtermux-exec-ld-preload.so`, whose job is to rewrite `/bin/*`
   into the prefix (`/bin` is a symlink to `/system/bin`). Pointing it elsewhere makes process
@@ -107,6 +135,23 @@ run ...` also emits it. Verified with `podnext doctor --container test-alpine --
   `--kill-on-exit`, because `proot-core` passes the token unconditionally rather than from the config
   field. The flag would be accepted and never enforced, so it refuses with that measurement
   (issue #63).
+
+## Measured defects not yet fixed
+
+Measured on 5 Nov 2026, inside `alpine`, with this branch's build (`podnext 0.1.8`). Kept here rather
+than fixed in passing because the owning files (the `login`/`run` command path) are not this file's.
+
+- **`podnext login -u/--user` is accepted and ignored.** The [CLI reference](cli-reference.md) lists
+  `-u, --user <USER>` for `login` as "User to run as", but the flag only reaches `LoginOptions.user`
+  and nothing reads it: `podnext login alpine --user 1000 -- id` runs as `uid=0(root)`, byte-identical
+  to the same command without the flag. `run` refuses the same flag (exit 1, "the guest runs as the
+  mapped root"), so the two paths disagree; `login` should refuse it for the same reason.
+- **`podnext run`/`login` print nothing about the user the guest runs as.** Roadmap section 9.3 asks
+  that the build/run output state it. `podnext build local` does — a Dockerfile with `USER nobody`
+  prints `NOTE: USER is not enforced here...` — but a plain `podnext run alpine -- true` exits 0
+  silently and `--verbose` adds nothing. What the guest runs as is visible only through
+  `podnext doctor --container alpine` (its proot argv carries `--change-id=0:0:0`) or by running `id`
+  in the guest (`uid=0(root) gid=0(root)`).
 
 ## Not measured yet
 
