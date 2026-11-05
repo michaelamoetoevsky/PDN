@@ -11,8 +11,8 @@
 
 #### Diagnosis
 ```bash
-# Check logs
-podnext run ubuntu --security-profile unconfined -- /bin/bash -c "echo test"
+# Check logs and interactive login
+podnext login ubuntu
 
 # Check system info
 podnext info
@@ -25,9 +25,9 @@ curl http://127.0.0.1:8080/api/v1/system/health
 
 | Cause | Solution |
 |-------|----------|
-| Seccomp profile too restrictive | Use `--security-profile unconfined` or `restricted` |
-| Missing capabilities | Add required capabilities: `--cap-add SYS_ADMIN` |
-| Insufficient resources | Increase limits: `--memory 4G --cpu 4.0` |
+| Seccomp profile too restrictive | Use `PN_SECURITY_PROFILE=unconfined` |
+| Missing capabilities | Configure security profile in container configuration |
+| Insufficient resources | Check memory and disk space with `podnext info` |
 | Rootfs corruption | Reinstall: `podnext remove ubuntu && podnext install ubuntu:22.04` |
 | Kernel missing features | Check `podnext info` for feature support |
 | PRoot not installed | `pkg install proot` |
@@ -46,12 +46,6 @@ curl -I https://registry-1.docker.io/v2/
 
 # Try different registry
 podnext install ghcr.io/library/ubuntu:22.04
-
-# Use insecure registry (if needed)
-podnext install my-registry:5000/myimage --insecure
-
-# Authenticate
-podnext image pull my-registry:5000/myimage --auth username:password
 
 # Check disk space
 df -h ~/.cache/pn-next
@@ -85,14 +79,11 @@ podnext run ubuntu -- cat /etc/resolv.conf
 #### Solutions
 ```bash
 # Recreate default network
-podnext network remove default
+podnext network rm default
 podnext network create default --driver bridge --subnet 10.88.0.0/16
 
 # Use host networking
 podnext run ubuntu --network host -- ping 8.8.8.8
-
-# Fix DNS
-podnext run ubuntu --dns 1.1.1.1 --dns 8.8.8.8 -- ping google.com
 
 # Check firewall
 sudo ufw status
@@ -108,20 +99,14 @@ sudo ufw allow in on pdn0
 
 #### Solutions
 ```bash
-# Check path translation
-podnext run ubuntu -b /sdcard:/mnt/sdcard -- ls -la /mnt/sdcard
+# Check path translation (-v host:guest)
+podnext run ubuntu -v /sdcard:/mnt/sdcard -- ls -la /mnt/sdcard
 
 # Use correct syntax (host:guest)
-podnext run ubuntu -b /host/path:/guest/path -- cmd
+podnext run ubuntu -v /host/path:/guest/path -- cmd
 
 # Check permissions
 ls -la /host/path
-
-# Use readonly if needed
-podnext run ubuntu -b /host/path:/guest/path:ro -- cmd
-
-# Recursive bind mount
-podnext run ubuntu -b /host/path:/guest/path:rshared -- cmd
 ```
 
 ### GPU Not Working
@@ -141,7 +126,7 @@ ls /usr/share/vulkan/icd.d/
 cat /usr/share/vulkan/icd.d/*.json
 
 # Check environment
-podnext run ubuntu --gpu -- env | grep -i vulkan
+podnext run ubuntu -v /dev/dri:/dev/dri -- env | grep -i vulkan
 ```
 
 #### Solutions
@@ -152,11 +137,8 @@ pkg install vulkan-loader vulkan-tools mesa-vulkan-drivers
 # Set ICD
 export VK_ICD_FILENAMES=/system/lib64/vulkan/adreno_icd.aarch64.json
 
-# Run with GPU
-podnext run ubuntu --gpu -- vulkaninfo
-
-# Check security profile (may block GPU syscalls)
-podnext run ubuntu --gpu --security-profile unconfined -- vulkaninfo
+# Run with GPU device mounted
+podnext run ubuntu -v /dev/dri:/dev/dri -- vulkaninfo
 ```
 
 ### Permission Denied
@@ -168,20 +150,14 @@ podnext run ubuntu --gpu --security-profile unconfined -- vulkaninfo
 
 #### Solutions
 ```bash
-# Check security profile
-podnext run ubuntu --security-profile unconfined -- cmd
-
-# Add capabilities
-podnext run ubuntu --cap-add DAC_OVERRIDE --cap-add SYS_ADMIN -- cmd
+# Debug with unconfined profile
+PN_SECURITY_PROFILE=unconfined podnext run ubuntu -- cmd
 
 # Check file permissions
 podnext run ubuntu -- ls -la /path/to/file
 
 # Fix ownership
 podnext run ubuntu -- chown -R root:root /path
-
-# Use user namespace
-podnext run ubuntu --user-namespace -- cmd
 ```
 
 ### Performance Issues
@@ -205,40 +181,29 @@ podnext run ubuntu -- dd if=/dev/zero of=/tmp/test bs=1M count=100
 
 #### Solutions
 ```bash
-# Increase resources
-podnext run ubuntu --memory 4G --cpu 4.0 -- cmd
+# Check host resources
+podnext info
 
-# Use tmpfs for temporary files
-podnext run ubuntu --tmpfs /tmp:size=1G -- cmd
-
-# Disable security features (for benchmarking)
-podnext run ubuntu --security-profile unconfined --no-limits -- cmd
-
-# Check for swap
-podnext run ubuntu -- free -h
+# Check memory and swap
+free -h
 ```
 
-### Checkpoint/Restore Fails
+### Backup and Restore Fails
 
 #### Symptoms
-- `podnext checkpoint` fails
+- `podnext backup create` fails
 - Restored container doesn't work
-- CRIU errors
 
 #### Solutions
 ```bash
-# Check CRIU
-criu check
+# Verify container exists
+podnext list
 
-# Check kernel support
-grep CHECKPOINT_RESTORE /boot/config-$(uname -r)
+# Check backup list
+podnext backup list
 
-# Use unconfined profile
-podnext run ubuntu --security-profile unconfined --detach --name test -- sleep 1000
-podnext checkpoint test --name cp1
-
-# Check logs
-journalctl -u pdn-gateway -f
+# Check gateway logs
+pdn-gateway --log-level debug
 ```
 
 ## Debugging
@@ -281,8 +246,8 @@ podnext logs --tail 100 <container-id>
 ### System Call Tracing
 
 ```bash
-# Trace syscalls with strace (requires CAP_SYS_PTRACE)
-podnext run ubuntu --security-profile unconfined -- strace -f -e trace=network ls
+# Trace syscalls with strace (requires root/ptrace capabilities)
+podnext run ubuntu -- strace -f -e trace=network ls
 
 # Or use PDN's built-in tracing
 export PN_TRACING_ENABLED=true
@@ -357,12 +322,6 @@ cargo flamegraph --package podnext --bin podnext -- run ubuntu -- cmd
 ```bash
 # Pre-pull images
 podnext image pull ubuntu:22.04
-
-# Use local images only
-podnext install ubuntu:22.04 --no-pull
-
-# Disable security features (dev only)
-podnext run ubuntu --security-profile unconfined --no-limits -- cmd
 ```
 
 ### Resource Usage
@@ -380,9 +339,6 @@ io_max_write_bps = "100MB/s"
 ### I/O Performance
 
 ```bash
-# Use tmpfs for temporary data
-podnext run ubuntu --tmpfs /tmp:size=1G -- cmd
-
 # Use volumes for persistent data (better than bind mounts)
 podnext volume create my-data
 podnext run ubuntu -v my-data:/data -- cmd

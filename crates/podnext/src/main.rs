@@ -108,18 +108,18 @@ use proot_distro_core::storage::VolumeConfig;
     podnext quota set web-srv cpu 200         # Terapkan batas kuota CPU (2 cores)\n\
     podnext quota usage web-srv               # Pantau utilisasi resource real-time\n\
     podnext watchdog status                   # Pantau circuit breaker & watchdog\n\
-    podnext log tail web-srv                  # Streaming log secara real-time\n\
+    podnext log tail -s web-srv               # Streaming log secara real-time\n\
     podnext dbus serve --socket /tmp/d.sock   # Jalankan D-Bus broker IPC\n\
     podnext dbus call ...                     # Kirim panggilan method D-Bus\n\
     podnext gitops sync                       # Sinkronisasi deklaratif GitOps manifests\n\
     podnext gitops status                     # Status sinkronisasi aplikasi GitOps\n\
     podnext boot enable web-srv               # Pasang auto-start saat Termux boot\n\
-    podnext wakelock acquire web-srv Partial  # Ambil Android wake lock agar tetap aktif\n\n\
+    podnext wakelock acquire web-srv partial  # Ambil Android wake lock agar tetap aktif\n\n\
     ========================================================================\n\
     4. DIRECT EXECUTION MODE (Kompatibilitas murni seperti biner proot):\n\
     ========================================================================\n\
     podnext -r /path/to/rootfs -- /bin/bash    # Jalankan rootfs kustom secara langsung\n\
-    podnext -b /host/dir:/guest/dir -- ls      # Bind mount direktori host langsung\n"
+    podnext -r /path/to/rootfs -b /host/dir:/guest/dir -- ls # Bind mount direktori host langsung\n"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -257,6 +257,7 @@ enum Commands {
 
     /// [Core] List created containers
     #[command(
+        visible_alias = "ls",
         long_about = "List all installed distributions and containers with their status, real Linux OS, and architecture.\n\n\
         EXAMPLES:\n  \
         podnext list\n  \
@@ -373,6 +374,7 @@ enum Commands {
 
     /// [Core] Delete a container
     #[command(
+        visible_alias = "rm",
         long_about = "Permanently remove an installed container and its rootfs from disk.\n\n\
         EXAMPLES:\n  \
         podnext remove debian\n  \
@@ -547,7 +549,7 @@ enum Commands {
     Quota(QuotaCommands),
 
     /// [System] Structured logging & real-time streaming
-    #[command(subcommand)]
+    #[command(subcommand, visible_alias = "logs")]
     Log(LogCommands),
 
     /// [System] D-Bus IPC & service brokering
@@ -673,6 +675,7 @@ enum ImageCommands {
         image: String,
     },
     /// Remove one or more images
+    #[command(visible_alias = "remove")]
     Rm {
         /// Image references to remove
         images: Vec<String>,
@@ -740,6 +743,7 @@ enum NetworkCommands {
         gateway: Option<String>,
     },
     /// List networks
+    #[command(visible_alias = "list")]
     Ls {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
@@ -754,6 +758,7 @@ enum NetworkCommands {
         format: OutputFormat,
     },
     /// Remove one or more networks
+    #[command(visible_alias = "remove")]
     Rm {
         /// Network name(s)
         networks: Vec<String>,
@@ -792,6 +797,7 @@ enum VolumeCommands {
         opts: Vec<String>,
     },
     /// List volumes
+    #[command(visible_alias = "list")]
     Ls {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
@@ -806,6 +812,7 @@ enum VolumeCommands {
         format: OutputFormat,
     },
     /// Remove one or more volumes
+    #[command(visible_alias = "remove")]
     Rm {
         /// Volume name(s)
         volumes: Vec<String>,
@@ -928,6 +935,7 @@ enum WatchdogCommands {
         format: OutputFormat,
     },
     /// Set watchdog policy for a service
+    #[command(visible_alias = "set-policy")]
     SetPolicy {
         /// Service name
         name: String,
@@ -1125,7 +1133,7 @@ enum WakelockCommands {
         /// Service name
         name: String,
         /// Lock type
-        #[arg(value_enum)]
+        #[arg(value_enum, ignore_case = true)]
         lock_type: WakeLockTypeArg,
     },
     /// Release wake lock
@@ -1465,6 +1473,7 @@ async fn run() -> Result<()> {
         "run",
         "login",
         "list",
+        "ls",
         "ps",
         "kill",
         "copy",
@@ -1473,9 +1482,11 @@ async fn run() -> Result<()> {
         "reset",
         "install",
         "remove",
+        "rm",
         "search",
         "build",
         "docker",
+        "image",
         "images",
         "network",
         "volume",

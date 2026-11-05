@@ -156,21 +156,18 @@ architectures = ["SCMP_ARCH_AARCH64", "SCMP_ARCH_X86_64"]
 
 ### Using Profiles
 
+Profiles are selected via the `PN_SECURITY_PROFILE` environment variable or container configuration:
+
 ```bash
-# Use default profile (default)
+# Use default profile
 podnext run ubuntu -- cmd
 
-# Use restricted profile
-podnext run ubuntu --security-profile restricted -- cmd
-
-# Use unconfined profile (debugging)
-podnext run ubuntu --security-profile unconfined -- cmd
-
-# Use custom profile
-podnext run ubuntu --security-profile my-custom -- cmd
-
-# Set default profile globally
+# Set profile via environment
 export PN_SECURITY_PROFILE=restricted
+podnext run ubuntu -- cmd
+
+# Debugging with unconfined profile
+PN_SECURITY_PROFILE=unconfined podnext run ubuntu -- cmd
 ```
 
 ## Linux Capabilities
@@ -231,11 +228,6 @@ drop = [
 add = [
     "CAP_NET_ADMIN", "CAP_DAC_OVERRIDE"
 ]
-```
-
-```bash
-# Runtime override
-podnext run ubuntu --cap-add NET_ADMIN --cap-drop SYS_ADMIN -- cmd
 ```
 
 ## AppArmor
@@ -334,7 +326,7 @@ EOF
 
 # Load and use
 sudo apparmor_parser -r /etc/apparmor.d/pn-next-myapp
-podnext run myapp --security-profile myapp -- cmd
+podnext run myapp -- cmd
 ```
 
 ## SELinux
@@ -390,7 +382,7 @@ semanage fcontext -a -t myapp_exec_t "/usr/bin/myapp"
 restorecon -v /usr/bin/myapp
 
 # Use with container
-podnext run myapp --security-profile myapp -- cmd
+podnext run myapp -- cmd
 ```
 
 ## Filesystem Isolation
@@ -573,7 +565,7 @@ podnext install docker.io/myorg/myimage:tag --verify-notary
 ### 1. Use Restricted Profiles for Untrusted Workloads
 
 ```bash
-podnext run untrusted-app --security-profile restricted -- cmd
+PN_SECURITY_PROFILE=restricted podnext run untrusted-app -- cmd
 ```
 
 ### 2. Enable Read-Only Rootfs
@@ -671,8 +663,8 @@ cargo audit
 ### Container Fails to Start
 
 ```bash
-# Try unconfined profile
-podnext run ubuntu --security-profile unconfined -- /bin/bash
+# Try interactive login
+podnext login ubuntu
 
 # Check seccomp logs
 dmesg -T | grep -i seccomp
@@ -713,7 +705,7 @@ sudo iptables -L -n
 ls -la /dev/dri/
 
 # Check permissions
-podnext run ubuntu --gpu --security-profile unconfined -- glxinfo
+podnext run ubuntu -v /dev/dri:/dev/dri -- glxinfo
 ```
 
 ## See Also

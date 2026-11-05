@@ -199,7 +199,7 @@ podnext quota usage web-server
 #### 4. Watchdog & Circuit Breakers
 ```bash
 # Configure automatic restart policy: up to 3 retries within 60 seconds
-podnext watchdog setpolicy web-server on-failure 3 60
+podnext watchdog policy web-server restart -m 3 -w 60
 
 # Inspect circuit breaker status
 podnext watchdog status

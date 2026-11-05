@@ -47,8 +47,8 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 |--------------|-----|-------|
 | (built-in) | `podnext search <query>` | Search Docker Hub/OCI registries |
 | (built-in) | `podnext install <image>` | Pull and install from registry |
-| (built-in) | `podnext image list` | List local images |
-| (built-in) | `podnext image remove <image>` | Remove local image |
+| (built-in) | `podnext image ls` | List local images (`list` is an alias) |
+| (built-in) | `podnext image rm <image>` | Remove local image (`remove` is an alias) |
 
 ### Session Management
 
@@ -64,9 +64,9 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 | PRoot-distro | PDN | Notes |
 |--------------|-----|-------|
 | (manual bind) | `podnext network create` | CNI-based networks |
-| (manual bind) | `podnext network ls` | List networks |
+| (manual bind) | `podnext network ls` | List networks (`list` is an alias) |
 | (manual bind) | `podnext volume create` | Named volumes |
-| (manual bind) | `podnext volume ls` | List volumes |
+| (manual bind) | `podnext volume ls` | List volumes (`list` is an alias) |
 
 ### System Commands
 
@@ -230,59 +230,31 @@ enforce = true
 ### Applying Security Profiles
 
 ```bash
-# Use default profile (secure)
+# Use default profile
 podnext run ubuntu -- cmd
 
-# Use restricted profile (minimal syscalls)
-podnext run ubuntu --security-profile restricted -- cmd
+# Use restricted profile via environment
+export PN_SECURITY_PROFILE=restricted
+podnext run ubuntu -- cmd
 
-# Use unconfined (for debugging)
-podnext run ubuntu --security-profile unconfined -- cmd
-
-# Custom profile
-podnext run ubuntu --security-profile my-custom -- cmd
+# Debugging with unconfined profile
+PN_SECURITY_PROFILE=unconfined podnext run ubuntu -- cmd
 ```
 
 ## Advanced Feature Migration
 
-### Multi-Container Orchestration
+### Backup and Restore
 
-**PRoot-distro:** Manual scripting required
-
-**PDN:** Native pod/stack support (planned)
-
-```toml
-# not-pdn-config: the previous pod manifest format from migrator tooling.
-# pod.toml
-[pod]
-name = "web-stack"
-containers = ["nginx", "php-fpm", "mysql"]
-
-[pod.networks]
-default = { driver = "bridge" }
-
-[pod.volumes]
-web-data = { driver = "local" }
-db-data = { driver = "local" }
-```
-
-```bash
-podnext pod up -f pod.toml
-podnext pod down -f pod.toml
-```
-
-### Checkpoint/Restore (CRIU)
-
-**PRoot-distro:** Not supported
+**PRoot-distro:** Manual tarball export/import
 
 **PDN:**
 
 ```bash
-# Checkpoint a running container
-podnext checkpoint ubuntu --name checkpoint-1
+# Backup a container
+podnext backup create ubuntu
 
-# Restore from checkpoint
-podnext restore checkpoint-1 --name ubuntu-restored
+# Restore from backup
+podnext backup restore <backup-id> --target ubuntu-restored
 ```
 
 ### GPU Acceleration
@@ -291,16 +263,9 @@ podnext restore checkpoint-1 --name ubuntu-restored
 
 **PDN:**
 
-```toml
-# not-pdn-config: OCI runtime-spec GPU example.
-[container.gpu]
-enabled = true
-devices = ["/dev/dri/renderD128", "/dev/dri/card0"]
-api = "vulkan"  # or "opengl"
-```
-
 ```bash
-podnext run ubuntu --gpu -- glxinfo | grep "OpenGL renderer"
+# Run with GPU device bind-mounted
+podnext run ubuntu -v /dev/dri:/dev/dri -- glxinfo | grep "OpenGL renderer"
 ```
 
 ## Troubleshooting Migration Issues
@@ -310,8 +275,8 @@ podnext run ubuntu --gpu -- glxinfo | grep "OpenGL renderer"
 **Check:** Security profile compatibility
 
 ```bash
-# Try unconfined profile
-podnext run ubuntu --security-profile unconfined -- /bin/bash
+# Try interactive login
+podnext login ubuntu
 ```
 
 ### Issue: Bind mounts not working
@@ -339,11 +304,11 @@ podnext run ubuntu --network host -- cmd
 
 ### Issue: Performance regression
 
-**Check:** Resource limits
+**Check:** Container process execution
 
 ```bash
-# Run without limits for comparison
-podnext run ubuntu --no-limits -- cmd
+# Run command directly in container
+podnext run ubuntu -- cmd
 ```
 
 ## Rollback Plan

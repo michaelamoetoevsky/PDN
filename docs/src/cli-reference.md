@@ -34,41 +34,39 @@ podnext install <IMAGE_REF> [OPTIONS]
 - `IMAGE_REF` - OCI image reference (e.g., `ubuntu:22.04`, `docker.io/library/alpine:latest`)
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--name <NAME>` | `-n` | Custom container name |
-| `--force` | `-f` | Force reinstall if container exists |
+| Option | Description |
+|--------|-------------|
+| `-n, --name <NAME>` | Custom container name |
+| `-f, --force` | Force reinstall if container exists |
 
 **Examples:**
 ```bash
 podnext install ubuntu:22.04
 podnext install alpine:latest --name my-alpine
-podnext install debian:13 --force
+podnext install docker.io/library/debian:bookworm --force
 ```
 
 ### `podnext list`
 
-List created containers.
+List created containers (`ls` is accepted as an alias).
 
 ```bash
 podnext list [OPTIONS]
+podnext ls [OPTIONS]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--all` | `-a` | Show all containers (including stopped; default: true) |
-| `--no-all` | | Hide stopped containers |
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
+| Option | Description |
+|--------|-------------|
+| `-a, --all` | Show all containers (including stopped, default: true) |
+| `--no-all` | Hide stopped containers |
+| `--format <FORMAT>` | Output format: table, json, yaml, text |
 
 **Output:**
 ```
-+---------+--------+---------+---------+---------+------------------+
-| NAME    | DISTRO | VERSION | ARCH    | STATUS  | CREATED          |
-+---------+--------+---------+---------+---------+------------------+
-| ubuntu  | ubuntu | 22.04   | aarch64 | Stopped | 2024-01-15 10:30 |
-| alpine  | alpine | 3.19    | aarch64 | Running | 2024-01-15 11:00 |
-+---------+--------+---------+---------+---------+------------------+
+NAME       IMAGE              STATUS      CREATED
+ubuntu     ubuntu:22.04       stopped     2024-01-15 10:30:00
+alpine     alpine:latest      running     2024-01-15 11:00:00
 ```
 
 ### `podnext login`
@@ -80,10 +78,10 @@ podnext login <CONTAINER> [OPTIONS] [-- <SHELL_ARGS>...]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--user <USER>` | `-u` | User to run as (default: root) |
-| `--isolated` | | Run in isolated mode (do not mount host storage or Termux home directory) |
+| Option | Description |
+|--------|-------------|
+| `-u, --user <USER>` | User to run as |
+| `--isolated` | Run in isolated mode (do not mount host storage or Termux home directory) |
 
 **Examples:**
 ```bash
@@ -102,25 +100,22 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--detach` | `-d` | Run in background *(experimental/stub: flag accepted but currently runs in foreground)* |
-| `--rm` | | Automatically remove container when it exits |
-| `--name <NAME>` | | Assign a name to the container |
-| `--network <NETWORK>` | | Connect container to a network |
-| `--volume <HOST:GUEST[:ro]>` | | Bind mount a volume (repeatable) |
-| `--publish <HOST:CONTAINER>` | `-p` | Publish container port to host (repeatable) |
-| `--entrypoint <CMD>` | | Overwrite default entrypoint of the image |
-| `--tty` | `-t` | Allocate a pseudo-TTY |
-| `--interactive` | `-i` | Keep STDIN open even if not attached |
-| `--user <USER>` | `-u` | User to run as (`<name|uid>[:<group|gid>]`) |
-| `--workdir <DIR>` | | Working directory inside the container |
-| `--isolated` | | Run in isolated mode (do not mount host storage or Termux home directory) |
+| Option | Description |
+|--------|-------------|
+| `--name <NAME>` | Assign a name to the container |
+| `--isolated` | Run in isolated mode (do not mount host storage or Termux home directory) |
+| `-d, --detach` | Run in background (note: currently runs in foreground with warning) |
+| `--rm` | Remove container after exit |
+| `-v, --volume <HOST:GUEST>` | Mount a volume into container |
+| `-e, --env <VAR=VALUE>` | Set environment variable (repeatable) |
+| `-w, --workdir <DIR>` | Working directory inside container |
+| `--network <NETWORK>` | Connect container to a network |
 
 **Examples:**
 ```bash
 podnext run ubuntu -- apt update
-podnext run ubuntu -v /sdcard:/mnt/sdcard -- ls -la /mnt/sdcard
+podnext run ubuntu -e "DEBIAN_FRONTEND=noninteractive" -- apt install -y curl
+podnext run ubuntu -v /sdcard:/mnt/sdcard -- ls /mnt/sdcard
 podnext run ubuntu --isolated -- echo "isolated run"
 ```
 
@@ -133,52 +128,48 @@ podnext ps [OPTIONS]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
+| Option | Description |
+|--------|-------------|
+| `--all` | Show all sessions |
+| `--format <FORMAT>` | Output format: table, json, yaml |
 
 ### `podnext sessions`
 
-List active sessions (detailed format).
+List active sessions (better formatted).
 
 ```bash
 podnext sessions [OPTIONS]
 ```
 
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
-
 ### `podnext attach`
 
-Attach to a container session (creates new session).
+Attach to a container session.
 
 ```bash
-podnext attach <CONTAINER> [OPTIONS] [-- <COMMAND>...]
+podnext attach <SESSION_ID> [OPTIONS]
 ```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--user <USER>` | `-u` | User to run as |
 
 ### `podnext kill`
 
-Stop container sessions.
+Stop container.
 
 ```bash
-podnext kill <CONTAINER>
+podnext kill <CONTAINER> [OPTIONS]
 ```
 
-Sends `SIGQUIT` followed by process teardown to running container processes. Use `all` or `--all` as `<CONTAINER>` to stop all active sessions across all containers.
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--signal <SIGNAL>` | Signal to send (default: SIGTERM) |
+| `--timeout <SECONDS>` | Wait timeout before SIGKILL (default: 10) |
 
 ### `podnext remove`
 
-Delete a container.
+Delete a container (`rm` is accepted as an alias).
 
 ```bash
 podnext remove <CONTAINER> [OPTIONS]
+podnext rm <CONTAINER> [OPTIONS]
 ```
 
 **Options:**
@@ -261,23 +252,23 @@ podnext reset debian
 
 ### `podnext search`
 
-Search images on Docker Hub/OCI registries. When query is omitted, popular verified distributions are listed.
+Search images on Docker Hub/OCI registries.
 
 ```bash
-podnext search [QUERY] [OPTIONS]
+podnext search <QUERY> [OPTIONS]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--limit <N>` | `-l` | Maximum results (default: 10) |
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
+| Option | Description |
+|--------|-------------|
+| `-l, --limit <N>` | Maximum results (default: 10) |
+| `-f, --format <FORMAT>` | Output format: table, json, yaml, text |
 
 **Examples:**
 ```bash
-podnext search
-podnext search debian
-podnext search ubuntu --limit 5
+podnext search ubuntu
+podnext search alpine --limit 5
+podnext search debian --format json
 ```
 
 ### `podnext image ls`
@@ -289,12 +280,6 @@ podnext image ls [OPTIONS]
 podnext image list [OPTIONS]
 ```
 
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--all` | `-a` | Show all images (including intermediate) |
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
-
 Lists what `~/.podnext/images` holds. An image produced by `podnext build local` lives in the
 container store instead (see [`podnext build local`](#podnext-build-local)) and does not appear here;
 `podnext image inspect <tag>` does read it.
@@ -304,21 +289,13 @@ container store instead (see [`podnext build local`](#podnext-build-local)) and 
 Build an image from a Dockerfile into the local store, without a registry.
 
 ```bash
-podnext build local [OPTIONS] [PATH]
+podnext build local [TAG] [OPTIONS]
 podnext build local -t myapp:latest ./context
-podnext build local -f ./context/Dockerfile.myapp ./context
+podnext build local --file ./context/Dockerfile.myapp ./context
 ```
 
 The build context must exist and must contain a Dockerfile; a missing context is an error that
 writes nothing, and success is reported only after the image is on disk.
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--tag <NAME:TAG>` | `-t` | Name and optional tag in `name:tag` format |
-| `--file <PATH>` | `-f` | Path to Dockerfile (defaults to `<PATH>/Dockerfile`) |
-
-*Note: Multi-arch remote build subcommands (`podnext build submit`, `status`, `cancel`, `list`, `artifacts`, `logs`) are experimental/stubs.*
 
 **Where the image goes.** A built image *is* a container directory,
 `~/.podnext/containers/<store-key>/rootfs`. The store key is derived from the tag by dropping
@@ -372,37 +349,27 @@ with a successful exit status.
 
 ### `podnext image rm`
 
-Remove local image(s).
+Remove local image (`remove` is accepted as an alias).
 
 ```bash
-podnext image rm <IMAGE>... [OPTIONS]
+podnext image rm <IMAGE> [OPTIONS]
+podnext image remove <IMAGE> [OPTIONS]
 ```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--force` | `-f` | Force removal without confirmation |
 
 ### `podnext image pull`
 
-Pull image from registry. *(experimental/stub: image pull stub; does not persist image to store)*
+Pull image from registry.
 
 ```bash
 podnext image pull <IMAGE> [OPTIONS]
 ```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--platform <PLATFORM>` | Platform (e.g., `linux/arm64`) |
-| `--all-tags` | Download all tagged images |
 
 ### `podnext image push`
 
 Push image to registry.
 
 ```bash
-podnext image push <IMAGE>
+podnext image push <IMAGE> [OPTIONS]
 ```
 
 ## Network Commands
@@ -416,31 +383,29 @@ podnext network create <NAME> [OPTIONS]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--driver <DRIVER>` | `-d` | Network driver (default: `bridge`) |
-| `--subnet <CIDR>` | `-s` | Subnet for bridge network |
-| `--gateway <IP>` | `-g` | Gateway IP |
+| Option | Description |
+|--------|-------------|
+| `--driver <DRIVER>` | Network driver: bridge, host, none, macvlan |
+| `--subnet <CIDR>` | Subnet for bridge network |
+| `--gateway <IP>` | Gateway IP |
+| `--ip-range <CIDR>` | IP range for allocation |
 
 ### `podnext network ls`
 
-List networks.
+List networks (`list` is accepted as an alias).
 
 ```bash
 podnext network ls [OPTIONS]
+podnext network list [OPTIONS]
 ```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
 
 ### `podnext network rm`
 
-Remove network(s).
+Remove network (`remove` is accepted as an alias).
 
 ```bash
-podnext network rm <NAME>...
+podnext network rm <NAME> [OPTIONS]
+podnext network remove <NAME> [OPTIONS]
 ```
 
 ### `podnext network inspect`
@@ -448,102 +413,51 @@ podnext network rm <NAME>...
 Inspect network details.
 
 ```bash
-podnext network inspect <NAME>... [OPTIONS]
-```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `json`, `table`, `yaml`, `text` (default: `json`) |
-
-### `podnext network connect`
-
-Connect a container to a network.
-
-```bash
-podnext network connect <NETWORK> <CONTAINER> [OPTIONS]
-```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--ip <IP>` | `-i` | Container IP address |
-
-### `podnext network disconnect`
-
-Disconnect a container from a network.
-
-```bash
-podnext network disconnect <NETWORK> <CONTAINER>
+podnext network inspect <NAME> [OPTIONS]
 ```
 
 ## Volume Commands
 
 ### `podnext volume create`
 
-Create a persistent volume.
+Create volume.
 
 ```bash
 podnext volume create <NAME> [OPTIONS]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--driver <DRIVER>` | `-d` | Volume driver (default: `local`) |
-| `--opts <KEY=VALUE>` | `-o` | Driver options (repeatable) |
+| Option | Description |
+|--------|-------------|
+| `--storage <POOL>` | Storage pool to use |
+| `--size <SIZE>` | Volume size (e.g., 10G) |
+| `--driver <DRIVER>` | Volume driver |
 
 ### `podnext volume ls`
 
-List volumes.
+List volumes (`list` is accepted as an alias).
 
 ```bash
 podnext volume ls [OPTIONS]
+podnext volume list [OPTIONS]
 ```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
 
 ### `podnext volume rm`
 
-Remove one or more volumes.
+Remove volume (`remove` is accepted as an alias).
 
 ```bash
-podnext volume rm <NAME>... [OPTIONS]
+podnext volume rm <NAME> [OPTIONS]
+podnext volume remove <NAME> [OPTIONS]
 ```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--force` | `-f` | Force removal without confirmation |
 
 ### `podnext volume inspect`
 
 Inspect volume details.
 
 ```bash
-podnext volume inspect <NAME>... [OPTIONS]
+podnext volume inspect <NAME> [OPTIONS]
 ```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `json`, `table`, `yaml`, `text` (default: `json`) |
-
-### `podnext volume prune`
-
-Remove all unused volumes.
-
-```bash
-podnext volume prune [OPTIONS]
-```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--force` | `-f` | Force prune without confirmation |
 
 ## System Commands
 
@@ -555,18 +469,31 @@ Show system information.
 podnext info [OPTIONS]
 ```
 
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `table`, `json`, `yaml`, `text` (default: `table`) |
-
 **Output:**
 ```
-+---------+----------------+--------------+-------------------+
-| VERSION | PLATFORM       | RUST VERSION | BACKEND           |
-+---------+----------------+--------------+-------------------+
-| 0.1.8   | Termux/Android | 1.80+        | proot-distro-core |
-+---------+----------------+--------------+-------------------+
+PDN Version: 1.0.0
+Host OS: Linux 6.1.0 (aarch64)
+Termux: 0.118.0
+PRoot: 5.4.0
+proot-distro: N/A (native)
+
+Containers: 3
+Images: 5
+Networks: 2
+Volumes: 4
+
+Resources:
+  CPU: 8 cores
+  Memory: 8.0 GB
+  Disk: 128 GB (45 GB free)
+
+Features:
+  GPU: ✓ (Adreno 730)
+  CRIU: ✓
+  Seccomp: ✓
+  AppArmor: ✗
+  SELinux: ✗
+  Cgroups v2: ✓
 ```
 
 ### `podnext dbus`
@@ -592,9 +519,6 @@ Declarative application lifecycle management and reconciliation.
 # Sync applications and volumes from declarative YAML manifests
 podnext gitops sync
 
-# Force sync
-podnext gitops sync --force
-
 # Show GitOps synchronization status
 podnext gitops status
 
@@ -614,9 +538,10 @@ podnext version [OPTIONS]
 ```
 
 **Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--format <FORMAT>` | `-f` | Output format: `text`, `table`, `json`, `yaml` (default: `text`) |
+| Option | Description |
+|--------|-------------|
+| `--short` | Short version only |
+| `--json` | JSON output |
 
 ## Direct Execution (proot-compatible)
 
@@ -641,29 +566,35 @@ podnext -r /path/to/rootfs -q qemu-aarch64 -- /bin/bash
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error / execution failure |
-| 2 | Invalid command-line arguments / syntax |
-
-*Note: For `podnext run` and `podnext login`, child process exit codes (0–127, or 128+SIG for signals) are forwarded directly.*
+| 1 | General error |
+| 2 | Invalid arguments |
+| 3 | Container not found |
+| 4 | Image not found |
+| 5 | Network error |
+| 6 | Storage error |
+| 7 | Permission denied |
+| 8 | Resource limit exceeded |
+| 9 | Security policy violation |
+| 10 | Gateway error |
+| 11 | Runtime error |
+| 12 | Internal error |
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PN_DEBUG` | Enable low-level trace logging across crates (`PN_DEBUG=1`) | Unset (disabled) |
-| `PN_NEXT_DEBUG` | Enable debug logging in `podnext` CLI frontend | Unset (disabled) |
-| `PN_GATEWAY_CONFIG` | Path to gateway configuration file for `podnext config validate` | Unset |
-| `PN_NEXT_SERVICES_DIR` | Directory containing service definition TOML files | `~/.config/pn-next/services` |
-| `PN_NEXT_RUNTIME_DIR` | Runtime PID and socket directory | `~/.local/run/pn-next` |
-| `PN_NEXT_LOG_DIR` | Directory for service execution logs | `~/.local/log/pn-next` |
-| `PN_SHM_DIR` | Custom directory override for POSIX shared memory emulation | Container shm / host shm |
-| `PN_TEST_ROOT` | Root directory override used in tests and test harnesses | Unset |
+| `PN_CONFIG_DIR` | Config directory | `~/.config/pn-next` |
+| `PN_DATA_DIR` | Data directory | `~/.local/share/pn-next` |
+| `PN_CACHE_DIR` | Cache directory | `~/.cache/pn-next` |
+| `PN_LOG_LEVEL` | Log level (trace/debug/info/warn/error) | `info` |
+| `PN_GATEWAY_ADDR` | Gateway address | `unix:///run/pn-gateway.sock` |
+| `PN_RUNTIME` | Runtime to use | `auto` |
+| `PN_SECURITY_PROFILE` | Default security profile | `default` |
+| `PN_NO_COLOR` | Disable colored output | `false` |
 
 ## Configuration Files
 
-Container instances and metadata are maintained under `~/.podnext/containers/<name>/` (`config.json`, `metadata.json`, `rootfs/`). Managed service configurations are loaded from `~/.config/pn-next/services/<name>.toml`.
-
-### Container Config Format (`~/.podnext/containers/<name>/config.json`)
+### Container Config (`~/.config/pn-next/containers/<name>.toml`)
 
 ```toml
 [container]

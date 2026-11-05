@@ -143,33 +143,24 @@ podnext network create --plugin my-network-plugin mynet
 
 ## Checkpoint/Restore (CRIU)
 
-### Overview
-
-CRIU (Checkpoint/Restore In Userspace) allows freezing a running container and restoring it later.
-
 ### Requirements
 
-- Linux kernel 5.10+ with `CONFIG_CHECKPOINT_RESTORE=y`
-- CRIU 3.15+ installed
-- Container running with `--security-profile unconfined` or appropriate seccomp
+- Storage write access for container backup directory
+- Container in stopped state for clean snapshot consistency
 
 ### Basic Usage
 
+Container state backups and snapshots in PDN are managed via the backup commands:
+
 ```bash
-# Start container
-podnext run ubuntu --detach --name myapp -- nginx -g "daemon off;"
+# Create container backup snapshot
+podnext backup create myapp
 
-# Checkpoint container
-podnext checkpoint myapp --name checkpoint-1
+# List snapshots
+podnext backup list
 
-# List checkpoints
-podnext checkpoint list myapp
-
-# Restore from checkpoint
-podnext restore checkpoint-1 --name myapp-restored
-
-# Restore to different container
-podnext restore checkpoint-1 --name myapp-copy --config new-config.toml
+# Restore container from backup
+podnext backup restore <backup-id> --target myapp-restored
 ```
 
 ### Configuration
@@ -231,13 +222,8 @@ let container = runtime.restore(RestoreOptions {
 ### Device Detection
 
 ```bash
-# List GPU devices
-podnext info --gpu
-
-# Output:
-# GPU Devices:
-#   /dev/dri/renderD128 - Adreno 730 (Vulkan, OpenGL, OpenCL)
-#   /dev/dri/card0 - Adreno 730 (Display)
+# Check system information
+podnext info
 ```
 
 ### Configuration
@@ -269,17 +255,14 @@ egl_platforms = ["wayland", "x11", "surfaceless"]
 ### Usage
 
 ```bash
-# Run with GPU
-podnext run ubuntu --gpu -- vulkaninfo
+# Run with graphics / display access via device mounts
+podnext run ubuntu -v /dev/dri:/dev/dri -- vulkaninfo
 
 # Run OpenGL app
-podnext run ubuntu --gpu -- glxinfo | grep "OpenGL renderer"
+podnext run ubuntu -v /dev/dri:/dev/dri -- glxinfo | grep "OpenGL renderer"
 
 # Run Vulkan app
-podnext run ubuntu --gpu -- vkcube
-
-# Run with specific GPU
-podnext run ubuntu --gpu --device /dev/dri/renderD128 -- vulkaninfo
+podnext run ubuntu -v /dev/dri:/dev/dri -- vkcube
 ```
 
 ### Android GPU Support
@@ -320,12 +303,8 @@ CMD ["vulkaninfo"]
 PDN supports Docker manifest lists (multi-arch images):
 
 ```bash
-# Pull multi-arch image (auto-selects correct arch)
+# Pull multi-arch image (auto-selects host architecture)
 podnext install docker.io/library/ubuntu:22.04
-
-# Force specific architecture
-podnext install docker.io/library/ubuntu:22.04 --platform linux/arm64
-podnext install docker.io/library/ubuntu:22.04 --platform linux/amd64
 ```
 
 ### Building Multi-arch Images
@@ -336,8 +315,8 @@ docker buildx create --use --name pdn-builder
 docker buildx build --platform linux/arm64,linux/amd64 \
   -t myorg/myimage:tag --push .
 
-# PDN can build (planned)
-podnext build --platform linux/arm64,linux/amd64 -t myorg/myimage:tag .
+# Local OCI build in PDN
+podnext build local -t myorg/myimage:tag .
 ```
 
 ### Platform-Specific Configuration
