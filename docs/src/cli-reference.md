@@ -1,5 +1,56 @@
 # CLI Reference
 
+## Command stability
+
+Two labels, one measurable rule: **`[stable]` means at least one automated test in this
+repository exercises the command; `[experimental]` means no such test exists yet, or the
+command contains a path that refuses.** `[experimental]` is not a claim that the command is
+broken — `install`, `login` and `run` are the most-used paths in the project and sit here
+because the suite does not drive them yet. Re-derive this table with `podnext --help`;
+`crates/podnext/tests/cli_reference_contract.rs` fails when the two disagree.
+
+| Command | Label | Why |
+|---|---|---|
+| `podnext install` | `[experimental]` | no automated test covers it yet |
+| `podnext list` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
+| `podnext login` | `[experimental]` | no automated test covers it yet |
+| `podnext run` | `[experimental]` | no automated test covers it yet |
+| `podnext ps` | `[experimental]` | no automated test covers it yet |
+| `podnext kill` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
+| `podnext remove` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
+| `podnext rename` | `[experimental]` | no automated test covers it yet |
+| `podnext copy` | `[experimental]` | no automated test covers it yet |
+| `podnext reset` | `[experimental]` | no automated test covers it yet |
+| `podnext sync` | `[experimental]` | no automated test covers it yet |
+| `podnext search` | `[experimental]` | no automated test covers it yet |
+| `podnext image` | `[experimental]` | `pull` and `push` refuse: there is no OCI image store before v0.2.0 |
+| `podnext sessions` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
+| `podnext attach` | `[experimental]` | no automated test covers it yet |
+| `podnext info` | `[experimental]` | no automated test covers it yet |
+| `podnext version` | `[experimental]` | no automated test covers it yet |
+| `podnext service` | `[experimental]` | `logs` refuses: the supervisor keeps no per-service log |
+| `podnext daemon` | `[experimental]` | no automated test covers it yet |
+| `podnext watchdog` | `[experimental]` | `events` refuses: the watchdog keeps no event stream |
+| `podnext quota` | `[experimental]` | no automated test covers it yet |
+| `podnext log` | `[experimental]` | no automated test covers it yet |
+| `podnext dbus` | `[experimental]` | `monitor` refuses: there is no signal stream |
+| `podnext socket` | `[experimental]` | no automated test covers it yet |
+| `podnext boot` | `[experimental]` | no automated test covers it yet |
+| `podnext wakelock` | `[experimental]` | no automated test covers it yet |
+| `podnext policy` | `[experimental]` | no automated test covers it yet |
+| `podnext backup` | `[experimental]` | no automated test covers it yet |
+| `podnext build` | `[experimental]` | contains unimplemented subcommands (submit/status/cancel/list/artifacts/logs) |
+| `podnext config` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
+| `podnext gitops` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
+| `podnext dashboard` | `[experimental]` | no automated test covers it yet |
+| `podnext network` | `[experimental]` | no automated test covers it yet |
+| `podnext volume` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
+| `podnext docker` | `[experimental]` | requires the uml4termux kernel runtime and refuses under PRoot |
+| `podnext compose` | `[experimental]` | no automated test covers it yet |
+| `podnext completion` | `[experimental]` | no automated test covers it yet |
+
+`help`, which clap adds itself, carries no label.
+
 ## Global Options
 
 ```bash

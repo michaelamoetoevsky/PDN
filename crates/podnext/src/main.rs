@@ -263,7 +263,7 @@ enum Commands {
     // ------------------------------------------------------------------------
     // TIER 1: CORE DISTRO COMMANDS (Simple & Daily Usage - proot-distro parity)
     // ------------------------------------------------------------------------
-    /// [Core] Install distribution from OCI image
+    /// [experimental] [Core] Install distribution from OCI image
     #[command(
         long_about = "Download and unpack an OCI/Docker container image into a clean, isolated rootfs.\n\n\
         EXAMPLES:\n  \
@@ -282,7 +282,7 @@ enum Commands {
         force: bool,
     },
 
-    /// [Core] List created containers
+    /// [stable] [Core] List created containers
     #[command(
         visible_alias = "ls",
         long_about = "List all installed distributions and containers with their status, real Linux OS, and architecture.\n\n\
@@ -303,7 +303,7 @@ enum Commands {
         format: OutputFormat,
     },
 
-    /// [Core] Start interactive shell inside a container
+    /// [experimental] [Core] Start interactive shell inside a container
     #[command(
         long_about = "Start an interactive root/user shell inside an installed container with isolated environment.\n\n\
         EXAMPLES:\n  \
@@ -325,7 +325,7 @@ enum Commands {
         command: Vec<String>,
     },
 
-    /// [Core] Run command in container
+    /// [experimental] [Core] Run command in container
     #[command(
         long_about = "Run a command inside an installed container directly from the host without opening an interactive shell.\n\n\
         EXAMPLES:\n  \
@@ -386,20 +386,20 @@ enum Commands {
         isolated: bool,
     },
 
-    /// [Container] List active sessions
+    /// [experimental] [Container] List active sessions
     Ps {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
-    /// [Container] Stop container
+    /// [stable] [Container] Stop container
     Kill {
         /// Container name
         container: String,
     },
 
-    /// [Core] Delete a container
+    /// [stable] [Core] Delete a container
     #[command(
         visible_alias = "rm",
         long_about = "Permanently remove an installed container and its rootfs from disk.\n\n\
@@ -418,7 +418,7 @@ enum Commands {
         yes: bool,
     },
 
-    /// [Core] Rename an installed container
+    /// [experimental] [Core] Rename an installed container
     #[command(
         long_about = "Safely rename an existing container in its directory structure and metadata.\n\n\
         EXAMPLES:\n  \
@@ -432,7 +432,7 @@ enum Commands {
         newname: String,
     },
 
-    /// [Core] Copy files or directories between host and containers
+    /// [experimental] [Core] Copy files or directories between host and containers
     ///
     /// Paths are `[CONTAINER:]PATH`; a path without a container prefix is the
     /// host's.
@@ -456,7 +456,7 @@ enum Commands {
         move_: bool,
     },
 
-    /// [Core] Reset a container to a clean install of the image it came from
+    /// [experimental] [Core] Reset a container to a clean install of the image it came from
     ///
     /// Deletes the container directory and reinstalls it. All data inside the
     /// container is lost, as with proot-distro's `reset`.
@@ -470,7 +470,7 @@ enum Commands {
         name: String,
     },
 
-    /// [Core] Mirror files between host and containers (content hashing sha256)
+    /// [experimental] [Core] Mirror files between host and containers (content hashing sha256)
     ///
     /// Like `copy`, but only the differences move: a file is transferred when its
     /// content differs, so a second run is a no-op. Paths are `[CONTAINER:]PATH`.
@@ -490,7 +490,7 @@ enum Commands {
         delete: bool,
     },
 
-    /// [Core] Search images on Docker Hub
+    /// [experimental] [Core] Search images on Docker Hub
     #[command(
         long_about = "Search for container images on Docker Hub, or list verified official distributions when run without arguments.\n\n\
         EXAMPLES:\n  \
@@ -511,18 +511,18 @@ enum Commands {
         format: OutputFormat,
     },
 
-    /// [Container] Manage OCI images and local cache
+    /// [experimental] [Container] Manage OCI images and local cache
     #[command(subcommand)]
     Image(ImageCommands),
 
-    /// [Container] List active sessions (detailed)
+    /// [stable] [Container] List active sessions (detailed)
     Sessions {
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
 
-    /// [Container] Attach to a container session (creates new session)
+    /// [experimental] [Container] Attach to a container session (creates new session)
     Attach {
         /// Container name
         container: String,
@@ -533,7 +533,7 @@ enum Commands {
         command: Vec<String>,
     },
 
-    /// [Core] Show system information
+    /// [experimental] [Core] Show system information
     #[command(name = "info")]
     #[command(
         long_about = "Display host kernel, system architecture, CPU cores, memory limits, and PDN capabilities.\n\n\
@@ -547,7 +547,7 @@ enum Commands {
         format: OutputFormat,
     },
 
-    /// [Core] Show version
+    /// [experimental] [Core] Show version
     #[command(name = "version")]
     #[command(long_about = "Display version and build information for PDN.\n\n\
         EXAMPLES:\n  \
@@ -562,54 +562,54 @@ enum Commands {
     // ------------------------------------------------------------------------
     // TIER 2 & 3: ADVANCED SYSTEM SERVICES & ORCHESTRATION
     // ------------------------------------------------------------------------
-    /// [System] Service management commands (supervision & lifecycle)
+    /// [experimental] [System] Service management commands (supervision & lifecycle)
     #[command(subcommand)]
     Service(ServiceCommands),
 
-    /// [System] Daemon management (background supervisor process)
+    /// [experimental] [System] Daemon management (background supervisor process)
     #[command(subcommand)]
     Daemon(DaemonCommands),
 
-    /// [System] Watchdog management & circuit breaker
+    /// [experimental] [System] Watchdog management & circuit breaker
     #[command(subcommand)]
     Watchdog(WatchdogCommands),
 
-    /// [System] Resource quota management (memory/cpu cgroups)
+    /// [experimental] [System] Resource quota management (memory/cpu cgroups)
     #[command(subcommand)]
     Quota(QuotaCommands),
 
-    /// [System] Structured logging & real-time streaming
+    /// [experimental] [System] Structured logging & real-time streaming
     #[command(subcommand, visible_alias = "logs")]
     Log(LogCommands),
 
-    /// [System] D-Bus IPC & service brokering
+    /// [experimental] [System] D-Bus IPC & service brokering
     #[command(subcommand)]
     Dbus(DbusCommands),
 
-    /// [System] Socket activation (listen on host, wake container on demand)
+    /// [experimental] [System] Socket activation (listen on host, wake container on demand)
     #[command(subcommand)]
     Socket(SocketCommands),
 
-    /// [System] Termux:Boot integration for background autostart
+    /// [experimental] [System] Termux:Boot integration for background autostart
     #[command(subcommand)]
     Boot(BootCommands),
 
-    /// [System] Wake lock management (prevent Android sleep)
+    /// [experimental] [System] Wake lock management (prevent Android sleep)
     #[command(subcommand)]
     Wakelock(WakelockCommands),
 
-    /// [System] Policy engine (RBAC & capability limits)
+    /// [experimental] [System] Policy engine (RBAC & capability limits)
     #[command(subcommand)]
     Policy(PolicyCommands),
 
-    /// [Storage] Backup/Restore management (container snapshots)
+    /// [experimental] [Storage] Backup/Restore management (container snapshots)
     #[command(subcommand)]
     Backup(BackupCommands),
 
-    /// [Advanced] Multi-arch build service
+    /// [experimental] [Advanced] Multi-arch build service
     #[command(subcommand)]
     Build(BuildCommands),
-    /// Check a gateway configuration file before deploying it
+    /// [stable] Check a gateway configuration file before deploying it
     #[command(
         long_about = "Check a pn-gateway configuration file and print what it resolves to.\n\n\
         The file is read with the same loader the gateway uses, so an unknown key, a malformed \
@@ -621,23 +621,23 @@ enum Commands {
     #[command(subcommand)]
     Config(ConfigCommands),
 
-    /// [System] GitOps integration (declarative YAML sync & reconciliation)
+    /// [stable] [System] GitOps integration (declarative YAML sync & reconciliation)
     #[command(subcommand)]
     Gitops(GitopsCommands),
 
-    /// [System] Web dashboard management
+    /// [experimental] [System] Web dashboard management
     #[command(subcommand)]
     Dashboard(DashboardCommands),
 
-    /// [Storage] Network management (isolated bridge networks)
+    /// [experimental] [Storage] Network management (isolated bridge networks)
     #[command(subcommand)]
     Network(NetworkCommands),
 
-    /// [Storage] Volume management (persistent data volumes)
+    /// [stable] [Storage] Volume management (persistent data volumes)
     #[command(subcommand)]
     Volume(VolumeCommands),
 
-    /// [Advanced] Run Docker CLI commands transparently via kernel-capable runtime (UML)
+    /// [experimental] [Advanced] Run Docker CLI commands transparently via kernel-capable runtime (UML)
     #[command(
         long_about = "Execute Docker CLI commands transparently through User-Mode Linux (UML) runtime.\n\n\
         EXAMPLES:\n  \
@@ -655,7 +655,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// [Interop] Export PDN service configuration to a Docker Compose file
+    /// [experimental] [Interop] Export PDN service configuration to a Docker Compose file
     #[command(
         long_about = "Export one or more PDN service definition files to a single Docker Compose document.\n\n\
         EXAMPLES:\n  \
@@ -677,7 +677,7 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// [Core] Generate shell completions
+    /// [experimental] [Core] Generate shell completions
     Completion {
         /// Shell to generate completions for
         #[arg(value_enum)]
@@ -1292,7 +1292,7 @@ enum ConfigCommands {
 #[derive(Subcommand, Debug)]
 #[command(rename_all = "lower")]
 enum BuildCommands {
-    /// Build an OCI container image from a Dockerfile context
+    /// [stable] Build an OCI container image from a Dockerfile context
     #[command(
         long_about = "Build an OCI container image from a Dockerfile context directory.\n\n\
         EXAMPLES:\n  \
@@ -1312,7 +1312,7 @@ enum BuildCommands {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// [stub] Submit a build (not yet implemented)
+    /// [experimental] Submit a build (refuses: no build service)
     Submit {
         /// Build specification file
         #[arg(short, long)]
@@ -1321,7 +1321,7 @@ enum BuildCommands {
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    /// [stub] Show build status (not yet implemented)
+    /// [experimental] Show build status (refuses: no build service)
     Status {
         /// Build ID
         build_id: String,
@@ -1329,12 +1329,12 @@ enum BuildCommands {
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    /// [stub] Cancel a build (not yet implemented)
+    /// [experimental] Cancel a build (refuses: no build service)
     Cancel {
         /// Build ID
         build_id: String,
     },
-    /// [stub] List builds (not yet implemented)
+    /// [experimental] List builds (refuses: no build service)
     List {
         /// Filter by status
         #[arg(long)]
@@ -1343,12 +1343,12 @@ enum BuildCommands {
         #[arg(short, long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    /// [stub] Show build artifacts (not yet implemented)
+    /// [experimental] Show build artifacts (refuses: no build service)
     Artifacts {
         /// Build ID
         build_id: String,
     },
-    /// [stub] Show build logs (not yet implemented)
+    /// [experimental] Show build logs (refuses: no build service)
     Logs {
         /// Build ID
         build_id: String,
@@ -2200,7 +2200,14 @@ async fn cmd_run(
     isolated: bool,
 ) -> Result<()> {
     if detach {
-        eprintln!("Warning: --detach/-d not fully implemented yet, running in foreground");
+        // Refusing beats the previous behaviour, which printed a warning and ran in the
+        // foreground anyway: a caller that asked for background got a blocking process and
+        // no way to tell from the exit status.
+        anyhow::bail!(
+            "--detach is not implemented: a detached session cannot be re-entered yet, so the \
+             command would run in the foreground while reporting otherwise. Run it in the \
+             foreground, or run the command under `podnext service` supervision."
+        );
     }
 
     run_container_native(&container, command, isolated).await
@@ -2655,7 +2662,7 @@ async fn cmd_image_pull(image: String, platform: Option<String>, all_tags: bool)
     // layer extraction to ~/.podnext/images/<name>, and metadata persistence.
     // Until then: use `podnext install <image>` instead, which does pull + extract to a runnable container.
     anyhow::bail!(
-        "Error: image pull is not yet implemented.\n\
+        "Error: image pull is unavailable in this version.\n\
          \n\
          This command was a stub that reported success without downloading anything.\n\
          \n\

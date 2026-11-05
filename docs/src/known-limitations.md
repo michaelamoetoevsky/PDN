@@ -52,8 +52,14 @@ the failure is invisible in the output. A size that cannot be measured should sa
   selection: a volume is a directory under `$HOME/.podnext/volumes`.
 - **`network create`** takes driver, subnet and gateway. Carving an IP range inside the subnet is not
   implemented.
+- **`run --detach`** refuses: a detached session cannot be re-entered yet, so the command would
+  otherwise run in the foreground while reporting that it detached. Run in the foreground, or under
+  `podnext service` supervision.
 - **`image pull` / `image push`** refuse with an explanation instead of reporting a success they did
   not achieve: there is no OCI blob store yet, and `podnext install <image>` is the working path.
+- **`build submit|status|cancel|list|artifacts|logs`**, **`watchdog events`**, **`service logs`** and
+  **`dbus monitor`** refuse and name the reason, with a working alternative where one exists. They
+  used to print a not-implemented note on stdout and exit 0, which a script cannot tell from success.
 - **Temporary files live in `$PREFIX/tmp`.** `/tmp` exists on Android but is not writable by an app
   uid, and `std::env::temp_dir()` falls back to it when `TMPDIR` is unset.
 
@@ -61,7 +67,7 @@ the failure is invisible in the output. A size that cannot be measured should sa
 
 These are claims the project cannot currently make, listed so that the absence is visible:
 
-- `login --detach` followed by `attach` returning to the same shell.
+- `login --detach` (the command refuses today; the round trip is unmeasured).
 - Terminal fidelity in the guest: `SIGWINCH` handling, `PS1`, `TERM`/`COLORTERM`, UTF-8 locale.
 - The `podnext run … -- <cmd>` quoting table.
 - A soak run proving no guest processes survive a forced stop.

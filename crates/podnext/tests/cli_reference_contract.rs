@@ -169,6 +169,128 @@ fn no_phantom_exit_codes_or_environment_variables_in_the_reference() {
     }
 }
 
+/// (command, label) pairs the binary itself prints in its `Commands:` listing.
+fn help_stability_labels() -> Vec<(String, String)> {
+    let (ok, text) = help(&[]);
+    assert!(ok, "podnext --help must succeed");
+    let mut out = Vec::new();
+    let mut in_commands = false;
+    for line in text.lines() {
+        if line.starts_with("Commands:") {
+            in_commands = true;
+            continue;
+        }
+        if in_commands {
+            if !line.trim().is_empty() && !line.starts_with(' ') {
+                break; // left the section
+            }
+            if let Some(c) = stability_label(line) {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// `name [label]` from one Commands-listing line; no regex crate is available to these tests.
+fn stability_label(line: &str) -> Option<(String, String)> {
+    let t = line.trim_start();
+    let (name, rest) = t.split_once(' ')?;
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+        return None;
+    }
+    let rest = rest.trim_start();
+    for label in ["stable", "experimental"] {
+        if rest.starts_with(&format!("[{label}]")) {
+            return Some((name.to_string(), label.to_string()));
+        }
+    }
+    None
+}
+
+/// (command, label) pairs from the "## Command stability" table in the reference.
+fn documented_stability_labels() -> Vec<(String, String)> {
+    let doc = cli_reference();
+    let section = doc
+        .split("## Command stability")
+        .nth(1)
+        .expect("a Command stability section")
+        .split("\n## ")
+        .next()
+        .unwrap();
+    let mut out = Vec::new();
+    for line in section.lines() {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("| `podnext ") else {
+            continue;
+        };
+        let Some((cmd, tail)) = rest.split_once('`') else {
+            continue;
+        };
+        for label in ["stable", "experimental"] {
+            if tail.contains(&format!("`[{label}]`")) {
+                out.push((cmd.to_string(), label.to_string()));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn every_command_carries_a_stability_label_in_help() {
+    let labels = help_stability_labels();
+    assert!(
+        labels.len() >= 30,
+        "expected the Commands listing to be parsed, got {} entries: {labels:?}",
+        labels.len()
+    );
+    let unlabelled: Vec<String> = {
+        let (_, text) = help(&[]);
+        let mut found = Vec::new();
+        let mut in_commands = false;
+        for line in text.lines() {
+            if line.starts_with("Commands:") {
+                in_commands = true;
+                continue;
+            }
+            if in_commands {
+                if !line.trim().is_empty() && !line.starts_with(' ') {
+                    break;
+                }
+                let t = line.trim_start();
+                if let Some((name, _)) = t.split_once(' ') {
+                    if name == "help" {
+                        continue;
+                    }
+                    if !name.is_empty()
+                        && name.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                        && stability_label(line).is_none()
+                    {
+                        found.push(name.to_string());
+                    }
+                }
+            }
+        }
+        found
+    };
+    assert!(
+        unlabelled.is_empty(),
+        "commands without [stable]/[experimental] in --help: {unlabelled:?}"
+    );
+}
+
+#[test]
+fn the_documented_stability_table_matches_the_binary() {
+    let mut from_help = help_stability_labels();
+    let mut from_doc = documented_stability_labels();
+    from_help.sort();
+    from_doc.sort();
+    assert_eq!(
+        from_help, from_doc,
+        "cli-reference.md's Command stability table and `podnext --help` disagree"
+    );
+}
+
 #[test]
 fn every_documented_environment_variable_is_read_by_the_code() {
     let root = repo_root();

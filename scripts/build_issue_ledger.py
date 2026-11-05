@@ -259,9 +259,15 @@ CHECKS: list[dict] = [
          cmd="grep -qF 'known-limitations.md' docs/src/SUMMARY.md", needle=None),
     dict(issue="42", claim="every documented command and option exists in the real CLI",
          cmd="cargo test -p podnext --test cli_reference_contract", needle=None, cargo=True),
+    dict(issue="42", claim="no command reports a not-implemented stub on stdout",
+         cmd="! (grep -rn 'not yet implemented' crates/podnext/src --include=*.rs "
+             "| grep -vE ':[0-9]+:[[:space:]]*//[^/]' | grep -q .)",
+         needle=None),
+    dict(issue="42", claim="a stub must refuse with a reason, not exit 0",
+         cmd="cargo test -p podnext --test stub_refusals", needle=None, cargo=True),
 ]
 
-    # Issues with no honest automated check, and why. Every key is an issue that exists.
+# Issues with no honest automated check, and why. Every key is an issue that exists.
 NO_CHECK_REASON = {
     "1": "OPEN feature request (PowerShell completion) — nothing on the tree to verify.",
     "2": "OPEN documentation task (example service configs) — no code fix to assert.",

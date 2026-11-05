@@ -580,12 +580,13 @@ async fn cmd_service_logs(name: String, _follow: bool, lines: usize) -> Result<(
         let _ = supervisor.get_status(&name).await?;
     }
 
-    println!("Service '{}' logs (last {} lines):", name, lines);
-    println!(
-        "(Log viewing not yet implemented - use 'podnext log query --service {}')",
-        name
-    );
-    Ok(())
+    // A stub that printed a header and a not-implemented note, then returned Ok(()):
+    // exit 0 told a script the log had been read.
+    Err(anyhow::anyhow!(
+        "'service logs' is not implemented: the supervisor does not keep a per-service log, so the \
+         last {lines} lines cannot be read. Use `podnext log query --service {name}` for the log \
+         the supervisor writes, or `podnext log tail --service {name}` to follow it."
+    ))
 }
 
 async fn cmd_service_enable(name: String) -> Result<()> {
@@ -798,11 +799,12 @@ async fn cmd_watchdog_reset(name: String) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_watchdog_events(limit: usize) -> Result<()> {
-    eprintln!("warning: 'watchdog events' is not yet implemented (stub)");
-    println!("Watchdog events (last {}):", limit);
-    println!("(Event streaming not yet implemented)");
-    Ok(())
+async fn cmd_watchdog_events(_limit: usize) -> Result<()> {
+    Err(anyhow::anyhow!(
+        "'watchdog events' is not implemented: the watchdog keeps its state in memory and records \
+         transitions in the container log. Use `podnext watchdog status` for the current state and \
+         `podnext log tail <service>` for the log."
+    ))
 }
 
 // ============ Quota Commands ============
@@ -2705,54 +2707,39 @@ fn substitute_build_args(content: &str, args: &[(String, String)]) -> String {
     out
 }
 
-async fn cmd_build_submit(spec: PathBuf, _format: crate::OutputFormat) -> Result<()> {
-    eprintln!("warning: 'build submit' is not yet implemented (stub)");
-    println!("Submitting build from spec '{}'...", spec.display());
-    println!("(Build submission not yet implemented)");
-    Ok(())
+/// Every `build` subcommand except `build local` needs a build service that does not exist.
+/// These used to print a not-implemented note and return `Ok(())`, which exits 0: a script
+/// reading the status saw success for something that did nothing.
+fn no_build_backend(what: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "'{what}' is not implemented: PDN has no build service, so there is nothing to submit, \
+         track, cancel or log. Build an image locally with \
+         `podnext build local <tag> --file <Dockerfile>`, then `podnext install` from it."
+    )
 }
 
-async fn cmd_build_status(build_id: String, _format: crate::OutputFormat) -> Result<()> {
-    eprintln!("warning: 'build status' is not yet implemented (stub)");
-    println!("Build '{}' status: (not yet implemented)", build_id);
-    Ok(())
+async fn cmd_build_submit(_spec: PathBuf, _format: crate::OutputFormat) -> Result<()> {
+    Err(no_build_backend("build submit"))
 }
 
-async fn cmd_build_cancel(build_id: String) -> Result<()> {
-    eprintln!("warning: 'build cancel' is not yet implemented (stub)");
-    println!("Cancelling build '{}'...", build_id);
-    println!("(Build cancellation not yet implemented)");
-    Ok(())
+async fn cmd_build_status(_build_id: String, _format: crate::OutputFormat) -> Result<()> {
+    Err(no_build_backend("build status"))
 }
 
-async fn cmd_build_list(status: Option<String>, _format: crate::OutputFormat) -> Result<()> {
-    eprintln!("warning: 'build list' is not yet implemented (stub)");
-    println!(
-        "Listing builds{}...",
-        status
-            .as_ref()
-            .map(|s| format!(" with status '{}'", s))
-            .unwrap_or_default()
-    );
-    println!("(Build listing not yet implemented)");
-    Ok(())
+async fn cmd_build_cancel(_build_id: String) -> Result<()> {
+    Err(no_build_backend("build cancel"))
 }
 
-async fn cmd_build_artifacts(build_id: String) -> Result<()> {
-    eprintln!("warning: 'build artifacts' is not yet implemented (stub)");
-    println!("Build '{}' artifacts: (not yet implemented)", build_id);
-    Ok(())
+async fn cmd_build_list(_status: Option<String>, _format: crate::OutputFormat) -> Result<()> {
+    Err(no_build_backend("build list"))
 }
 
-async fn cmd_build_logs(build_id: String, follow: bool) -> Result<()> {
-    eprintln!("warning: 'build logs' is not yet implemented (stub)");
-    println!(
-        "Showing logs for build '{}'{}...",
-        build_id,
-        if follow { " (follow)" } else { "" }
-    );
-    println!("(Build logs not yet implemented)");
-    Ok(())
+async fn cmd_build_artifacts(_build_id: String) -> Result<()> {
+    Err(no_build_backend("build artifacts"))
+}
+
+async fn cmd_build_logs(_build_id: String, _follow: bool) -> Result<()> {
+    Err(no_build_backend("build logs"))
 }
 
 // ============ GitOps Commands ============
