@@ -100,13 +100,13 @@ CHECKS: list[dict] = [
          cmd="grep -rnF 'pub fn store_key' crates/proot-distro-core/src/names.rs",
          needle="pub fn store_key"),
     dict(issue="35", claim="build local stores under the derived key, not the raw tag",
-         cmd="grep -rnF 'names::store_key(tag)' crates/podnext/src/commands/mod.rs",
+         cmd="grep -rnF 'names::store_key(tag)' crates/podnext/src/commands",
          needle="names::store_key(tag)"),
     dict(issue="35", claim="the raw tag is no longer used as a directory name",
          cmd="grep -rnF 'containers_dir.join(tag)' crates/podnext/src/commands/mod.rs",
          mode="absent", needle="containers_dir.join(tag)"),
     dict(issue="35", claim="the RUN/install path resolves the container by the same key",
-         cmd="grep -rnF 'mgr.get(&key)' crates/podnext/src/commands/mod.rs",
+         cmd="grep -rnF 'mgr.get(&key)' crates/podnext/src/commands",
          needle="mgr.get(&key)"),
     dict(issue="35", claim="a colon in a bind source is an error, not a dropped mount",
          cmd="grep -rnF 'pub fn ensure_bindable' crates/proot-distro-core/src/bindings.rs",
@@ -208,7 +208,7 @@ CHECKS: list[dict] = [
          needle="deep_fs_recursion.rs"),
     # #17 podnext build local rejects ARG, skips RUN
     dict(issue="17", claim="build local consumes ARG before the parser rejects it",
-         cmd="grep -rnF 'fn preprocess_build_args' crates/podnext/src/commands/mod.rs",
+         cmd="grep -rnF 'fn preprocess_build_args' crates/podnext/src/commands",
          needle="fn preprocess_build_args"),
     # #17 predicate revised during integration: the original check asserted on
     # `fn execute_run`, which the #29 fix DELETED as dead code - that function was
@@ -217,13 +217,13 @@ CHECKS: list[dict] = [
     # now asserts the contract: the RUN arm matches an instruction and delegates
     # to the container engine against the rootfs, and a non-zero RUN propagates.
     dict(issue="17", claim="build local matches a RUN instruction instead of printing it",
-         cmd="grep -rnF 'Instr::Run(run_cmd)' crates/podnext/src/commands/mod.rs",
+         cmd="grep -rnF 'Instr::Run(run_cmd)' crates/podnext/src/commands",
          needle="Instr::Run(run_cmd)"),
     dict(issue="17", claim="build local delegates RUN to the container engine",
-         cmd="grep -rnF 'execute_container(' crates/podnext/src/commands/mod.rs",
+         cmd="grep -rnF 'execute_container(' crates/podnext/src/commands",
          needle="execute_container("),
     dict(issue="17", claim="build local fails the build when RUN exits non-zero",
-         cmd="grep -rnF 'RUN instruction failed (exit' crates/podnext/src/commands/mod.rs",
+         cmd="grep -rnF 'RUN instruction failed (exit' crates/podnext/src/commands",
          needle="RUN instruction failed (exit"),
     # #18 copy/sync expand sparse files
     dict(issue="18", claim="sparse copies probe holes with SEEK_DATA/SEEK_HOLE",
@@ -272,6 +272,18 @@ CHECKS: list[dict] = [
          cmd="grep -rqF 'known-limitations.md' docs/src/SUMMARY.md", needle=None),
     dict(issue="42", claim="every documented command and option exists in the real CLI",
          cmd="cargo test -p podnext --test cli_reference_contract", needle=None, cargo=True),
+    # ── #63: the direct path's own flag was dropped, not honoured ─────────────
+    dict(issue="63", claim="--no-kill-on-exit refuses instead of being silently dropped",
+         cmd="grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src",
+         needle="--no-kill-on-exit is not implemented"),
+    dict(issue="63", claim="the flag is refused on the manual direct path too",
+         cmd="grep -rnc 'kill_on_exit' crates/proot-core/src/lib.rs", needle=None),
+    # ── #60: a seccomp profile in metadata is refused, not dropped ────────────
+    dict(issue="60", claim="a seccomp profile in container metadata is refused, not dropped",
+         cmd="grep -rnF 'assert_seccomp_profile_supported' crates/proot-distro-core/src/security.rs",
+         needle="assert_seccomp_profile_supported"),
+    dict(issue="60", claim="the guard is unit tested", cargo=True, needle=None,
+         cmd="cargo test -p proot-distro-core --lib seccomp_profile_is_refused_not_dropped --locked"),
     # ── #62: --seccomp said nothing about being inert ─────────────────────────
     dict(issue="62", claim="--seccomp refuses instead of being silently dropped",
          cmd="grep -rnF -- '--seccomp is not implemented' crates/podnext/src",
@@ -381,10 +393,14 @@ NO_CHECK_REASON = {
     "37": "OPEN defect: image ls/push said they could not see any image because ImageManager read only "
           "the store. image ls is fixed (#44), but a real image store does not exist until v0.2.0 "
           "(roadmap section 4.4), so the remaining push/tag/rm/history behaviour has nothing to assert.",
-    "63": "OPEN defect of the compiler-warning class: the direct-execution scanner assigns "
-          "`no_kill_on_exit` and never reads it. The honest check is a build-warning gate, which "
-          "this ledger does not have - its predicates are grep-shaped and cargo-test-shaped, and a "
-          "warning is neither. Reported with the compiler output instead of being asserted.",
+    "67": "OPEN defect, measured while closing #63: the manual direct-execution scanner drops "
+          "every flag it parses except rootfs, the command and verbose. Each flag needs the "
+          "honour-or-refuse decision made against the generated argv, one at a time; the method is "
+          "written in the issue.",
+    "68": "OPEN regression, measured: a guest started with login cannot read stdin and gets no "
+          "prompt, because proot-core puts PRoot in its own process group while the tty foreground "
+          "group is still the caller (SIGTTIN). Being fixed with the fidelity harness as the "
+          "oracle; this reason is replaced by a predicate when that fix lands.",
     "39": "OPEN defect: push cannot work because the store holds no layer blobs. The CLI now refuses "
           "honestly instead of pretending (#42), and the blobs themselves are v0.2.0 work "
           "(roadmap section 4.4): the honest refusal is asserted by the stub checks, not here.",
