@@ -20,7 +20,9 @@ itself checked:
 | 9.3 | 6 | the interactive shell: detach/attach, terminal fidelity, argv quoting, bindings and `USER`, session hygiene, doctor |
 | 9.4 | - | explicit non-goals, enforced by `scripts/check_non_goals.py` |
 
-Nothing outside section 9 is in scope. The next tag after this one is `v0.2.0` (roadmap section 10);
+Nothing outside section 9 is in scope. This release takes the tag `v0.2.0`, which the mobility polygon
+used to carry: roadmap section 10 is now `v0.3.0`, because a withdrawn tag cannot be reused and this
+work needs a number (section 10 records the same note);
 there is no `v0.1.10`.
 
 ## 2. Where the release stands, measured
@@ -148,7 +150,7 @@ file with no Clap surface, so the load-bearing evidence is the 84 tests, `shell_
 
 - `Cargo.toml` `0.1.8` to **`0.2.0`**; `Cargo.lock` follows. It is `0.2.0` and not `0.1.9` or `0.1.10`
   because `v0.1.9` was tagged and withdrawn (`ed7dc3f`, before any release existed) and `roadmap.md`
-  section 10 names `v0.2.0` as the mobility target; a withdrawn tag is not a released version.
+  this work needs a number of its own, and roadmap section 10 (now `v0.3.0`) records the renumbering.
 - `CHANGELOG.md`: move `[Unreleased]` to `## [0.2.0] - <date>`, with every entry naming its commit.
 - Re-record the warning ceiling to the value the settled tree actually produces. It is 290 in the fixture
   today and the runner measured **266** - the detach/attach work consumes symbols that the extraction had

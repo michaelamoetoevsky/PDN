@@ -436,16 +436,22 @@ triaged into the issue tracker and folded back here as they are confirmed.
 
 ---
 
-## 10. v0.2.0 — the mobility target
+## 10. v0.3.0 — the mobility target
 
-The goal for v0.2.0: podnext is usable as a daily driver with the same mobility as Termux's
+> **Numbering note (6 Nov 2026).** This section was written as the `v0.2.0` target. The release that
+> carried the section 9 stabilization - the audit, the module split, the detach/attach round trip, the
+> gates - took the `v0.2.0` number instead, because `v0.1.9` was tagged and withdrawn and a tag cannot be
+> reused. The mobility polygon below is therefore the NEXT release's target. Its acceptance tests are
+> unchanged: they were never about a version number.
+
+The goal for v0.3.0: podnext is usable as a daily driver with the same mobility as Termux's
 `proot-distro`. Mobility means four things, each with an acceptance test, so "done" is not a matter
 of opinion. Measured against the reference implementation installed on this device (the Python
 `proot-distro` package) and against podnext `v0.1.8`.
 
 ### 10.1 Gap: bringing something in
 
-| Capability | Reference | podnext today | Acceptance test for v0.2.0 |
+| Capability | Reference | podnext today | Acceptance test for v0.3.0 |
 |---|---|---|---|
 | Install from a registry reference | yes, with alias derivation | partial: `install <image>` with a name, no alias derivation | `podnext install alpine:3.20` creates a container named by the derived alias, no extra flags |
 | Install from a local rootfs tarball | yes | no | `podnext install ./rootfs.tar.gz` works offline |
@@ -513,11 +519,11 @@ section 5. What is taken is the *architecture*, module by module:
 
 - **v0.1.9** (current): stability, honesty, module split, cached index, env-var paths, and the crash
   class filed as #41. No new top-level commands; no TUI.
-- **v0.2.0**: section 10.1–10.4. The image store (section 4.4) is the spine, because import/export, push/pull and
+- **v0.3.0**: section 10.1–10.4. The image store (section 4.4) is the spine, because import/export, push/pull and
   build-with-layers all sit on it; the `login` polygon is the other half and is independent of it, so
   the two can proceed in parallel.
 - Performance is not a later phase: the cached container index and the daemon-owned state are v0.1.9
-  work precisely because they make every v0.2.0 command cheaper by construction.
+  work precisely because they make every v0.3.0 command cheaper by construction.
 
 Acceptance for the whole section: the 13-agent audit findings triaged, the four tables above
 satisfied, and a two-device round trip demonstrated end to end.

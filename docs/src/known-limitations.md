@@ -138,7 +138,7 @@ to stderr and nothing to stdout.
   readable on the host at `~/.podnext/containers/<name>/tmp/x`, and a host file written there is
   readable in the guest at `/tmp/x` (the same holds for `/root` <-> `.../rootfs/root`); the guest's
   `$HOME` is `/root`, not `/data/data/com.termux/files/home`. The "shared home/tmp" of the login
-  polygon is not implemented (see Deferred to v0.2.0).
+  polygon is not implemented (see Deferred to v0.3.0).
 - **`TERMUX__PREFIX` cannot be relocated while the app runs.** It is not a PDN setting: Termux
   exports it beside `LD_PRELOAD=…/libtermux-exec-ld-preload.so`, whose job is to rewrite `/bin/*`
   into the prefix (`/bin` is a symlink to `/system/bin`). Pointing it elsewhere makes process
@@ -175,10 +175,10 @@ These are claims the project cannot currently make, listed so that the absence i
 - The `podnext run … -- <cmd>` quoting table.
 - A soak run proving no guest processes survive a forced stop.
 
-## Deferred to v0.2.0
+## Deferred to v0.3.0
 
 - **OCI image store and registry transport** (roadmap section 4.4): blob store, manifest cache,
-  digest-addressed layers, pull/push transport. This is the spine of v0.2.0 — import/export and
+  digest-addressed layers, pull/push transport. This is the spine of v0.3.0 — import/export and
   push/pull all depend on it.
 - **Login polygon** (roadmap section 10.2): shared home, shared tmp, shared X11, bind presets, work dir,
   hostname, `detach` **as a `login` flag**, and the rest of the mobility-parity flag set. (The

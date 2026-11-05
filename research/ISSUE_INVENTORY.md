@@ -115,7 +115,7 @@ backlog items are feature requests with no commitment attached.
 | Measure the bindings and the `USER` story inside a guest | #66 |
 | The map that holds all of the above | #48 |
 
-Release state: `Cargo.toml` is `0.1.8`, `v0.1.9` was withdrawn, and the next tag is `v0.2.0`
+Release state: `Cargo.toml` is `0.1.8`, `v0.1.9` was withdrawn, and the next tag is `v0.2.0` (the section 9 stabilization; the mobility polygon that used to carry that number is now section 10 = `v0.3.0`)
 according to `docs/src/roadmap.md` section 10. Sections 7.1 and 7.2 (seccomp, zero-trust boundary)
 are **declined** for v0.1.9 with the measurement recorded; nothing in this list is claimed as done
 until its ticket carries evidence.

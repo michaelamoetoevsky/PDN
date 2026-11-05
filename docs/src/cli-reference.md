@@ -23,7 +23,7 @@ because the suite does not drive them yet. Re-derive this table with `podnext --
 | `podnext reset` | `[experimental]` | no automated test covers it yet |
 | `podnext sync` | `[experimental]` | no automated test covers it yet |
 | `podnext search` | `[experimental]` | no automated test covers it yet |
-| `podnext image` | `[experimental]` | `pull` and `push` refuse: there is no OCI image store before v0.2.0 |
+| `podnext image` | `[experimental]` | `pull` and `push` refuse: there is no OCI image store before v0.3.0 |
 | `podnext sessions` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
 | `podnext attach` | `[experimental]` | the reattach path has no automated test; only its no-session refusal is covered (`crates/podnext/tests/stub_refusals.rs`) |
 | `podnext info` | `[experimental]` | no automated test covers it yet |
@@ -142,7 +142,7 @@ podnext login <CONTAINER> [OPTIONS] [-- <SHELL_ARGS>...]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.2.0) |
+| `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.3.0) |
 | `--isolated` | Run in isolated mode (do not mount host storage or Termux home directory) |
 
 **Examples:**
@@ -169,11 +169,11 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 | `--rm` | Refused: removing the container after the run needs ephemeral containers, which PDN does not have yet |
 | `--volume <HOST:GUEST>` | Mount a host directory into the container (repeatable). A `:ro` suffix is refused — proot has no read-only bind form, and the suffix would become part of the guest path name |
 | `-e, --env <VAR=VALUE>` | Set environment variable (repeatable) |
-| `-w, --workdir <DIR>` | Refused: the work dir belongs to the login polygon (v0.2.0) |
+| `-w, --workdir <DIR>` | Refused: the work dir belongs to the login polygon (v0.3.0) |
 | `--network <NETWORK>` | Refused: the run path does not attach networks |
 | `-p, --publish <HOST:CONTAINER[/PROTO]>` | Refused: port publishing is not wired into the run path |
 | `--entrypoint <ENTRYPOINT>` | Refused: the run path uses the command recorded for the container |
-| `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.2.0) |
+| `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.3.0) |
 | `-t, --tty` | Accepted for compatibility: stdio is inherited, so a TTY is used when the caller has one |
 | `-i, --interactive` | Accepted for compatibility: stdin is inherited unless the caller redirects it |
 | `--seccomp` | Refused: this PRoot build applies no seccomp filter, and the flag used to be accepted and dropped. The proot argv is byte-identical with and without it (0 seccomp tokens; 133 `--bind` entries either way) and `proot --help` lists no seccomp option at all (issue #62). A `security.seccomp_profile` in container metadata is refused for the same reason (issue #60) |
