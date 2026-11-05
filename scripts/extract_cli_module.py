@@ -87,6 +87,11 @@ def main() -> int:
         if re.search(r"\b" + re.escape(name) + r"\b", existing):
             print(f"{dst} already mentions {name}; moving it again would duplicate", file=sys.stderr)
             return 2
+    # A moved item stops being private-to-main.rs: functions become reachable and types
+    # become crate-visible, which is what a caller in the old file (including its tests)
+    # needs. Getting this wrong compiles the bin but breaks the test target.
+    moved = re.sub(r"^(async fn|fn )", r"pub \1", moved, flags=re.M)
+    moved = re.sub(r"^(struct|enum) ", r"pub(crate) \1", moved, flags=re.M)
     dst.write_text(existing + moved + "\n" if existing else moved + "\n")
 
     for _, s, e in sorted(ranges, key=lambda r: r[1], reverse=True):

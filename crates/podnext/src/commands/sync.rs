@@ -279,11 +279,11 @@ pub async fn cmd_reset(name: String) -> Result<()> {
 
 /// Counters for one sync run, so the command reports what it actually did.
 #[derive(Default)]
-struct SyncReport {
-    copied: usize,
-    unchanged: usize,
-    removed: usize,
-    skipped: usize,
+pub(crate) struct SyncReport {
+    pub(crate) copied: usize,
+    pub(crate) unchanged: usize,
+    pub(crate) removed: usize,
+    pub(crate) skipped: usize,
 }
 
 /// Mirror `source` onto `destination`.
