@@ -11,7 +11,7 @@ PDN (PRoot Distro Next) is a unified Rust codebase that combines **PRoot**, **PR
 - **proot-compat**: Termux/Android compatibility layer (platform shim, path translation, seccomp bypass, stub filesystem, mount helper, cgroup v2)
 - **pn-gateway**: Unified gateway with fail-safe mechanisms, guardrails, health monitoring, and metrics
 - **pn-next**: Advanced runtime, scheduler, security, API, workflow, and plugin system
-- **podnext (CLI)**: Full-featured CLI for container/image/network/storage/volume management
+- **podnext (CLI)**: Full-featured CLI for container/image/network/volume management
 
 ### Advanced CLI Features
 

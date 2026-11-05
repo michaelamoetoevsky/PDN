@@ -8,7 +8,7 @@ PDN uses a layered configuration system:
 2. **Container Config** (`~/.config/pn-next/containers/<name>.toml`) - Per-container settings
 3. **Security Profiles** (`~/.config/pn-next/security/<name>.toml`) - Security hardening
 4. **Network Config** (`~/.config/pn-next/networks/<name>.toml`) - Network definitions
-5. **Storage Config** (`~/.config/pn-next/storage/<name>.toml`) - Storage pools
+5. **Volume Config** (`~/.config/pn-next/volumes/<name>.toml`) - Volume definitions
 6. **CLI Flags** - Override any setting at runtime
 
 ## Global Configuration
@@ -614,84 +614,49 @@ Example CNI config:
 }
 ```
 
-## Storage Configuration
+## Environment Variables
 
-### `~/.config/pn-next/storage/<name>.toml`
-
-```toml
-# planned: created
-# (the persisted volume file is a FLAT VolumeConfig: name, driver, labels, options —
-#  there is no [storage.config] table)
-[storage]
-name = "local"
-driver = "local"
-created = "2024-01-15T10:30:00Z"
-
-# planned: path, fs_type, mount_options, quota_enabled, quota_size
-[storage.config]
-# Local driver settings
-path = "~/.local/share/pn-next/storage/local"
-fs_type = "ext4"
-mount_options = "defaults,noatime"
-
-# Quotas
-quota_enabled = true
-quota_size = "50G"
-
-# Labels
-[storage.config.labels]
-"org.pdn.type" = "local"
-"org.pdn.managed" = "true"
-```
-
-## Environment Variable Overrides
-
-Any configuration value can be overridden via environment variables:
+The runtime and CLI behavior are configured through specific environment variables:
 
 ```bash
-# Global config
-export PN_CONFIG_DIR=/custom/config
-export PN_LOG_LEVEL=debug
-export PN_GATEWAY_ADDR=unix:///custom/gateway.sock
+# Enable low-level trace logging across internal crates
+export PN_DEBUG=1
 
-# Container-specific (at runtime)
-podnext run ubuntu --env PN_MEMORY_LIMIT=4G --env PN_CPU_LIMIT=4.0
+# Enable debug logging in the podnext CLI frontend
+export PN_NEXT_DEBUG=1
 
-# Security profile
-export PN_SECURITY_PROFILE=restricted
+# Gateway configuration file path
+export PN_GATEWAY_CONFIG=/path/to/gateway.toml
+
+# Override service definitions directory (default: ~/.config/pn-next/services)
+export PN_NEXT_SERVICES_DIR=/custom/services
+
+# Override runtime PID and socket directory (default: ~/.local/run/pn-next)
+export PN_NEXT_RUNTIME_DIR=/custom/run
+
+# Override log directory (default: ~/.local/log/pn-next)
+export PN_NEXT_LOG_DIR=/custom/log
+
+# Override POSIX shared memory directory emulation
+export PN_SHM_DIR=/tmp/custom-shm
+
+# Root directory override for testing
+export PN_TEST_ROOT=/tmp/pn-test-root
 ```
 
 ## Configuration Validation
 
-```bash
-# Validate global config
-podnext config validate
-
-# Validate container config
-podnext config validate --container ubuntu
-
-# Show effective config (with overrides)
-podnext config show ubuntu
-
-# Generate default config
-podnext config init
-```
-
-## Migrating Configuration
-
-### From Docker Compose
+Check a gateway configuration file before deployment:
 
 ```bash
-# Convert docker-compose.yml to PDN configs
-podnext config convert --from docker-compose --input docker-compose.yml --output ./pdn-configs/
+# Validate gateway configuration file passed as an argument
+podnext config validate ./gateway.toml
+
+# Validate gateway configuration file passed via environment variable
+PN_GATEWAY_CONFIG=./gateway.toml podnext config validate
 ```
 
-### From Kubernetes
-
-```bash
-# Convert Kubernetes manifests
-podnext config convert --from kubernetes --input deployment.yaml --output ./pdn-configs/
-```
+A valid file prints the resolved values and exits 0; an invalid one names the offending key with its line and column and exits 2.
 
 ## See Also
 

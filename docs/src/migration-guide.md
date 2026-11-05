@@ -64,10 +64,9 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 | PRoot-distro | PDN | Notes |
 |--------------|-----|-------|
 | (manual bind) | `podnext network create` | CNI-based networks |
-| (manual bind) | `podnext network list` | List networks |
+| (manual bind) | `podnext network ls` | List networks |
 | (manual bind) | `podnext volume create` | Named volumes |
-| (manual bind) | `podnext volume list` | List volumes |
-| (manual bind) | `podnext storage list` | Storage pools |
+| (manual bind) | `podnext volume ls` | List volumes |
 
 ### System Commands
 

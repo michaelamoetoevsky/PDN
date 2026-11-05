@@ -120,7 +120,7 @@ For advanced storage management, backup snapshots, and multi-container environme
 # List locally cached OCI images
 podnext image ls
 
-# Pull an image without immediately spinning up a container
+# Pull an image (experimental/stub: use 'podnext install' for runnable containers)
 podnext image pull alpine:latest
 ```
 
@@ -180,8 +180,8 @@ podnext service start web-server
 # Inspect service state and process PID
 podnext service status web-server
 
-# View live service logs
-podnext service logs web-server
+# View live service logs (use log query; service logs is an experimental stub)
+podnext log query --service web-server
 ```
 
 #### 3. Resource Quotas (cgroups v2)
@@ -199,7 +199,7 @@ podnext quota usage web-server
 #### 4. Watchdog & Circuit Breakers
 ```bash
 # Configure automatic restart policy: up to 3 retries within 60 seconds
-podnext watchdog policy set web-server OnFailure 3 60
+podnext watchdog setpolicy web-server on-failure 3 60
 
 # Inspect circuit breaker status
 podnext watchdog status
@@ -214,7 +214,7 @@ podnext dbus serve --socket $TMPDIR/pdn-dbus.sock
 podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service.List --socket $TMPDIR/pdn-dbus.sock
 
 # Synchronize declarative container & volume manifests via GitOps
-podnext gitops sync --repo ./manifests
+podnext gitops sync
 
 # Detect configuration drift
 podnext gitops drift
@@ -223,7 +223,7 @@ podnext gitops drift
 #### 6. Android Keep-Alive & WakeLock
 ```bash
 # Acquire Android Partial WakeLock to prevent container suspension during screen-off
-podnext wakelock acquire web-server Partial
+podnext wakelock acquire web-server partial
 
 # Enable boot autostart via Termux:Boot
 podnext boot enable web-server

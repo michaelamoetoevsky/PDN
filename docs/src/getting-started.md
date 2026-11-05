@@ -146,7 +146,7 @@ $HOME/.config/pn-next/
 ├── containers/          # Container definitions
 ├── images/              # Image cache
 ├── networks/            # Network configurations
-├── storage/             # Storage pool definitions
+├── volumes/             # Volume definitions
 └── security/            # Security profiles
 ```
 
