@@ -1446,7 +1446,9 @@ async fn run() -> Result<()> {
     // Check for direct execution mode early (before clap parsing)
     // Direct execution: podnext [flags...] -r /rootfs [flags...] -- <cmd> ...
     // Direct execution only applies if NO subcommand is used and -r/--rootfs is BEFORE '--'
-    let raw_args: Vec<String> = std::env::args().collect();
+    let raw_args: Vec<String> = std::env::args_os()
+        .map(|s| s.to_string_lossy().into_owned())
+        .collect();
     let pn_debug = std::env::var_os("PN_NEXT_DEBUG").is_some();
     if pn_debug {
         pn_trace!("[DEBUG main] Raw args: {:?}", raw_args);
@@ -1648,7 +1650,9 @@ async fn run() -> Result<()> {
     }
 
     // Parse trailing arguments for direct execution mode (-- <cmd> ...) for clap-parsed case
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = std::env::args_os()
+        .map(|s| s.to_string_lossy().into_owned())
+        .collect();
     let cli_trailing_args: Vec<String> = if let Some(pos) = args.iter().position(|a| a == "--") {
         args[pos + 1..].to_vec()
     } else {
@@ -2555,28 +2559,21 @@ async fn execute_image_command(cmd: ImageCommands) -> Result<()> {
 }
 
 async fn cmd_image_pull(image: String, platform: Option<String>, all_tags: bool) -> Result<()> {
-    eprintln!("Pulling image: {}", image);
-    if let Some(p) = platform {
-        eprintln!("Platform: {}", p);
-    }
-    if all_tags {
-        eprintln!("Pulling all tags");
-    }
-
-    // TODO: Implement actual image pull using proot-distro-core or direct OCI registry calls
-    // For now, delegate to install command logic
-    let container_mgr = proot_distro_core::ContainerManager::new()?;
-    let install_options = proot_distro_core::InstallOptions {
-        source: proot_distro_core::ImageSource::Docker(image.clone()),
-        name: image.split(':').next().unwrap_or(&image).to_string(),
-        config: Default::default(),
-        distro_type: proot_distro_core::DistroType::default(),
-    };
-    container_mgr
-        .create(&install_options.name, &install_options.config)
-        .await?;
-    eprintln!("Image {} pulled successfully", image);
-    Ok(())
+    // SAFETY: image pull is not implemented; the previous stub claimed success but wrote nothing.
+    // Fail honestly rather than silently no-op (issue #41, finding 01-1).
+    // Real implementation requires: OCI registry client, manifest fetch, blob download,
+    // layer extraction to ~/.podnext/images/<name>, and metadata persistence.
+    // Until then: use `podnext install <image>` instead, which does pull + extract to a runnable container.
+    anyhow::bail!(
+        "Error: image pull is not yet implemented.\n\
+         \n\
+         This command was a stub that reported success without downloading anything.\n\
+         \n\
+         Workaround: use 'podnext install {}' to pull and create a runnable container.\n\
+         \n\
+         Tracking: https://github.com/michaelamoetoevsky/PDN/issues/37 (image store architecture)",
+        image
+    );
 }
 
 async fn cmd_image_push(image: String) -> Result<()> {
