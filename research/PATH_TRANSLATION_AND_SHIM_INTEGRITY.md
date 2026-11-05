@@ -13,6 +13,10 @@
 4. **PATH translation and shim integrity** - the one with a demonstrable security edge, and the reason this
    document leads with evidence rather than with a roadmap.
 
+**Companion document**: `research/PDN_vs_PROOT_PROOTDISTRO_DOCKER.md` - the same three questions measured
+against proot, proot-distro and Docker, whose features, ecosystem and infrastructure are more mature, with the
+ordered list of what to take from whom.
+
 The fourth is first because it has a proof, and because it silently constrains the first three: any
 convenience that reaches from the guest back to the host tools is a convenience built on a name, and a name
 can be taken.
