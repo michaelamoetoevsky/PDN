@@ -7,8 +7,8 @@ file is the prose form of the same thing, so a reader of the release does not ha
 Python. **It is generated, not maintained**: `scripts/build_issue_ledger.py --disposition`
 rewrites it from the same tables the ledger prints, so it cannot drift from the gate.
 
-Generated 2026-11-05 17:25:17Z against `2c7ccd0`: **67 issues**, of which 39 carry
-predicates, 14 are declined with a written reason, and 14 are wayfinder
+Generated 2026-11-05 18:18:28Z against `f97a50e`: **68 issues**, of which 44 carry
+predicates, 13 are declined with a written reason, and 11 are wayfinder
 work items whose acceptance criteria live in the map issue (#48) rather than in a predicate.
 
 | # | state | title | disposition |
@@ -67,19 +67,20 @@ work items whose acceptance criteria live in the map issue (#48) rather than in 
 | 54 | CLOSED | [dept/build] Extract the build, gitops and compose domains out of commands/mod.rs | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 55 | CLOSED | [shell] Assert the argv quoting table against a real guest (roadmap 9.3) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 56 | CLOSED | [shell] Measure terminal fidelity: resize, TERM, PS1, UTF-8 locale (roadmap 9.3) | predicate(s): the fidelity harness exists and drives the real binary in a PTY |
-| 57 | OPEN | [shell] detach/attach round trip and session hygiene (roadmap 9.3) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
+| 57 | OPEN | [shell] detach/attach round trip and session hygiene (roadmap 9.3) | predicate(s): a detached run is spawned as its own session host; attach reconnects through the session host, instead of creating a session; the refusal that a detached session cannot be re-entered is gone |
 | 58 | CLOSED | [shell] Soak: repeated start/stop leaves nothing behind (roadmap 9.3) | predicate(s): the soak harness exists and can inject the leak it must catch |
 | 59 | CLOSED | [perf] Route read-only metadata through podnext-daemon (roadmap 9.2, last criterion) | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 60 | CLOSED | [security] Decide the seccomp profiles: verify per distro or decline with the measurement | predicate(s): a seccomp profile in container metadata is refused, not dropped; the guard is unit tested |
 | 61 | CLOSED | [docs] Record the v0.1.9 dispositions: what is fixed, what is declined, what moved to v0.2 | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 | 62 | CLOSED | [BUG] run --seccomp is accepted and never applied | predicate(s): --seccomp refuses instead of being silently dropped; the refusal is asserted against the real binary; the limitation is written down where a user looks |
 | 63 | CLOSED | [BUG] direct-execution argv scanner parses --no-kill-on-exit and never uses it | predicate(s): --no-kill-on-exit refuses instead of being silently dropped; the manual direct path refuses it too, not only the parsed path; proot-core still passes --kill-on-exit unconditionally, which is why the flag can only refuse |
-| 64 | OPEN | [criterion gap] cli-reference examples are documented but never executed | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
+| 64 | OPEN | [criterion gap] cli-reference examples are documented but never executed | predicate(s): every fenced example is executed or excluded, with a reason; a missing binary is a printed skip, never a pass |
 | 65 | OPEN | [criterion gap] the ~800-line ceiling is not met: cli.rs 1445, commands/mod.rs 1945, main. | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
-| 66 | OPEN | [criterion gap] the sample and USER story of section 9.3 is documented but not measured | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
-| 67 | OPEN | [BUG] the direct-execution scanner drops every flag it parses except rootfs/cmd/verbose | declined: OPEN defect, measured while closing #63: the manual direct-execution scanner drops every flag it parses except rootfs, the command and verbose. Each flag needs the honour-or-refuse decision made against the generated argv, one at a time; the method is written in the issue. |
+| 66 | OPEN | [criterion gap] the sample and USER story of section 9.3 is documented but not measured | predicate(s): the bindings check can tell a mapped path from an unmapped one; the documentation states that storage and the host home are not mounted |
+| 67 | OPEN | [BUG] the direct-execution scanner drops every flag it parses except rootfs/cmd/verbose | predicate(s): --trace refuses on the direct-execution path instead of being dropped; --qemu refuses for the same reason, naming the missing engine field; an honoured flag's value reaches the generated proot argv |
 | 68 | CLOSED | [BUG] interactive login has no prompt and cannot read stdin: the guest is a background pro | predicate(s): an interactive run keeps the caller's process group, asserted in code; the guest's TERM comes from the caller, asserted in code; both decisions are unit tested |
-| 69 | OPEN | The workspace builds with 290 warnings and nothing counts them, so the split's own residue | predicate(s): the warning ratchet can actually fail, not merely report; the baseline records the toolchain, so a rustc change reads as unmeasurable; CI runs the comparison, so the number cannot grow unnoticed |
+| 69 | OPEN | The workspace builds with 290 warnings and nothing counts them, so the split's own residue | predicate(s): the warning ratchet can actually fail, not merely report; ceilings are stored per toolchain, so a rustc change reads as cannot-measure rather than as a pass; a toolchain with no recorded ceiling is not silently treated as clean; CI runs the comparison, so the number cannot grow unnoticed |
+| 70 | OPEN | A conflict marker is committed inside FAKE_STAT_TAIL, invisible because the constant is de | predicate(s): no conflict marker is committed in tracked source |
 
 **A row is not a resolution.** `predicate(s)` means the fix is asserted by a check that this
 ledger runs and that can fail; `declined` means the reason is written down. Neither is a

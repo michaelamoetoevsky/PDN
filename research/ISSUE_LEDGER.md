@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-05 17:25:17Z from `2c7ccd0` (docs(release): record wave 2's outcome and wave 3's dispatch in the se).
+Generated 2026-11-05 18:18:28Z from `f97a50e` (fix(cli): honour or refuse every flag the direct-execution scanner par).
 
 ## Why this exists
 
@@ -17,7 +17,7 @@ silently-regressed fix shows up as a FAIL in a document rather than as a surpris
 | **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
 | **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
 
-**Coverage: 97 checks PASS by direct observation · 0 FAIL · 18 SKIPPED**, across 115 checks covering 39 of 67 issues (14 issues have no automated check).
+**Coverage: 109 checks PASS by direct observation · 0 FAIL · 18 SKIPPED**, across 127 checks covering 44 of 68 issues (13 issues have no automated check).
 
 **A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the 18 SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this
 device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind
@@ -151,7 +151,7 @@ _state_: CLOSED  ·  _labels_: bug, performance  ·  _closed_: 2026-11-04T11:04:
   - → `crates/podnext/src/commands/sync.rs:377:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
 - [PASS] the sparse-copy regression test exists
   - `grep -rnF 'fn copy_keeps_sparse_files_sparse' crates/podnext/src`
-  - → `crates/podnext/src/main.rs:947:    fn copy_keeps_sparse_files_sparse() {`
+  - → `crates/podnext/src/main.rs:1028:    fn copy_keeps_sparse_files_sparse() {`
 - [SKIPPED] the sparse-copy unit test passes
   - `cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked`
   - → ``
@@ -242,7 +242,7 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:18Z
   - → `613:async fn terminate_group(pgid: u32, timeout: u64) -> Result<()> {`
 - [PASS] podnext run forwards signals to the guest group
   - `grep -rnF 'fn forward_to_guest' crates/podnext/src/native.rs | head -3`
-  - → `738:fn forward_to_guest(sig: i32) { | 1116:    fn forward_to_guest_terminates_child_group() {`
+  - → `740:fn forward_to_guest(sig: i32) { | 1571:    fn forward_to_guest_terminates_child_group() {`
 - [PASS] the daemon handles SIGTERM, not only Ctrl-C
   - `grep -rnF 'SignalKind::terminate' crates/podnext/src/daemon.rs`
   - → `77:    if kind == SignalKind::terminate() || kind == SignalKind::interrupt() { | 183:    let mut sigterm = signal(SignalKind::terminate()).context("install SIGTERM handler")?; | 190:                _ = sigterm.recv() => SignalKind::terminate(),`
@@ -252,7 +252,7 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:39Z
 
 - [PASS] the session record is unlinked on exit via a guard
   - `grep -rnF 'impl Drop for SessionGuard' crates/proot-distro-core/src/session.rs`
-  - → `61:impl Drop for SessionGuard {`
+  - → `114:impl Drop for SessionGuard {`
 - [PASS] log rotation has a consumer
   - `grep -rnF 'fn rotate_log_if_needed' crates/pn-next/src/supervisor.rs`
   - → `478:fn rotate_log_if_needed(path: &Path, cfg: &LogRotationConfig) -> std::io::Result<()> {`
@@ -482,6 +482,19 @@ _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T16:28:20
   - `grep -rnF 'PDNEXT_BIN' scripts/shell_fidelity.py`
   - → `22:Env overrides: PDNEXT_BIN (path to podnext), PDN_CONTAINER (container name). | 44:    b = os.environ.get("PDNEXT_BIN") | 165:        skip("podnext binary not found (set PDNEXT_BIN or install it on PATH)")`
 
+**#57 [shell] detach/attach round trip and session hygiene (roadmap 9.3)**  
+_state_: OPEN  ·  _labels_: wayfinder:task  ·  _closed_: —
+
+- [PASS] a detached run is spawned as its own session host
+  - `grep -rnF 'fn spawn_detached_session' crates/podnext/src/native.rs`
+  - → `1088:pub async fn spawn_detached_session(`
+- [PASS] attach reconnects through the session host, instead of creating a session
+  - `grep -rnF 'fn run_session_host' crates/podnext/src/native.rs`
+  - → `1240:pub async fn run_session_host(container: &str) -> Result<()> {`
+- [PASS] the refusal that a detached session cannot be re-entered is gone
+  - `grep -rnF 'a detached session cannot be re-entered' crates/podnext/src || echo GONE`
+  - → `GONE`
+
 **#58 [shell] Soak: repeated start/stop leaves nothing behind (roadmap 9.3)**  
 _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T16:28:24Z
 
@@ -504,26 +517,59 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-05T14:50:05Z
 
 - [PASS] --seccomp refuses instead of being silently dropped
   - `grep -rnF -- '--seccomp is not implemented' crates/podnext/src`
-  - → `crates/podnext/src/main.rs:267:        // `--seccomp is not implemented` is the one the ledger greps for (issue #62). | crates/podnext/src/main.rs:270:                "--seccomp is not implemented: this PRoot build applies no seccomp filter, `
+  - → `crates/podnext/src/main.rs:269:        // being parsed and dropped. The string `--seccomp is not implemented` is the one the | crates/podnext/src/main.rs:273:                "--seccomp is not implemented: this PRoot build applies no seccomp f`
 - [SKIPPED] the refusal is asserted against the real binary
   - `cargo test -p podnext --test stub_refusals --locked`
   - → ``
 - [PASS] the limitation is written down where a user looks
   - `grep -rnF 'Seccomp filtering is not available' docs/src/known-limitations.md`
-  - → `93:- **Seccomp filtering is not available, and `--seccomp` says so instead of pretending.** Measured:`
+  - → `121:- **Seccomp filtering is not available, and `--seccomp` says so instead of pretending.** Measured:`
 
 **#63 [BUG] direct-execution argv scanner parses --no-kill-on-exit and never uses it**  
 _state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T16:28:36Z
 
 - [PASS] --no-kill-on-exit refuses instead of being silently dropped
   - `grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src`
-  - → `crates/podnext/src/main.rs:278:                "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \ | crates/podnext/src/main.rs:334:            "--no-kill-on-exit is not implemented: proot-core passes `--kill-`
+  - → `crates/podnext/src/main.rs:281:                "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \ | crates/podnext/src/main.rs:419:            "--no-kill-on-exit is not implemented: proot-core passes `--kill-`
 - [PASS] the manual direct path refuses it too, not only the parsed path
   - `grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src/main.rs`
-  - → `278:                "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \ | 334:            "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \`
+  - → `281:                "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \ | 419:            "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \`
 - [PASS] proot-core still passes --kill-on-exit unconditionally, which is why the flag can only refuse
   - `grep -rnF -- '--kill-on-exit' crates/proot-core/src/lib.rs`
   - → `207:        cmd.arg("--kill-on-exit"); | 346:        cmd.arg("--kill-on-exit");`
+
+**#64 [criterion gap] cli-reference examples are documented but never executed**  
+_state_: OPEN  ·  _labels_: wayfinder:task  ·  _closed_: —
+
+- [PASS] every fenced example is executed or excluded, with a reason
+  - `grep -nF 'fenced blocks' scripts/check_doc_examples.py`
+  - → `326:    print(f"fenced blocks  {len(blocks)}")`
+- [PASS] a missing binary is a printed skip, never a pass
+  - `grep -nF 'a skip is not a pass' scripts/check_doc_examples.py`
+  - → `19:In CI without the binary this prints SKIP and exits 0: a skip is not a pass, and it says so. | 264:        print(f"SKIP: no podnext binary at {binary} (set --binary or PDNEXT_BIN); a skip is not a pass") | 269:        print(f"SKIP: {binary} `
+
+**#66 [criterion gap] the sample and USER story of section 9.3 is documented but not measured**  
+_state_: OPEN  ·  _labels_: wayfinder:task  ·  _closed_: —
+
+- [PASS] the bindings check can tell a mapped path from an unmapped one
+  - `grep -nF 'ABSENT' scripts/check_bindings.py`
+  - → `19:Negative control: `/mnt/sdcard` and `/nonexistent_pdn_probe` are NOT mapped and must be ABSENT - | 110:    rc, out = run_guest("; ".join(f"[ -e {p} ] && echo PRESENT {p} || echo ABSENT {p}" | 113:        out.count("ABSENT") == len(UNMAPPED),`
+- [PASS] the documentation states that storage and the host home are not mounted
+  - `grep -nF 'Storage and the host home are not mounted into a guest by default' docs/src/known-limitations.md`
+  - → `85:- **Storage and the host home are not mounted into a guest by default.** PDN binds `/dev`,`
+
+**#67 [BUG] the direct-execution scanner drops every flag it parses except rootfs/cmd/verbose**  
+_state_: OPEN  ·  _labels_: bug  ·  _closed_: —
+
+- [PASS] --trace refuses on the direct-execution path instead of being dropped
+  - `grep -rnF -- '--trace is not implemented on the direct-execution path' crates/podnext/src/main.rs`
+  - → `320:                "--trace is not implemented on the direct-execution path: proot-core never reads \`
+- [PASS] --qemu refuses for the same reason, naming the missing engine field
+  - `grep -rnF -- '--qemu is not implemented on the direct-execution path' crates/podnext/src/main.rs`
+  - → `328:                "--qemu is not implemented on the direct-execution path: proot-core's ProotConfig \`
+- [PASS] an honoured flag's value reaches the generated proot argv
+  - `grep -rnF 'config.cwd = pwd.map(Into::into)' crates/podnext/src/main.rs`
+  - → `375:        config.cwd = pwd.map(Into::into);`
 
 **#68 [BUG] interactive login has no prompt and cannot read stdin: the guest is a background process group**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-05T16:29:12Z
@@ -543,13 +589,23 @@ _state_: OPEN  ·  _labels_: wayfinder:task  ·  _closed_: —
 
 - [PASS] the warning ratchet can actually fail, not merely report
   - `python3 scripts/check_warnings.py self-check`
-  - → `self-check: ok - fires on growth, quiet on equality, does not confuse a warm run for clean`
-- [PASS] the baseline records the toolchain, so a rustc change reads as unmeasurable
-  - `grep -F '"toolchain"' scripts/warning_baseline.json`
-  - → `"toolchain": "cargo 1.99.1 (5f94df478 2026-08-27) (built from a source tarball) / rustc 1.99.1 (58cf8f9c3 2026-10-13) (built from a source tarball)",`
+  - → `self-check: ok - fires on growth, quiet on equality, sums per target, refuses an unknown toolchain |   temp base here: /data/data/com.termux/files/usr/tmp`
+- [PASS] ceilings are stored per toolchain, so a rustc change reads as cannot-measure rather than as a pass
+  - `grep -F '"baselines"' scripts/warning_baseline.json`
+  - → `"baselines": {`
+- [PASS] a toolchain with no recorded ceiling is not silently treated as clean
+  - `grep -F 'no baseline recorded for this toolchain' scripts/check_warnings.py`
+  - → `print(f"cannot compare: no baseline recorded for this toolchain{source}")`
 - [PASS] CI runs the comparison, so the number cannot grow unnoticed
   - `grep -rnF 'check_warnings.py compare' .github/workflows`
-  - → `.github/workflows/issue-ledger.yml:127:        run: python3 scripts/check_warnings.py compare --cold`
+  - → `.github/workflows/issue-ledger.yml:133:          python3 scripts/check_warnings.py compare --cold`
+
+**#70 A conflict marker is committed inside FAKE_STAT_TAIL, invisible because the constant is dead**  
+_state_: OPEN  ·  _labels_: wayfinder:task  ·  _closed_: —
+
+- [PASS] no conflict marker is committed in tracked source
+  - `git grep -nE '^<{7}|^={7}$|^>{7}' -- . || echo NO_MARKERS`
+  - → `NO_MARKERS`
 
 ## Issues with no automated check (the honest gap)
 
@@ -572,9 +628,8 @@ container and therefore belongs in CI.
 | 29 | CLOSED | defect: podnext build local reports success without an image; no fix landed. | podnext build local computes a layer diff but produces no image |
 | 37 | OPEN | defect: image ls/push said they could not see any image because ImageManager read only the store. image ls is fixed (#44), but a real image store does not exist until v0.2.0 (roadmap section 4.4), so the remaining push/tag/rm/history behaviour has nothing to assert. | image push/tag/rm/history cannot see any image: ImageManager never loa |
 | 39 | OPEN | defect: push cannot work because the store holds no layer blobs. The CLI now refuses honestly instead of pretending (#42), and the blobs themselves are v0.2.0 work (roadmap section 4.4): the honest refusal is asserted by the stub checks, not here. | push: the store holds no layer blobs, so push cannot work even once th |
-| 67 | OPEN | defect, measured while closing #63: the manual direct-execution scanner drops every flag it parses except rootfs, the command and verbose. Each flag needs the honour-or-refuse decision made against the generated argv, one at a time; the method is written in the issue. | [BUG] the direct-execution scanner drops every flag it parses except r |
 
-The 14 issues labelled `wayfinder:*` (#48, #49, #50, #51, #52, #53, #54, #55, #57, #59, #61, #64, #65, #66) are work items, not findings: the map issue holds their acceptance criteria, and they are not subject to this triage list.
+The 11 issues labelled `wayfinder:*` (#48, #49, #50, #51, #52, #53, #54, #55, #59, #61, #65) are work items, not findings: the map issue holds their acceptance criteria, and they are not subject to this triage list.
 
 ## How to re-run this (CI-friendly)
 

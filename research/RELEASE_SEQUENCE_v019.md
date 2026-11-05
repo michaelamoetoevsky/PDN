@@ -65,18 +65,28 @@ is done when the gate has run and its output is in the ticket.
 editing the parent-owned ledger, and the parent applied it in the same push. The parent also fixed
 the #68 regression the shell department found, using that department's harness as the oracle.
 
-### S2 and S3 - dispatched as wave 3, base `58636ee`
+### S2 and S3 - landed as wave 3 (base `58636ee`, integrated on `master`)
 
-| Ticket | Department | Owns |
-|---|---|---|
-| #57 | `dept/attach` | `commands/container.rs`, `native.rs`, `session.rs` - detach/attach round trip |
-| #64 | `dept/examples` | `scripts/check_doc_examples.py` + the fenced examples in `cli-reference.md` |
-| #66 | `dept/bindings` | `constants.rs`, `known-limitations.md` - bindings and `USER` measured in a guest |
-| #67 | `dept/scanner` | `main.rs` - every flag the direct-execution scanner drops, honoured or refused |
+| Ticket | Department | Landed | Outcome |
+|---|---|---|---|
+| #57 | `dept/attach` | `ff2e1e3` | detach/attach round trip, same shell pid, marker survives, no orphan; refusal lifted |
+| #64 | `dept/examples` | `c9108ec` | 50 blocks: 10 executed, 40 excluded with reasons; two wrong examples fixed |
+| #66 | `dept/bindings` | `523ae58` | storage paths measured (rootfs dirs, not binds), shared home/tmp and the USER story measured |
+| #67 | `dept/scanner` | `634bf3d` | 19 flags honoured or refused with the argv as evidence |
 
-**#65 is held to a fourth wave on purpose.** It rewrites `cli.rs` and `main.rs`, which is the file
-`dept/scanner` owns right now; putting both in one wave would put two writers in `main.rs`, the
-mistake the first wave's eleven-block conflict taught.
+Cherry-picked with no conflict: the four branches touched eleven distinct files. The parent added eleven
+predicates (three for #57, two each for #64 and #66, three for #67), deleted #67's now-stale decline reason,
+wired both new harnesses into CI, and filed #70 for a committed conflict marker found while integrating.
+
+### Wave 4 - what the departments reported but could not own
+
+| Work | Why it needs its own wave |
+|---|---|
+| `cli.rs` and five doc locations still say detach refuses / attach creates a session | `cli.rs` text appears in the 123-screen help dump, so the text change and the regenerated baseline must land in one commit |
+| `login --user` is accepted and ignored while `run --user` refuses | `container.rs`/`native.rs` ownership, and it is a behaviour change, not a text change |
+| `run`/`login` print no user, which 9.3 asks the build/run output to state | same files, and it needs a decision about the output format |
+| Two fabricated sample outputs in `cli-reference.md`; `config validate` exits 3 where the doc says 2 | doc plus contract question |
+| #65: `cli.rs` 1,445 and `main.rs` 1,040 above the ceiling | held until `main.rs` was free - it is now |
 
 ### S4 - integration
 
