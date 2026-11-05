@@ -146,7 +146,7 @@ Three coherent futures, with the cost this device measured:
 |---|---|---|---|
 | **A — keep the rootfs model, refuse `push`** | 0 | Honest CLI; nothing to maintain | No distribution off-device, ever |
 | **B — keep the rootfs, tar the rootfs at push time** | ≈0.35 s raw / ≈2.1 s gzip per 307 MB, paid once per push, on the image that exists | `push` works with a single-layer image | No build history; one giant layer; a registry sees a 307 MB blob it must store whole; `pull` on the other side gets one layer |
-| **C — store OCI artifacts (manifest + config + layers), derive the rootfs** | +0.1–0.25 s per build for the diff/snapshot work (measured rootfs walk band), plus compressed layer storage | Everything in §3: real push, real pull, offline install from a layout archive, `image ls`/`inspect` with digests, reproducible manifests | The largest change: `build local`, `install`, the container layout and `#29`'s "the container directory is the image" all move |
+| **C — store OCI artifacts (manifest + config + layers), derive the rootfs** | +0.1–0.25 s per build for the diff/snapshot work (measured rootfs walk band), plus compressed layer storage | Everything in section 3: real push, real pull, offline install from a layout archive, `image ls`/`inspect` with digests, reproducible manifests | The largest change: `build local`, `install`, the container layout and `#29`'s "the container directory is the image" all move |
 
 Option C is what the reference implementation does, and it is the only one under which the words
 "push" and "pull" mean what they mean everywhere else. Option B is a defensible intermediate if the
@@ -169,7 +169,7 @@ Two consequences recorded here because they bound any follow-up work:
 1. **This document describes architecture, not code.** Module names, function names and protocol
    behaviour are referenced so the designs can be compared; no implementation may be transcribed
    across the licence boundary, and GPL-3.0-only terms are not compatible with GPL-2.0-only. Any PDN
-   implementation of §3 must be written independently from the OCI/Docker specifications.
+   implementation of section 3 must be written independently from the OCI/Docker specifications.
 2. **The repository's own licence metadata disagrees with itself**, found while checking this:
    `Cargo.toml:19` says `license = "GPL-2.0-or-later"`, `README.md` says GPL-2.0-or-later, and the
    `LICENSE` file (34 lines) contains the **Apache-2.0** text ("Copyright 2026 PDN Contributors",

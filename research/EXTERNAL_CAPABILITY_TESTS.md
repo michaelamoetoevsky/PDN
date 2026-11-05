@@ -28,7 +28,7 @@ Both bench containers were **left installed** at the end (for the next agent). O
 | RUN `-- echo hello` (REAL s) | **0.740** | **0.418** | PDN (−0.32 s) |
 | BACKUP of bench container (REAL s) | **2.000** → 9,041,920 B (plain tar) | **3.205** → 4,631,494 B (gzip) | proot-distro faster; PDN smaller |
 | SEARCH alpine (exit) | 0 (plain-space table, 34 lines) | 0 (box-unicode table, 57 lines) | both work |
-| Multi-cmd shell exec (`id;uname;…`) | exit 0, all cmds OK | exit 0, all cmds OK | both work (see §7 diffs) |
+| Multi-cmd shell exec (`id;uname;…`) | exit 0, all cmds OK | exit 0, all cmds OK | both work (see section 7 diffs) |
 
 Notes on winner column: INSTALL is network-bound (~4 MiB layer each run) so the 1.2 s delta is mostly jitter, not architectural. LIST/LOGIN deltas are structural (Rust single binary vs shell/Python wrapper) and are consistent across all 3 runs.
 
@@ -68,7 +68,7 @@ $ ls ~/.podnext/containers/            # AFTER — still present
 almalinux  alpine  pdn-bench  test-alpine  test-pdn-install
 ```
 
-`podnext list` also still shows `pdn-bench`. Consequence for this benchmark: subsequent PDN cold runs were forced clean with a manual `rm -rf ~/.podnext/containers/pdn-bench` instead of `podnext remove`. Evidence of the bug is retained below (a plain `podnext remove pdn-bench -f` followed by `podnext install` errors "already exists", see §2).
+`podnext list` also still shows `pdn-bench`. Consequence for this benchmark: subsequent PDN cold runs were forced clean with a manual `rm -rf ~/.podnext/containers/pdn-bench` instead of `podnext remove`. Evidence of the bug is retained below (a plain `podnext remove pdn-bench -f` followed by `podnext install` errors "already exists", see section 2).
 
 ---
 
@@ -112,7 +112,7 @@ Rootfs: /data/data/com.termux/files/home/.podnext/containers/pdn-bench/rootfs
 REAL=8.871 USER=0.330 SYS=0.318
 ```
 
-RUN 2 and RUN 3 were first attempted with the tool's own `podnext remove` and **failed**, proving the §1 no-op bug:
+RUN 2 and RUN 3 were first attempted with the tool's own `podnext remove` and **failed**, proving the section 1 no-op bug:
 
 ```bash
 # RUN 2 (attempt via podnext remove — FAILED)
@@ -435,7 +435,7 @@ PDN -b            PRESENT
 PDN -u            PRESENT
 ```
 - proot-distro `login` has the full isolation/bind flag set (`--shared-home`, `--shared-tmp`, `--isolated`, `--minimal`, `--bind`).
-- PDN `login` exposes `--bind/-b`, `-u`, plus proot passthrough flags (`--kernel`, `--hostname`, `--uid`, `--gid`, `--seccomp`, `--sysvipc`, `--link2symlink`, `--env`) but **not** `--shared-home`/`--shared-tmp`/`--isolated`/`--minimal`. `podnext run` has the docker-style flag set (see §5).
+- PDN `login` exposes `--bind/-b`, `-u`, plus proot passthrough flags (`--kernel`, `--hostname`, `--uid`, `--gid`, `--seccomp`, `--sysvipc`, `--link2symlink`, `--env`) but **not** `--shared-home`/`--shared-tmp`/`--isolated`/`--minimal`. `podnext run` has the docker-style flag set (see section 5).
 
 ---
 

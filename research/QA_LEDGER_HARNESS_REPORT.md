@@ -16,7 +16,7 @@ scripts/build_issue_ledger.py`, exit 0):
 
 **A SKIPPED check is not evidence the fix works.** Four checks covering four issue-claims returned no
 verdict whatsoever; do not read "35 PASS" as "39 verified". The four that produced no verdict and the
-guard's own reason are in §6.
+guard's own reason are in section 6.
 
 ## 1. What the mission was
 
@@ -149,7 +149,7 @@ All eleven are **OPEN**; there is no landed fix, so a fix-present predicate has 
 - **Proven:** the four sabotaged fixes are load-bearing — removing them flips the harness to FAIL and
   exit 1; restoring them returns PASS and exit 0. The 35 source predicates execute, evaluate and pass
   on this tree. The harness emits PASS/FAIL/SKIPPED counts, a non-zero exit on FAIL, and `--json`.
-- **Still unverified (must not be read as verified):** the 4 gated behaviour checks — see §0 and §6.
+- **Still unverified (must not be read as verified):** the 4 gated behaviour checks — see section 0 and section 6.
   The `#25` bench compile has **no** verdict (guard-killed); `#18`'s sparse test has **no** verdict
   (target corrected, deliberately not re-run). `#16` and `#31` were observed to pass in the
   experimental run, but the committed ledger reports them SKIPPED because they did not run in the

@@ -330,8 +330,8 @@ error: could not compile `pn-next` (bench "benchmarks") due to 14 previous error
 ```
   GitHub Actions runs `run:` steps with `bash -e` and **without `pipefail`**, so a pipeline's
   status is the *last* command's: `tail`/`tee` exit 0 and the compile failure never reached
-  the job. Hence 15/15 "success" in §2.3 with a benchmark target that cannot build.
-- Correction to §2.3's interpretation: "100% success here is misleading" was right, but not
+  the job. Hence 15/15 "success" in section 2.3 with a benchmark target that cannot build.
+- Correction to section 2.3's interpretation: "100% success here is misleading" was right, but not
   because `cargo bench` was a no-op — it is misleading because the run failed and reported
   success.
 - Fixed by: adding `set -euo pipefail` to the benchmark steps, and strengthening the guard
@@ -431,12 +431,12 @@ Every command below was executed in `/data/data/com.termux/files/home/workspace/
 |---|---|---|
 | 1 | `ls -la .github/workflows/` | `benchmark.yml ci.yml cross-compile.yml dependency-updates.yml devcontainer-test.yml release.yml` |
 | 2 | `env -u LD_LIBRARY_PATH gh repo view michaelamoetoevsky/PDN --json defaultBranchRef` | `{"defaultBranchRef":{"name":"master"}}` |
-| 3 | `env -u LD_LIBRARY_PATH gh run list --workflow=ci.yml --limit 15 --json name,conclusion,headSha,createdAt,event,url` | 6× `"conclusion":"success"`, 9× `"conclusion":"failure"` (see §2.1) |
-| 4 | `env -u LD_LIBRARY_PATH gh run list --workflow=cross-compile.yml --limit 15 ...` | 8 success / 7 failure (see §2.2) |
-| 5 | `env -u LD_LIBRARY_PATH gh run list --workflow=benchmark.yml --limit 15 ...` | 15× success (see §2.3) |
+| 3 | `env -u LD_LIBRARY_PATH gh run list --workflow=ci.yml --limit 15 --json name,conclusion,headSha,createdAt,event,url` | 6× `"conclusion":"success"`, 9× `"conclusion":"failure"` (see section 2.1) |
+| 4 | `env -u LD_LIBRARY_PATH gh run list --workflow=cross-compile.yml --limit 15 ...` | 8 success / 7 failure (see section 2.2) |
+| 5 | `env -u LD_LIBRARY_PATH gh run list --workflow=benchmark.yml --limit 15 ...` | 15× success (see section 2.3) |
 | 6 | `env -u LD_LIBRARY_PATH gh run list --workflow=dependency-updates.yml --limit 15 ...` | `[{"conclusion":"failure","event":"schedule","headSha":"87fdf58...","url":".../41424692889"}]` |
 | 7 | `env -u LD_LIBRARY_PATH gh run list --workflow=devcontainer-test.yml --limit 15 ...` | `[]` |
-| 8 | `env -u LD_LIBRARY_PATH gh run list --workflow=release.yml --limit 15 ...` | 1 success / 14 failure (see §2.6) |
+| 8 | `env -u LD_LIBRARY_PATH gh run list --workflow=release.yml --limit 15 ...` | 1 success / 14 failure (see section 2.6) |
 | 9 | `env -u LD_LIBRARY_PATH gh run view 41744808292 --json jobs` | `Rust Host Build | failure | steps: [('Run tests','failure')]`; all other jobs success; `Release | skipped` |
 | 10 | `env -u LD_LIBRARY_PATH gh run view 41744808292 --log-failed` (grep) | `test test_restart_policy_unless_stopped ... FAILED` / `panicked at tests/supervisor_e2e.rs:302:5:` / `assertion \`left == right\` failed` / `left: Failed` / `right: Stopped` / `test result: FAILED. 18 passed; 1 failed ... finished in 12.72s` / `##[error]Process completed with exit code 101.` / `Terminate orphan process: pid (4034) (sleep)` |
 | 11 | same log, grep deprecation | `##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@v4, actions/checkout@v4.` |
@@ -460,5 +460,5 @@ Every command below was executed in `/data/data/com.termux/files/home/workspace/
 | 29 | `env -u LD_LIBRARY_PATH gh api repos/michaelamoetoevsky/PDN/branches --jq '.[].name'` | `master` |
 | 30 | `git branch -r` | `  origin/master` |
 | 31 | `git log --oneline -5` | `2c0ce65 feat(security): implement --isolated mode...` (HEAD == failing run SHA) |
-| 32 | `read_file .github/workflows/{ci,cross-compile,benchmark,dependency-updates,devcontainer-test,release}.yml` | full contents; defect line numbers in §3 are from these reads |
+| 32 | `read_file .github/workflows/{ci,cross-compile,benchmark,dependency-updates,devcontainer-test,release}.yml` | full contents; defect line numbers in section 3 are from these reads |
 | 33 | `sed -n '270,312p' tests/supervisor_e2e.rs` + `grep -nE "sleep\|Duration::" tests/supervisor_e2e.rs` | `sleep(Duration::from_millis(3000)).await;` at lines 288 and 298; `assert_eq!(status.state, ServiceState::Stopped);` at 302 |

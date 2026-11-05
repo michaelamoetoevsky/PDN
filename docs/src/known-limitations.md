@@ -85,11 +85,11 @@ These are claims the project cannot currently make, listed so that the absence i
 
 ## Deferred to v0.2.0
 
-- **OCI image store and registry transport** (roadmap §4.4): blob store, manifest cache,
+- **OCI image store and registry transport** (roadmap section 4.4): blob store, manifest cache,
   digest-addressed layers, pull/push transport. This is the spine of v0.2.0 — import/export and
   push/pull all depend on it.
-- **Login polygon** (roadmap §10.2): shared home, shared tmp, shared X11, bind presets, work dir,
+- **Login polygon** (roadmap section 10.2): shared home, shared tmp, shared X11, bind presets, work dir,
   hostname, detach, and the rest of the mobility-parity flag set.
 - **Remaining `/proc` and `/sys` stub cases** for unusual distributions. The current stubs cover the
   common paths; the remainder is documented rather than guessed at.
-- **No TUI** until the machine interface is stable (roadmap §9.4).
+- **No TUI** until the machine interface is stable (roadmap section 9.4).

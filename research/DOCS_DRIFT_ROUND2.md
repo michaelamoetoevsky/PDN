@@ -4,7 +4,7 @@
 **Branch:** `dept/doc-drift` (worktree of `72ef9d6`)
 **Scope:** reconcile the residual documented-config-key drift in the files DE owns and add a
 whole-file drift guard. Truthfulness over volume: three doc files finished completely, the rest
-left explicitly untouched (see §6).
+left explicitly untouched (see section 6).
 
 ---
 
@@ -18,8 +18,8 @@ left explicitly untouched (see §6).
   absent keys are declared `# planned:` in the docs **and** enumerated in the test's `PLANNED`
   allowlist with a reason each. No config field was invented.
 * **Guard:** `crates/pn-gateway/tests/doc_key_drift.rs` — 2 tests, green. Proven to bite with a
-  raw negative control (§4).
-* **Not touched:** 5 doc files that also contain TOML config blocks (§6). Stated plainly, not
+  raw negative control (section 4).
+* **Not touched:** 5 doc files that also contain TOML config blocks (section 6). Stated plainly, not
   implied.
 
 ---

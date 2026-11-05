@@ -74,7 +74,7 @@ fn signal_action(kind: SignalKind) -> SignalAction {
     }
 }
 
-/// Defaults resolved from the environment (roadmap §9.2). `XDG_RUNTIME_DIR` and
+/// Defaults resolved from the environment (roadmap section 9.2). `XDG_RUNTIME_DIR` and
 /// `XDG_CONFIG_HOME` win when set; otherwise these reproduce the documented layout under
 /// whatever `TERMUX__HOME`/`HOME` names, instead of one machine's absolute path.
 fn default_runtime_dir() -> String {

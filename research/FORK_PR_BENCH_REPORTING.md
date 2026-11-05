@@ -6,7 +6,7 @@ new `.github/workflows/benchmark-report.yml`. Base revision `72ef9d6`.
 **Verdict: the limitation is reproduced from raw API/log evidence; the fix is
 locally verifiable only as far as YAML + permission reasoning goes. The "comment
 actually appears on a fork PR" outcome is UNVERIFIED and cannot be verified from
-this environment — see §5.**
+this environment — see section 5.**
 
 ---
 
@@ -26,7 +26,7 @@ $ env -u LD_LIBRARY_PATH gh api "repos/michaelamoetoevsky/PDN/actions/runs/41848
 `head_repository: gabm0932/PDN` — the run belongs to a fork, which is exactly the
 condition that makes the token read-only. Note `"pull_requests": []`: **the run's
 own PR association array is empty even though the run is a `pull_request` event
-from PR #26.** That is load-bearing for the fix (§3.2).
+from PR #26.** That is load-bearing for the fix (section 3.2).
 
 ### 1.2 The step list — the comment step is the only failure
 
@@ -128,7 +128,7 @@ $ env -u LD_LIBRARY_PATH gh api "repos/michaelamoetoevsky/PDN/commits/30dabb147a
 `commits/{sha}/pulls` resolves the fork run to PR **#26**, with `head_repo:
 gabm0932/PDN` — a second, independent confirmation of the fork. This is the
 fallback the fix uses because `workflow_run.pull_requests` carries the same empty
-array as §1.1.
+array as section 1.1.
 
 ---
 
@@ -160,7 +160,7 @@ privilege: a job that only builds and uploads now cannot write anything.
 when the named workflow completes. The token the reporting workflow gets is
 therefore a normal base-repo token with the scopes declared in its own
 `permissions:` block — it is not the read-only token handed to a `pull_request`
-run from a fork (§1.3). That is the entire mechanism; no PAT, no `pull_request_target`
+run from a fork (section 1.3). That is the entire mechanism; no PAT, no `pull_request_target`
 with a checkout, nothing that grants a fork-write primitive.
 
 ### 2.3 Why it is safe against fork code
@@ -183,7 +183,7 @@ nobody "simplifies" it away later:
 ### 2.4 Finding the PR number (and why not just `workflow_run.pull_requests`)
 
 ```
-1. run.event !== 'pull_request'            -> log "not a pull_request … no-op" and stop   (§2.5)
+1. run.event !== 'pull_request'            -> log "not a pull_request … no-op" and stop   (section 2.5)
 2. run.pull_requests[0]                    -> use it if present
 3. else repos.listPullRequestsAssociatedWithCommit(commit_sha = run.head_sha)
    -> prefer state == 'open', else data[0]
@@ -191,8 +191,8 @@ nobody "simplifies" it away later:
 ```
 
 Step 2 is the requirement's "triggering run's associated pull requests"; step 3 is
-mandatory because that array was **empty** on the fork run (§1.1) while
-`commits/{sha}/pulls` resolved it to #26 (§1.5). A fix that trusted step 2 alone
+mandatory because that array was **empty** on the fork run (section 1.1) while
+`commits/{sha}/pulls` resolved it to #26 (section 1.5). A fix that trusted step 2 alone
 would silently post nothing on the exact runs this change exists to fix.
 
 ### 2.5 The non-PR no-op
@@ -218,10 +218,10 @@ artifact-download step carries a step-level
 | File | Scope | Value | Why it is needed | Verified how |
 |---|---|---|---|---|
 | `benchmark.yml` (job `benchmark`) | `contents` | `read` | clone + fetch base ref for the baseline comparison | local YAML read |
-| `benchmark.yml` (job `benchmark`) | *(removed)* `issues: write`, `pull-requests: write` | — | were only for the now-deleted comment step; the fork token never had them (§1.3) | local diff |
-| `benchmark-report.yml` (workflow) | `actions: read` | | download the run's artifact (`download-artifact@v8` needs `actions:read` on the target repo, per its README) | action README + §1.4 |
+| `benchmark.yml` (job `benchmark`) | *(removed)* `issues: write`, `pull-requests: write` | — | were only for the now-deleted comment step; the fork token never had them (section 1.3) | local diff |
+| `benchmark-report.yml` (workflow) | `actions: read` | | download the run's artifact (`download-artifact@v8` needs `actions:read` on the target repo, per its README) | action README + section 1.4 |
 | `benchmark-report.yml` (workflow) | `pull-requests: write` | | read PR association / comment on the PR | required by the task and by the API (`x-accepted-github-permissions`) |
-| `benchmark-report.yml` (workflow) | `issues: write` | | `POST /issues/{n}/comments` is the issues API | API response in §1.3 |
+| `benchmark-report.yml` (workflow) | `issues: write` | | `POST /issues/{n}/comments` is the issues API | API response in section 1.3 |
 
 No `contents:` is declared in `benchmark-report.yml`: the workflow reads no
 repository content, so it has no `contents` permission at all.
@@ -250,7 +250,7 @@ repository content, so it has no `contents` permission at all.
 | Source | Field | Value on the reproduced run | Used for |
 |---|---|---|---|
 | `context.payload.workflow_run` | `id` | `41848512267` | `run-id` for `download-artifact@v8`; comment footer link |
-| `context.payload.workflow_run` | `event` | `pull_request` | the no-op gate (§2.5) |
+| `context.payload.workflow_run` | `event` | `pull_request` | the no-op gate (section 2.5) |
 | `context.payload.workflow_run` | `head_sha` | `30dabb147ac94b6df636dd6c041d7ef021bd3470` | fallback PR lookup via `listPullRequestsAssociatedWithCommit` |
 | `context.payload.workflow_run` | `pull_requests` | `[]` (empty) | primary PR lookup — **misses**, hence the fallback |
 | `repos/{o}/{r}/commits/{head_sha}/pulls` | `[0].number` | `26` | the PR actually commented on |
@@ -278,7 +278,7 @@ workflow — the ids above appear only in this report as evidence.
   `report` job → `permissions: {actions: read, pull-requests: write,
   issues: write}`, 2 steps, download step gated on
   `github.event.workflow_run.event == 'pull_request'`.
-- The limitation itself is reproduced from raw API + log evidence (§1).
+- The limitation itself is reproduced from raw API + log evidence (section 1).
 
 ### UNVERIFIED — cannot be established from this environment
 
@@ -290,7 +290,7 @@ workflow — the ids above appear only in this report as evidence.
   `run-id` + `github-token` inputs are confirmed against the action's README, and
   `actions: read` is declared, but the cross-run download has not been executed.
 - **That `listPullRequestsAssociatedWithCommit` returns the PR at run time.** It
-  returned PR #26 for the reproduced head SHA (§1.5), but on a live open PR the
+  returned PR #26 for the reproduced head SHA (section 1.5), but on a live open PR the
   `state` filter behaves differently from a merged one (it would pick the `open`
   entry). Unverified on an open PR.
 - **That the master path is truly unchanged at runtime.** The logic reads as a

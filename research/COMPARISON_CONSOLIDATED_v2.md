@@ -43,7 +43,7 @@ Structural, not incidental: PDN is one static Rust binary; proot-distro is a Pyt
 | build / push (OCI) | ✅ | ⚠️ | PDN `build`/`gitops` are stubs |
 | `--shared-home/--shared-tmp/--isolated/--minimal/--bind` on login | ✅ | ❌ | PDN has `-b/--bind` on the direct-exec path only |
 | service supervision (restart policy, backoff, circuit breaker) | ❌ | ✅ | PDN exclusive |
-| network / volume / quota (cgroups) / structured log / D-Bus / socket / boot / wakelock / policy | ❌ | ✅ | PDN exclusive (several are partial, see §4) |
+| network / volume / quota (cgroups) / structured log / D-Bus / socket / boot / wakelock / policy | ❌ | ✅ | PDN exclusive (several are partial, see section 4) |
 
 ---
 
@@ -57,7 +57,7 @@ Structural, not incidental: PDN is one static Rust binary; proot-distro is a Pyt
 |---|---|
 | PDN runs as host uid (`u0_a396`), keeps host `HOME`/`PATH`; proot-distro fakes uid 0 with `HOME=/root` | **By design** (PDN does not fake identity). Consequence: guest `PATH` could resolve host binaries — the reason the env leak below mattered. |
 | PDN reports the real Android kernel in `uname`; proot-distro fakes `6.17.0-PRoot-Distro` | **By design** |
-| `/proc/version` unreadable in PDN | **FIXED** — PDN now fabricates the blocked `/proc` entries the same way proot-distro does (see §4 row 12) |
+| `/proc/version` unreadable in PDN | **FIXED** — PDN now fabricates the blocked `/proc` entries the same way proot-distro does (see section 4 row 12) |
 | `/etc/hosts` reduced to 2 lines | Minor divergence, benign |
 
 **Genuine defects found (all reproduced live):**

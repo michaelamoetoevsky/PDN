@@ -91,7 +91,7 @@ effect and no error, because the file is never parsed.
 
 The only documentation that lands on a *live* loader is `[network]`/`[network.config]`
 (`networks.toml`) and `[storage]`/`[storage.config]` (`volumes.toml`) — and those are the surfaces
-where a key mismatch would actually matter, because they *are* parsed (see §3).
+where a key mismatch would actually matter, because they *are* parsed (see section 3).
 
 ---
 

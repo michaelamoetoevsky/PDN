@@ -317,9 +317,9 @@ Decisions already taken, so they are not reopened here:
 - **Licence**: `GPL-2.0-or-later`, declared identically in `LICENSE`, `Cargo.toml` and `README.md`,
   pinned by four ledger predicates (#40, closed).
 - **Image model**: unchanged in v0.1.9. Images are still container directories; the OCI artifact
-  store, layers and registry transport are §4.4 and belong to the next major version.
+  store, layers and registry transport are section 4.4 and belong to the next major version.
 - **TUI**: not in v0.1.9. A TUI is a consumer; it is cheap only once a stable machine interface
-  exists underneath. §9.2 builds that interface first.
+  exists underneath. section 9.2 builds that interface first.
 
 ### 9.1 Stability and honesty — freeze breadth, deepen the paths people use daily
 
@@ -369,7 +369,7 @@ Being able to `login` is not the same as enjoying the shell daily. Ordered by wh
   Complexity that is not exercised rots, and the project has the receipts: a benchmark target drifted
   through 26 compile errors behind a green check.
 - No new top-level commands. v0.1.9 makes the existing 37 honest before adding a 38th.
-- No TUI until §9.2 lands, no OCI store until the next major version (§4.4).
+- No TUI until section 9.2 lands, no OCI store until the next major version (section 4.4).
 
 The audit run that accompanies this section supplies the concrete defect list; its findings are
 triaged into the issue tracker and folded back here as they are confirmed.
@@ -417,7 +417,7 @@ command. The reference polygon is far wider, and this is where "mobility" is fel
 |---|---|---|---|
 | Portable export | OCI layout archive | no | `podnext export <c> ./c.oci.tar`, then `install` it on another device |
 | Import (above) | yes | no | round-trip on the same device first, then across |
-| Registry push/pull of built images | yes (§4.4) | impossible: no layers retained (#39) | `build local` → `push` → `pull` on a second machine |
+| Registry push/pull of built images | yes (section 4.4) | impossible: no layers retained (#39) | `build local` → `push` → `pull` on a second machine |
 | Backup/restore | yes, with compression | yes | already passing; keep it |
 
 ### 10.4 Gap: ecosystem
@@ -433,25 +433,25 @@ command. The reference polygon is far wider, and this is where "mobility" is fel
 
 Reimplemented from the OCI/Docker specifications, **never transcribed**: the reference is GPL-3.0 and
 this project is `GPL-2.0-or-later`; the boundary is described in `research/IMAGE_STORE_AND_PUSH.md`
-§5. What is taken is the *architecture*, module by module:
+section 5. What is taken is the *architecture*, module by module:
 
 | Reference area | What it does | podnext counterpart to build |
 |---|---|---|
-| layer cache + manifest cache | digest-addressed blobs; the image is artifacts, the rootfs is derived | new `image-store` module (§4.4) |
-| pull / push | Docker Registry v2 with blob skipping, streaming, auth scoping | registry transport (§4.4) |
+| layer cache + manifest cache | digest-addressed blobs; the image is artifacts, the rootfs is derived | new `image-store` module (section 4.4) |
+| pull / push | Docker Registry v2 with blob skipping, streaming, auth scoping | registry transport (section 4.4) |
 | local archive install | raw rootfs tar and OCI layout, digests verified, reads bounded | `podnext install <archive>` |
 | build engine + layer differ | one layer per instruction, whiteouts, multi-stage with per-stage scopes | replaces the current single-rootfs builder |
-| login option polygon | isolated / shared / bindings / ports / detach / user | widen `login` to §10.2 |
+| login option polygon | isolated / shared / bindings / ports / detach / user | widen `login` to section 10.2 |
 | session registry | recorded sessions, consistent `ps`/`kill`, teardown | extend what exists; add detach/attach |
 | sysdata, shm, l2s, dirfd | /proc stubs, shared memory, hardlink emulation, descriptor VFS | already ported in earlier rounds — verify parity, do not rewrite |
 | state dir + paths | honours `TERMUX__HOME`, `TERMUX__PREFIX`, XDG | replace 12 hard-coded Termux paths |
-| help pages + alias + completions | discoverability | §10.4 |
+| help pages + alias + completions | discoverability | section 10.4 |
 
 ### 10.6 Sequencing
 
 - **v0.1.9** (current): stability, honesty, module split, cached index, env-var paths, and the crash
   class filed as #41. No new top-level commands; no TUI.
-- **v0.2.0**: §10.1–10.4. The image store (§4.4) is the spine, because import/export, push/pull and
+- **v0.2.0**: section 10.1–10.4. The image store (section 4.4) is the spine, because import/export, push/pull and
   build-with-layers all sit on it; the `login` polygon is the other half and is independent of it, so
   the two can proceed in parallel.
 - Performance is not a later phase: the cached container index and the daemon-owned state are v0.1.9

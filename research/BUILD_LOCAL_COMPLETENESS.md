@@ -4,7 +4,7 @@ Department: Container Build Engineering (CBE). Role: Build Runtime Engineer.
 Branch: `dept/build-completeness`. Base revision: `72ef9d6`.
 Files owned/changed: `crates/podnext/**` only.
 
-This closes the residual gaps recorded in `research/BUILD_LOCAL_FIX.md` §6
+This closes the residual gaps recorded in `research/BUILD_LOCAL_FIX.md` section 6
 (items 1, 2, 4) and takes the wildcard slice of item 3. Everything below was run
 against a real built binary (`cargo build -p podnext --locked`, shared
 `CARGO_TARGET_DIR`, under the memory guard and the cargo mutex). The pre-fix
@@ -301,7 +301,7 @@ test result: ok.  2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
    (unittests src/daemon.rs)
 ```
 
-Base was 11 + 2 for this crate (per `BUILD_LOCAL_FIX.md` §5), i.e. 13 → 21.
+Base was 11 + 2 for this crate (per `BUILD_LOCAL_FIX.md` section 5), i.e. 13 → 21.
 Eight new tests added, none removed:
 
 - `native::image_runtime_config_tests` × 3

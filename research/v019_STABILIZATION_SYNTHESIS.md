@@ -1,6 +1,6 @@
 # v0.1.9 Stabilization & Hardening Synthesis Report
 
-**Status**: Eight remediation batches integrated; the `v0.1.9` tag was withdrawn pending roadmap §9
+**Status**: Eight remediation batches integrated; the `v0.1.9` tag was withdrawn pending roadmap section 9
 **Date**: November 5, 2026 (WIB)
 **Integration head**: `ed7dc3f` (v0.1.9 withdrawn; version back to `0.1.8`)
 **Baseline**: 57 empirically observed audit findings (2 critical, 16 high, 22 medium, 12 low, 5 nit)
@@ -22,7 +22,7 @@
 | **H** | Polish & defect mop-up | 11 (`04-7`..`04-12`, `01-8`..`01-10`) | `wt-fix-h` (`fix/polish`) | merged (`ebffba0`..`8bc2ef4`, 8 commits) | per-finding unit tests |
 
 Twenty commits landed between `7cf3fd4` and the integration head: 18 originating in the
-batches, 2 written during integration (see §3).
+batches, 2 written during integration (see section 3).
 
 ---
 
@@ -34,7 +34,7 @@ batches, 2 written during integration (see §3).
 | `cargo check -p proot-distro-core -j 1` | exit 0 (peak 455 MB, 8 s) |
 | `cargo check -p podnext -j 1` | exit 0 (peak 1190 MB, 48 s) |
 | `cargo test -p proot-distro-core` | **56 passed / 0 failed** (lib, 1.04 s) + 3 + 1 integration tests passed |
-| `cargo test --workspace -j 1` | all binaries green: 4, 1 (258 s), 9, 9, 2, 58, 19, 32 tests passed, 0 failed — one stale assertion was fixed in `c3139bb` (see §3.4) |
+| `cargo test --workspace -j 1` | all binaries green: 4, 1 (258 s), 9, 9, 2, 58, 19, 32 tests passed, 0 failed — one stale assertion was fixed in `c3139bb` (see section 3.4) |
 | `build_issue_ledger.py --offline --json` (source predicates) | 55 PASS / 0 FAIL / 4 SKIPPED of 59 checks |
 | `build_issue_ledger.py --cargo` (full verdicts) | **59 PASS / 0 FAIL / 0 SKIPPED** of 59 checks |
 
@@ -127,7 +127,7 @@ release.
 
 ---
 
-## 5. Release Status: v0.1.9 WITHDRAWN — roadmap §9 is not met
+## 5. Release Status: v0.1.9 WITHDRAWN — roadmap section 9 is not met
 
 The `v0.1.9` tag and GitHub release were created on 2026-11-05 and **withdrawn the same day**:
 `gh release delete v0.1.9 --cleanup-tag`, the remote tag deleted, `releases/tags/v0.1.9` now answers
@@ -135,10 +135,10 @@ The `v0.1.9` tag and GitHub release were created on 2026-11-05 and **withdrawn t
 to `0.1.8`), because the artifact claimed a milestone that is not implemented.
 
 Reason: `docs/src/v0.1.9-release-strategy.md` scopes v0.1.9 to the audit findings, while
-`docs/src/roadmap.md` §9 scopes it to stability **plus simplicity/performance plus the interactive
-shell** — and §9's own acceptance criteria are largely unmet:
+`docs/src/roadmap.md` section 9 scopes it to stability **plus simplicity/performance plus the interactive
+shell** — and section 9's own acceptance criteria are largely unmet:
 
-| §9 work item | Acceptance criterion | State at `ed7dc3f` |
+| section 9 work item | Acceptance criterion | State at `ed7dc3f` |
 |---|---|---|
 | 9.1 labelling | every command labelled `stable` / `experimental`, in `--help` and in the docs | 0 occurrences of `experimental` in `main.rs` and `cli-reference.md` |
 | 9.1 contract test | every command, flag and example in `cli-reference.md` exists and runs | no such test in the repo |
@@ -148,10 +148,10 @@ shell** — and §9's own acceptance criteria are largely unmet:
 | 9.2 honest size | a real image size, or an explicit `unknown` | not implemented |
 | 9.3 `doctor` | `podnext doctor` on the host and inside the guest | command absent |
 | 9.3 shell | detach → attach round trip, `SIGWINCH`/`PS1`/`TERM`, quoting table, soak leaving no processes | not verified |
-| release checklist | roadmap §9 marked shipped, `known-limitations.md`, `CHANGELOG.md`, README "What's New" | `known-limitations.md` and `CHANGELOG.md` absent; §9 unmarked |
+| release checklist | roadmap section 9 marked shipped, `known-limitations.md`, `CHANGELOG.md`, README "What's New" | `known-limitations.md` and `CHANGELOG.md` absent; section 9 unmarked |
 | release checklist | manual smoke test: install alpine → run → login → remove | not run |
 
-What the withdrawal does **not** invalidate — §9.1's triage arm is done and verified:
+What the withdrawal does **not** invalidate — section 9.1's triage arm is done and verified:
 
 1. C1/C2 plus batches A–H: 20 commits, ledger `--cargo` **59 PASS / 0 FAIL / 0 SKIPPED** of 59 checks
    (the four gated behaviour checks `#16`, `#18`, `#25`, `#31` now carry verdicts).
@@ -166,12 +166,12 @@ What the withdrawal does **not** invalidate — §9.1's triage arm is done and v
    **unobserved on the event it guards** — a `master` push does not run it; the next tag is the
    evidence.
 
-Sizing note: the remainder is not a patch release. §9.3 is the interactive shell, §9.2 is a CLI split
-and a cached index, and the version after them is **v0.2.0** (roadmap §10, with the OCI image store
-from §4.4 as its spine) — there is no v0.1.10.
+Sizing note: the remainder is not a patch release. section 9.3 is the interactive shell, section 9.2 is a CLI split
+and a cached index, and the version after them is **v0.2.0** (roadmap section 10, with the OCI image store
+from section 4.4 as its spine) — there is no v0.1.10.
 
 Lesson recorded in the skill: a tag is a claim about scope. Check the roadmap section's acceptance
 criteria and the release checklist before creating a public artifact, not after.
 
-Next: the §9 work items above, in the order 9.1 (labels, contract test) → 9.2 (paths, split, index) →
+Next: the section 9 work items above, in the order 9.1 (labels, contract test) → 9.2 (paths, split, index) →
 9.3 (`doctor`, shell), then the release checklist and a single v0.1.9 tag.

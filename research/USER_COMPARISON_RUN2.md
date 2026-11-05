@@ -256,37 +256,37 @@ PDN's host container directory is owner-private (0700); proot-distro's is world-
    kernel version (eBPF, io_uring, seccomp profiles, driver checks) sees the truth under PDN.
 
 2. **No host binary leakage.** proot-distro's PATH includes `/data/data/com.termux/files/usr/bin`
-   and resolves `python3/node/git/wget/make/gcc` to HOST Termux binaries (evidence §3). A build
+   and resolves `python3/node/git/wget/make/gcc` to HOST Termux binaries (evidence section 3). A build
    inside the "container" silently uses host toolchains. PDN resolves none — clean isolation.
 
 3. **No host/Android environment leakage.** proot-distro exports the full Android bootstrap
    (`ANDROID_ROOT`, `BOOTCLASSPATH`, `DEX2OATBOOTCLASSPATH`), the external-storage path, and a host
-   filesystem path `PROOT_L2S_DIR` (§5). PDN exports 6 clean vars; `env | grep -c -i termux` = 0.
+   filesystem path `PROOT_L2S_DIR` (section 5). PDN exports 6 clean vars; `env | grep -c -i termux` = 0.
 
 4. **No host Android identity mapping.** proot-distro injects `aid_u0_a396:...Termux` and names the
-   host's supplementary GIDs as `aid_*` (§8). PDN keeps them numeric and exposes no host identity.
+   host's supplementary GIDs as `aid_*` (section 8). PDN keeps them numeric and exposes no host identity.
 
 5. **Correct `/dev/random` semantics.** PDN's `/dev/random` is the real char device `1,8`; proot-distro
-   binds `/dev/urandom` (`1,9`) over `/dev/random` (§7). PDN preserves the distinction.
+   binds `/dev/urandom` (`1,9`) over `/dev/random` (section 7). PDN preserves the distinction.
 
 6. **Private host storage layout.** PDN's container dir is `drwx------` (0700); proot-distro's is
-   `drwxr-xr-x` (0755), readable by any host process (§12).
+   `drwxr-xr-x` (0755), readable by any host process (section 12).
 
 ## Where proot-distro is more convenient (fair)
 
 1. **Termux toolchain is available out of the box.** Because the host bin is on PATH, `python3`,
-   `git`, `node`, `gcc` "just work" inside the container with no apt install (§3). Convenient for
+   `git`, `node`, `gcc` "just work" inside the container with no apt install (section 3). Convenient for
    casual scripting; it is exactly the isolation leak PDN avoids.
 
-2. **`free` works immediately.** proot-distro returns a memory report (the host's) (§6); PDN has no
+2. **`free` works immediately.** proot-distro returns a memory report (the host's) (section 6); PDN has no
    `free` at all until `procps` is installed.
 
-3. **External storage is mounted.** proot-distro binds `/storage/emulated/0 → /mnt/sdcard` (§7), so
+3. **External storage is mounted.** proot-distro binds `/storage/emulated/0 → /mnt/sdcard` (section 7), so
    the shared `/sdcard` is reachable. PDN does not mount it — inside PDN `ls /mnt/sdcard` → "No such
    file or directory". Users needing device files to arrive without an explicit bind will notice.
 
 4. **Faithful exit-code propagation.** `proot-distro login debian -- sh -c 'exit 7'` returns 7; run
-   under PDN the wrapper returns 1 (§ BUG-1). Scripts checking `$?` behave correctly in
+   under PDN the wrapper returns 1 (section BUG-1). Scripts checking `$?` behave correctly in
    proot-distro.
 
 5. **Mature, widely documented CLI.** proot-distro is Termux's default; its behavior and docs are
@@ -343,7 +343,7 @@ available and simply not forwarded.
 ## Proposed PoC documentation for the outcome
 
 - **PoC title:** "Container fidelity under PDN vs proot-distro on a shared Termux host."
-- **Reproduction script** (read-only, no resets): run the 12 command blocks from §1–§12 above against
+- **Reproduction script** (read-only, no resets): run the 12 command blocks from section 1–section 12 above against
   `deb-pdn` (PDN) and `debian` (proot-distro); diff the outputs. Expected: PDN shows real kernel,
   clean env/PATH/identity; proot-distro shows leaked host PATH, Android env, `aid_u0_a396`, and a
   fake `6.17.0-PRoot-Distro`.
@@ -359,4 +359,4 @@ available and simply not forwarded.
   with pipes, and stdout/stderr interleaving under a pty — none were requested and none were run.
 - Untested (intentional): `podnext run` subcommand semantics; only `login ... -- cmd` was exercised.
 - The 50-vs-53 `mount` delta and the `/dev/shm` file diffs include pre-existing test artifacts
-  (`probe`, `x`); only the named bind mounts in §7 are attributed to the tools.
+  (`probe`, `x`); only the named bind mounts in section 7 are attributed to the tools.

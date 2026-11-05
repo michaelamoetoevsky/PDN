@@ -1,4 +1,4 @@
-# v0.1.9 §9 Gap Baseline — measured, not diagnosed
+# v0.1.9 section 9 Gap Baseline — measured, not diagnosed
 
 **Date**: 5 Nov 2026 (WIB)
 **Binary**: `target/debug/podnext`, `podnext 0.1.8`, built 5 Nov 13:58 (the workspace build).
@@ -11,7 +11,7 @@ says so. Nothing here is inferred from reading code alone.
 
 ---
 
-## 1. §9.1 Stability and honesty
+## 1. section 9.1 Stability and honesty
 
 ### 1.1 Command labelling — unmet
 
@@ -20,7 +20,7 @@ $ ./target/debug/podnext --help      # 38 top-level commands
 $ grep -cE '\[(stable|experimental)\]' crates/podnext/src/main.rs   -> 0
 ```
 
-The help listing uses `[Core]`, `[Container]`, `[System]`, `[Advanced]` tags instead. Roadmap §9.1
+The help listing uses `[Core]`, `[Container]`, `[System]`, `[Advanced]` tags instead. Roadmap section 9.1
 requires every command labelled `stable` / `experimental` in `--help` **and** in the docs:
 **0 of 38 commands satisfy it.**
 
@@ -84,7 +84,7 @@ reference documents.**
 
 ---
 
-## 2. §9.2 Simplicity and performance
+## 2. section 9.2 Simplicity and performance
 
 ### 2.1 File size target — unmet
 
@@ -155,7 +155,7 @@ defaults are overridable clap values, and `constants.rs` holds fallbacks.
 
 ---
 
-## 3. §9.3 The interactive shell
+## 3. section 9.3 The interactive shell
 
 ### 3.1 `--bind` / `--volume` are accepted and silently do nothing
 
@@ -213,14 +213,14 @@ manual smoke test (install alpine -> run -> login -> remove)   not run
 
 ## 5. Consequences for the plan
 
-1. §9.1 is not "partially done": labelling, the `version` option table, the exit-code table and the
+1. section 9.1 is not "partially done": labelling, the `version` option table, the exit-code table and the
    environment-variable table are all measurable defects at `5b479d1`.
-2. §9.2's SIZE item is narrower and sharper than "the number is fake": the fallback must be an
+2. section 9.2's SIZE item is narrower and sharper than "the number is fake": the fallback must be an
    explicit `unknown` (or a size that tolerates unreadable subdirectories, e.g. `du` without the
    hard `success()` requirement, plus a marker).
-3. §9.3's mount flags are the highest-value shell fix found so far, and they are verifiable end to
+3. section 9.3's mount flags are the highest-value shell fix found so far, and they are verifiable end to
    end with the test above — a bind that works turns the three identical outputs into a visible
    marker file.
-4. The `commands/*.rs`-style split from §9.2 and the `TERMUX__*`/`XDG_*` work are large and
+4. The `commands/*.rs`-style split from section 9.2 and the `TERMUX__*`/`XDG_*` work are large and
    mechanical; they should start only after the measurable honesty items above, so that the same
    measurement script can prove progress.

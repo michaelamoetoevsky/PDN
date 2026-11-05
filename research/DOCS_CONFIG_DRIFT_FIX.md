@@ -200,7 +200,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
   reconciles the `[gateway]` section that #27 names. The remaining drift spans `[container.*]`,
   `[profile.*]`, `[network.*]`, `[grpc.*]`, `[api.*]`, `[general.*]`, `[plugin.*]`, `[pod.*]` and is
   carried as the backlog below.
-* **Backlog (prioritised by blast radius, per audit §5.6):**
+* **Backlog (prioritised by blast radius, per audit section 5.6):**
   1. `gateway.guardrails.*` limits (`max_containers`, `max_memory_total`, `max_cpu_total`,
      `blocked_images/syscalls`, `required_security_profile`, `quotas.*`, `rate_limit.*`) — safety
      surface, all absent.

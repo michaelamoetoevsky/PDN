@@ -40,7 +40,7 @@ $ podnext run test-alpine --volume $PREFIX/tmp/pdn-mnt-probe:/mnt -- ls -l /mnt
 total 0                                                              <- the requested path is empty
 ```
 
-The argv PDN built (captured with `PN_DEBUG=1`, see §4):
+The argv PDN built (captured with `PN_DEBUG=1`, see section 4):
 
 ```
 proot --kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=. --cwd=/ \

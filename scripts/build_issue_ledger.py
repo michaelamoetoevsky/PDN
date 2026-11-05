@@ -301,7 +301,7 @@ CHECKS: list[dict] = [
          cmd="grep -qF 'Verdict::Unknown' crates/podnext/src/doctor.rs", needle=None),
     dict(issue="45", claim="the command itself is exercised end to end",
          cmd="cargo test -p podnext --test doctor_contract", needle=None, cargo=True),
-    # ── #46: path defaults follow the environment (§9.2) ─────────────────────
+    # ── #46: path defaults follow the environment (section 9.2) ─────────────────────
     dict(issue="46", claim="the daemon binary carries no hard-coded home path",
          cmd="! grep -qF '/data/data/com.termux/files/home' crates/podnext/src/daemon.rs",
          needle=None),

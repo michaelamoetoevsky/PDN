@@ -3,7 +3,7 @@
 Evidence-based. Every claim cites the exact `--help` output or source file/line observed on this host.
 Read-only research; nothing outside this file was modified.
 
-- Host: Termux / Android 16, aarch64, kernel `6.17.0-PRoot-Distro` (faked; see §6)
+- Host: Termux / Android 16, aarch64, kernel `6.17.0-PRoot-Distro` (faked; see section 6)
 - Python: 3.14.6
 - Tool: `proot-distro` 5.10.3, author "Termux (@sylirre)"
 - Captured: Tue Nov 3 02:39:23 WIB 2026
@@ -658,8 +658,8 @@ Defaults and mutually-exclusive groups read from `proot_distro/parser.py`; behav
 | `remove` | `commands/remove.py` | `target` positional; `-i/--image`; `-a/--architecture` (requires `--image`); `-v`/`-q` mutually exclusive | Default deletes a container's directory tree; `--image` deletes a cached image's manifest entry plus now-unreferenced layer blobs. No confirmation prompt. |
 | `rename` | `commands/rename.py` | `orig_name`, `new_name` positionals; `-q` | Renames `containers/<old>`→`containers/<new>` and rewrites proot l2s symlink targets under the new rootfs. Refuses identical names and an existing destination. Locks both names in sorted order. |
 | `reset` | `commands/reset.py` | `container_name` positional; `-q` | Removes the rootfs and `shm/` store, then re-invokes `command_install` with the stored `image_ref`+`arch`. Requires an OCI `image_ref` in the manifest. |
-| `backup` | `commands/backup.py` | `container_name` positional; `-o/--output`; `-c/--compress` `choices=[gzip,bzip2,xz,zstd,none]`; `-v`/`-q` mutually exclusive | Streams a TAR (`<name>/manifest.json` + `<name>/rootfs/...`) to a file or stdout. Compression inferred from extension unless `--compress`. See §7. |
-| `restore` | `commands/restore.py` | `archive` optional positional; `-v`/`-q` mutually exclusive | Extracts a single-container backup from a file or stdin; auto-detects compression by magic bytes. See §7. |
+| `backup` | `commands/backup.py` | `container_name` positional; `-o/--output`; `-c/--compress` `choices=[gzip,bzip2,xz,zstd,none]`; `-v`/`-q` mutually exclusive | Streams a TAR (`<name>/manifest.json` + `<name>/rootfs/...`) to a file or stdout. Compression inferred from extension unless `--compress`. See section 7. |
+| `restore` | `commands/restore.py` | `archive` optional positional; `-v`/`-q` mutually exclusive | Extracts a single-container backup from a file or stdin; auto-detects compression by magic bytes. See section 7. |
 | `clear-cache` | `commands/clear_cache.py` | `--orphan`; `--build-cache`; `-v`/`-q` mutually exclusive | Default empties the whole download cache; `--orphan` removes only unreferenced layer blobs; `--build-cache` removes the build index then sweeps. Refuses to run under another command's lock. |
 | `copy` | `commands/copy.py` | `source`, `destination` positionals; `-m/--move`; `-r/--recursive`; `-v`/`-q` mutually exclusive | Copies/moves between host and `container:path`, preserving symlinks; merges into an existing destination tree like `cp -a`; `--move` refuses a populated dest dir. Locks each container involved. |
 | `sync` | `commands/sync.py` | `source`, `destination` positionals; `-c/--checksum`; `-d/--delete`; `-v`/`-q` mutually exclusive | Recursive rsync-like sync comparing size+mtime by default, size+CRC32 with `--checksum`; `--delete` prunes destination extras. Never changes ownership; mode/timestamp preserved. |
@@ -820,7 +820,7 @@ Source: `proot_distro/commands/login/proot_cmd.py`. The argv is assembled in a f
 ### Exact proot flags passed
 From `build_proot_args`, `_add_proot_extensions`, `_add_non_minimal_binds`, `_add_termux_dev_binds`, `_add_custom_binds`:
 
-- `-q <emulator>` — only when cross-arch emulation is needed (first, before extensions). Emulator adds extra binds (§8).
+- `-q <emulator>` — only when cross-arch emulation is needed (first, before extensions). Emulator adds extra binds (section 8).
 - `--kill-on-exit` — appended unless `--no-kill-on-exit` (which instead warns). Termux only.
 - `--link2symlink` — unless `dist_type=="termux"` or `--no-link2symlink`.
 - `--sysvipc` — unless `--no-sysvipc` (and only when not minimal).

@@ -202,7 +202,7 @@ mod tests {
 ///
 /// The Termux layout (`/data/data/<package>/files/{home,usr}`) is a default, not a law:
 /// the app's own environment names the real locations, and `termux-exec`/`proot-distro`
-/// export them. Roadmap §9.2 asks for these to be honoured instead of hard-coded, so the
+/// export them. Roadmap section 9.2 asks for these to be honoured instead of hard-coded, so the
 /// binary keeps working when the home or the prefix moves (a second profile, a container,
 /// a relocated install). Every resolver follows the documented order and falls back to the
 /// default only when nothing is set.

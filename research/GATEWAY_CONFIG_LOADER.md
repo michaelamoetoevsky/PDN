@@ -163,7 +163,7 @@ load, round-trip, and are asserted by four integration tests in `crates/pn-gatew
 
 - No serializer (`to_toml_str`); the "round-trip" covered is file→struct. Adding
   serialization would require exposing the `[gateway]` wrapper publicly.
-- Top-level keys outside `[gateway]` are not validated (by design, see §2).
+- Top-level keys outside `[gateway]` are not validated (by design, see section 2).
 - `Cargo.lock` changed (pn-gateway added to `toml` and `tempfile` edges). The
   integrator must commit it.
 

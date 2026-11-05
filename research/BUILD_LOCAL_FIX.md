@@ -62,7 +62,7 @@ Raw transcript: `$HOME/.hermes/cache/scratch/bse-repro.log`.
 `cmd_build_local` guarded its only real work with `if path.exists()` and printed
 the success line unconditionally afterwards. With a non-existent context the old
 code therefore did *no work at all* and still reported a built image. The new
-code fails hard (§3, test `missing_context_is_a_hard_error_and_writes_nothing`).
+code fails hard (section 3, test `missing_context_is_a_hard_error_and_writes_nothing`).
 
 ---
 
@@ -216,7 +216,7 @@ Both exercised `execute_run`, which ran RUN with `sh -c` in the *build context* 
 exactly the defective behaviour #29 removes (RUN must run inside the assembled
 rootfs). `execute_run` is no longer called by any product path, so it and its
 tests were deleted. RUN-in-rootfs is now covered by the integration evidence in
-§4b (RUN wrote `marker.txt` inside the pulled rootfs). The two `ARG` tests
+section 4b (RUN wrote `marker.txt` inside the pulled rootfs). The two `ARG` tests
 (`arg_is_accepted_and_substituted`, `arg_without_default_is_declared_empty`) were
 kept unchanged. Net: −2 dead-code tests, +2 regression tests.
 
@@ -239,7 +239,7 @@ kept unchanged. Net: −2 dead-code tests, +2 regression tests.
 5. **A tag containing `:` as a container-directory name** (e.g. `bse-real:latest`)
    makes proot print `can't sanitize binding ".../containers/bse-real"` for the
    sysdata/guestdirs bind mounts (proot bind specs are `host:guest:flags`, so a
-   `:` in the host path confuses them). Execution still works (§4b), but the fake
+   `:` in the host path confuses them). Execution still works (section 4b), but the fake
    `/proc` stubs are not bound for such names. A sanitised on-disk name with a
    `run <tag>` alias would fix this; not done here.
 6. No OCI manifest/config or `~/.podnext/images` entry is produced — the runtime's
