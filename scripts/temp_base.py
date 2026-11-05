@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """One writable temp base, correct on this device and on a CI runner.
 
-The rule has now been got wrong **three times** in this repository, in three files, always as the same
-expression:
-
-    Path(os.environ.get("TMPDIR") or Path(os.environ.get("PREFIX", "/tmp")) / "tmp")
-
-`/ "tmp"` binds to the *fallback* too, so a host with neither variable asks the filesystem for
-`/tmp/tmp`:
+The rule has now been got wrong **three times** in this repository, in three files, always in the same
+shape: a one-line `or` chain that resolves the environment variable and then appends a path segment,
+written without brackets - so the appended segment attaches to the *fallback* as well and a host with
+neither variable asks the filesystem for `/tmp/tmp`. The line is described rather than quoted here,
+because a docstring containing it is something the next reader can copy:
 
     FileNotFoundError: [Errno 2] No such file or directory: '/tmp/tmp/pdn-doc-examples-44ph24wj'
 

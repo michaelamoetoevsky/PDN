@@ -334,7 +334,8 @@ CHECKS: list[dict] = [
 
     # ── #71: one temp-base rule, in one place ──────────────────────────────
     dict(issue="71", claim="the temp-base expression that broke three times is gone from scripts",
-         cmd="grep -rn 'PREFIX\", \"/tmp\"' scripts/ || echo CLEAN", needle="CLEAN"),
+         cmd="grep -rn --include='*.py' 'or Path(os.environ.get(\"PREFIX\"' scripts/ || echo CLEAN",
+         needle="CLEAN"),
     dict(issue="71", claim="the rule lives in one module and its self-check can fail",
          cmd="python3 scripts/temp_base.py", needle="the doubled /tmp segment is unreachable"),
     # ── #68: an interactive guest must keep the terminal it was given ─────────
