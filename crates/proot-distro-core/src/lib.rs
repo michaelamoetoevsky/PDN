@@ -18,6 +18,7 @@ pub mod compress;
 pub mod config;
 pub mod constants;
 pub mod container;
+pub mod container_index;
 pub mod dirfd;
 pub mod dockerfile;
 pub mod gpu;

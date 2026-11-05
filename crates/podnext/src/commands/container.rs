@@ -47,7 +47,17 @@ pub fn default_container_name(image: &str) -> String {
 
 pub async fn cmd_list(_all: bool, no_all: bool, format: OutputFormat) -> Result<()> {
     let show_all = !no_all;
+    // The metadata query — building the manager (which loads or serves the index)
+    // plus listing it. Timed here, not in the library, so the benchmark harness can
+    // read an in-process number instead of one inflated by process start.
+    let t0 = std::time::Instant::now();
     let containers = list_containers_native(show_all).await?;
+    if std::env::var_os("PODNEXT_BENCH").is_some() {
+        eprintln!(
+            "PODNEXT_BENCH_MS={:.4}",
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 
     #[derive(Tabled, Serialize)]
     struct ContainerRow {

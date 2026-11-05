@@ -47,80 +47,34 @@ impl ContainerManager {
         if !containers_dir.exists() {
             return Ok(());
         }
+        let cache_path = self
+            .paths
+            .cache_dir
+            .join(crate::container_index::INDEX_FILE);
 
         let mut containers = self.containers.lock().await;
 
-        for entry in std::fs::read_dir(containers_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            let rootfs_path = entry.path().join("rootfs");
-            if !rootfs_path.is_dir() {
-                continue;
-            }
-
-            // Only consider directories that describe a container (see
-            // `is_container_dir`: probing for etc/bin/usr alone missed every
-            // legitimate `FROM scratch` image a build had just reported as
-            // runnable, so `run`/`list`/`remove` could not see it at all).
-            if !is_container_dir(&entry.path()) {
-                continue;
-            }
-
-            let metadata_path = entry.path().join("metadata.json");
-            let mut meta_distro = None;
-            let mut meta_version = None;
-            let mut created_at = None;
-
-            if metadata_path.exists() {
-                if let Ok(metadata_str) = std::fs::read_to_string(&metadata_path) {
-                    if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
-                        meta_distro = metadata
-                            .get("image")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        meta_version = metadata
-                            .get("tag")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        if let Some(ts_str) = metadata.get("created_at").and_then(|v| v.as_str()) {
-                            if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
-                                created_at = Some(dt.with_timezone(&Utc));
-                            }
-                        }
-                    }
+        // Fast path: a current index is served without reading a single metadata
+        // file. A stale or absent one falls through to the full scan, which then
+        // rewrites the index. Serving stale data would be worse than no cache, so
+        // the cache is keyed on the mtime+size of every metadata file (see
+        // `container_index`).
+        if crate::container_index::enabled() {
+            if let Some(fresh) = crate::container_index::load_if_fresh(&containers_dir, &cache_path)
+            {
+                for c in fresh {
+                    containers.insert(c.name.clone(), c);
                 }
+                return Ok(());
             }
+        }
 
-            // Inspect /etc/os-release in rootfs so DISTRO matches the real Linux distribution
-            // (e.g. debian, ubuntu, alpine) rather than arbitrary container/target names.
-            let (distro, version) = if let Some((os_id, os_ver)) = detect_os_release(&rootfs_path) {
-                (os_id, os_ver)
-            } else {
-                (
-                    meta_distro.unwrap_or_else(|| "unknown".to_string()),
-                    meta_version.unwrap_or_else(|| "latest".to_string()),
-                )
-            };
-
-            let config = ContainerConfig {
-                name: name.clone(),
-                distro,
-                version,
-                arch: std::env::consts::ARCH.to_string(),
-                rootfs_path: Some(rootfs_path.clone()),
-                ..Default::default()
-            };
-
-            if let Ok(mut container) = Container::new(name.clone(), config) {
-                if let Some(created) = created_at {
-                    container.created_at = created;
-                } else if let Ok(dir_meta) = entry.metadata() {
-                    if let Ok(ctime) = dir_meta.modified() {
-                        container.created_at = DateTime::<Utc>::from(ctime);
-                    }
-                }
-                containers.insert(name, container);
-            }
+        let loaded = scan_containers(&containers_dir)?;
+        for c in &loaded {
+            containers.insert(c.name.clone(), c.clone());
+        }
+        if crate::container_index::enabled() {
+            crate::container_index::store(&containers_dir, &cache_path, &loaded);
         }
 
         Ok(())
@@ -825,6 +779,91 @@ mod tests {
         );
         let _ = child.wait();
     }
+}
+
+/// Read the whole container store from disk: `read_dir` plus a full read of every
+/// container's `metadata.json` and `/etc/os-release`.
+///
+/// Extracted from `ContainerManager::load_containers` so the index cache can wrap
+/// it: this is the uncached algorithm, and the cache must return exactly what this
+/// returns.
+fn scan_containers(containers_dir: &Path) -> Result<Vec<Container>> {
+    let mut out = Vec::new();
+
+    for entry in std::fs::read_dir(containers_dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let rootfs_path = entry.path().join("rootfs");
+        if !rootfs_path.is_dir() {
+            continue;
+        }
+
+        // Only consider directories that describe a container (see
+        // `is_container_dir`: probing for etc/bin/usr alone missed every
+        // legitimate `FROM scratch` image a build had just reported as
+        // runnable, so `run`/`list`/`remove` could not see it at all).
+        if !is_container_dir(&entry.path()) {
+            continue;
+        }
+
+        let metadata_path = entry.path().join("metadata.json");
+        let mut meta_distro = None;
+        let mut meta_version = None;
+        let mut created_at = None;
+
+        if metadata_path.exists() {
+            if let Ok(metadata_str) = std::fs::read_to_string(&metadata_path) {
+                if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
+                    meta_distro = metadata
+                        .get("image")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    meta_version = metadata
+                        .get("tag")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    if let Some(ts_str) = metadata.get("created_at").and_then(|v| v.as_str()) {
+                        if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
+                            created_at = Some(dt.with_timezone(&Utc));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Inspect /etc/os-release in rootfs so DISTRO matches the real Linux distribution
+        // (e.g. debian, ubuntu, alpine) rather than arbitrary container/target names.
+        let (distro, version) = if let Some((os_id, os_ver)) = detect_os_release(&rootfs_path) {
+            (os_id, os_ver)
+        } else {
+            (
+                meta_distro.unwrap_or_else(|| "unknown".to_string()),
+                meta_version.unwrap_or_else(|| "latest".to_string()),
+            )
+        };
+
+        let config = ContainerConfig {
+            name: name.clone(),
+            distro,
+            version,
+            arch: std::env::consts::ARCH.to_string(),
+            rootfs_path: Some(rootfs_path.clone()),
+            ..Default::default()
+        };
+
+        if let Ok(mut container) = Container::new(name.clone(), config) {
+            if let Some(created) = created_at {
+                container.created_at = created;
+            } else if let Ok(dir_meta) = entry.metadata() {
+                if let Ok(ctime) = dir_meta.modified() {
+                    container.created_at = DateTime::<Utc>::from(ctime);
+                }
+            }
+            out.push(container);
+        }
+    }
+
+    Ok(out)
 }
 
 /// Whether a directory in the container store describes a container.
