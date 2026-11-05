@@ -228,6 +228,15 @@ struct Cli {
     /// Enable verbose debug output
     #[arg(short = 'v', long = "verbose", global = true, action = clap::ArgAction::Count, help = "Enable verbose debug output (repeatable)")]
     verbose: u8,
+
+    /// Output format
+    #[arg(
+        long = "format",
+        global = true,
+        value_enum,
+        help = "Output format (table, json, yaml, text)"
+    )]
+    format: Option<OutputFormat>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1376,7 +1385,7 @@ enum DashboardCommands {
     Status,
 }
 
-#[derive(ValueEnum, Clone, Copy, Debug)]
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 enum OutputFormat {
     Table,
     Json,
@@ -4352,5 +4361,18 @@ mod tests {
         // A directory without metadata.json is not an image.
         std::fs::create_dir_all(store.path().join("empty")).unwrap();
         assert!(read_store_metadata(store.path(), "empty").is_none());
+    }
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn format_accepted_globally() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(&["podnext", "--format", "json", "list"]).unwrap();
+        assert_eq!(cli.format, Some(OutputFormat::Json));
     }
 }
