@@ -61,7 +61,12 @@ verdict $ledger_rc
 # both files must exist, the screen count is checked, and the comparison is a plain string equality.
 stage "help dump (123 screens, byte-identical)"
 BIN="${PDNEXT_BIN:-target/debug/podnext}"
-BASE="${HELP_BASELINE:-${PREFIX:-/data/data/com.termux/files/usr}/tmp/help-baseline.txt}"
+# The baseline is a TRACKED fixture, not a scratch file: the untracked version in $PREFIX/tmp was
+# compared across worktrees and produced three separate defects - a department regenerating it while
+# the integrator read it, the integrator overwriting the department's copy, and a comparison that
+# reported "identical" while one of the two files did not exist. A fixture in the repository changes
+# only in a reviewed commit, next to the cli.rs it describes.
+BASE="${HELP_BASELINE:-research/cli-help-baseline.txt}"
 if [ ! -x "$BIN" ]; then
   printf '   SKIP: no binary at %s - a skip is not a pass\n' "$BIN"
   skipped=$((skipped + 1))

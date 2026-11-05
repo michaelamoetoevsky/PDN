@@ -153,6 +153,21 @@ jobs:
           # exit 0, any non-zero exit is a real failure or a wiring bug, and both must fail the job.
           python3 scripts/check_bindings.py --binary target/debug/podnext
 
+      - name: The help contract (123 screens against a tracked fixture)
+        # cli_reference_contract proves every documented command and flag EXISTS. It cannot see a refactor
+        # that changes a help SCREEN without changing a documented name - and that is exactly what a
+        # text edit or a module split does. This compares the freshly built binary's dump against a fixture
+        # committed in the repository, so a help-text change without the fixture is a red build instead of
+        # something the next round discovers in an untracked scratch file.
+        run: |
+          python3 scripts/dump_cli_help.py target/debug/podnext > help-dump.txt 2> help-dump.count
+          cat help-dump.count
+          if ! cmp -s help-dump.txt research/cli-help-baseline.txt; then
+            echo "::error::the help dump differs from research/cli-help-baseline.txt - a change to help text must update that fixture in the same commit"
+            diff help-dump.txt research/cli-help-baseline.txt | head -20
+            exit 1
+          fi
+
       - name: Fail if the ledger reported a FAIL
         if: always()
         run: |
