@@ -314,7 +314,7 @@ This roadmap serves as the definitive engineering blueprint for elevating contai
 
 **Status (5 Nov 2026): not complete.** Every figure below names the command that produced it. The
 `v0.1.9` release was withdrawn before it was tagged (`5b479d1`), `Cargo.toml` still reads `0.1.8`,
-and sections 9.2 and 9.3 still have open work items. A one-line status per sub-section follows its
+and section 9.3 still has open work items. A one-line status per sub-section follows its
 heading. Ledger: 80 PASS / 0 FAIL / 13 SKIPPED of 93 offline; 93 PASS / 0 FAIL / 0 SKIPPED in CI at
 `892549a` (`python3 scripts/build_issue_ledger.py --offline | tail -1`).
 
@@ -349,7 +349,22 @@ plausible, and could not do what it claimed (`image push`, benchmark reporting, 
 
 **Daemon routing landed** and the criterion attached to it is recorded as an exception rather than claimed. All six metadata queries (`list` / `info` / `ps` x json/table) produce an empty diff between the daemon path and the in-process fallback, round trips are constant (1 with the daemon, 0 without) at one and ten containers, and a container created after the daemon started appears in the next answer - never stale. Latency independence is **not** met: with ten containers the daemon path is slower (in-process p50 5.20 ms against 1.48 ms) and still grows with the container count, because freshness revalidates each `metadata.json` over IPC. An O(1) freshness key would serve in-place metadata rewrites stale, a regression against the index cache above, so the criterion is left unmet on purpose with the measurement beside it. `SIZE` honesty landed earlier (#44); environment paths landed (#46).
 
-The file-length half of the first row is **not** met yet, and the numbers moved while the paragraph did not: `cli.rs` is 1,450 and `main.rs` 1,170 today, against a stated ceiling of 800 (`commands/mod.rs` came down to 813 in the third round). **#65** is in flight for exactly this, with the tracked help fixture as its guard rail - a pure reorganization has no business changing rendered help text, so a moved screen is either a defect in the split or a fix that must be named line by line.
+The file-length half of the first row is **met** for the two files **#65** named, in a fourth round:
+`cli.rs` 1,450 to **687** and `main.rs` 1,170 to **479**, with the surplus in `direct.rs` (390),
+`cli/system.rs` (218), `cli/service.rs` (219), `subcommands.rs` (208), `dispatch.rs` (120) and seven
+smaller `cli/` modules - no file over 800 among them. The move was text-only and the help dump is
+byte-identical to the tracked fixture (`sha256 8236a573be5952cdd983c5c8f6cd3833f8e6aa0b1782e1dc1cd08c638fd2b8c5`,
+123 screens); `scripts/local_gate.sh` is GATE GREEN and the `podnext` bin still emits 26 warnings.
+Measured and **not** claimed closed: `commands/mod.rs` is 813 lines and `native.rs` (a pre-existing
+file the ticket did not name) is 1,605.
+
+Measured and **not** claimed closed, both stated because the criterion reads "no file over ~800 lines"
+rather than "no file named by #65": `commands/mod.rs` is 813 - 13 lines over a *guideline*, and the module
+root, where re-exports live by necessity - and `native.rs` is 1,605, up from 1,151 before the detach/attach
+round, so this project is what grew it. `native.rs` contradicts the criterion as written, so the row in
+`research/RELEASE_SEQUENCE_v019.md` stays **half** until it is split (**#72**, which names the guards that
+apply there: not the help fixture, which proves nothing about a file with no Clap surface, but the 84 test
+targets, `shell_fidelity.py`, `soak_sessions.py` and the quoting table).
 
 Measured baseline: `image ls` 28.6 ms, `list -a` 42–53 ms for ten containers, dominated by process
 start plus a full container load; `image ls` reports `SIZE` as a `stat` of the directory (3.4 KB for a
