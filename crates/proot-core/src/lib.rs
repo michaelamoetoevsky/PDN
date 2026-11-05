@@ -196,7 +196,16 @@ impl ProotEngine {
         //
         // It is still a user-space illusion: proot maps ids for the traced
         // process only, no real privilege is gained.
-        cmd.arg("--change-id=0:0");
+        cmd.arg("--change-id=0:0:0");
+
+        if let Some(hostname) = &self.config.hostname {
+            cmd.arg(format!(
+                "--kernel-release=\\Linux\\{}\\6.6.0\\6.6.0\\aarch64\\localdomain\\-1\\",
+                hostname
+            ));
+        } else if let Some(krel) = &self.config.kernel_release {
+            cmd.arg(format!("--kernel-release={}", krel));
+        }
 
         // Root filesystem - critical for isolation
         // Use --rootfs=. with cwd set to rootfs (like proot-distro does)
@@ -264,6 +273,17 @@ impl ProotEngine {
         // Own process group: proot traces the guest's descendants, so a stop
         // must be able to signal the whole tree, not one pid. pgid == child pid.
         cmd.process_group(0);
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::umask(0o022);
+                #[cfg(not(target_os = "android"))]
+                {
+                    let gid: libc::gid_t = 0;
+                    let _ = libc::setgroups(1, &gid);
+                }
+                Ok(())
+            });
+        }
         // Spawn the process (daemon mode)
         let child = cmd.spawn()?;
         let pid = child
@@ -308,7 +328,16 @@ impl ProotEngine {
         //
         // It is still a user-space illusion: proot maps ids for the traced
         // process only, no real privilege is gained.
-        cmd.arg("--change-id=0:0");
+        cmd.arg("--change-id=0:0:0");
+
+        if let Some(hostname) = &self.config.hostname {
+            cmd.arg(format!(
+                "--kernel-release=\\Linux\\{}\\6.6.0\\6.6.0\\aarch64\\localdomain\\-1\\",
+                hostname
+            ));
+        } else if let Some(krel) = &self.config.kernel_release {
+            cmd.arg(format!("--kernel-release={}", krel));
+        }
 
         // Root filesystem - critical for isolation
         // Use --rootfs=. with cwd set to rootfs (like proot-distro does)
@@ -398,8 +427,19 @@ impl ProotEngine {
             .stderr(std::process::Stdio::inherit())
             .stdin(std::process::Stdio::inherit())
             // Own process group (pgid == this pid) so callers can group-signal.
-            .process_group(0)
-            .spawn()?;
+            .process_group(0);
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::umask(0o022);
+                #[cfg(not(target_os = "android"))]
+                {
+                    let gid: libc::gid_t = 0;
+                    let _ = libc::setgroups(1, &gid);
+                }
+                Ok(())
+            });
+        }
+        let mut child = child.spawn()?;
         let pid = child
             .id()
             .ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;
