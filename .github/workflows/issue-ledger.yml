@@ -167,6 +167,10 @@ jobs:
             diff help-dump.txt research/cli-help-baseline.txt | head -20
             exit 1
           fi
+          # A check that prints nothing on success cannot be told apart from a check that never ran -
+          # and Actions echoes this whole `run:` body into the log, so a reader grepping for the failure
+          # string above gets a hit from the source itself. Print a positive beacon instead.
+          echo "IDENTICAL: $(wc -c < help-dump.txt) bytes, sha256 $(sha256sum help-dump.txt | cut -c1-24)"
 
       - name: Fail if the ledger reported a FAIL
         if: always()
