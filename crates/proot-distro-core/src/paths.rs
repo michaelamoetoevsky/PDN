@@ -24,6 +24,34 @@ pub fn temp_base() -> PathBuf {
     resolve_temp_base(std::env::var_os("TMPDIR"), std::env::var_os("PREFIX"))
 }
 
+pub fn resolve_home() -> Result<PathBuf> {
+    resolve_home_from(
+        std::env::var("PN_TEST_ROOT").ok(),
+        std::env::var("HOME").ok(),
+        std::env::var("USERPROFILE").ok(),
+        dirs::home_dir(),
+    )
+}
+
+fn resolve_home_from(
+    test_root: Option<String>,
+    home: Option<String>,
+    userprofile: Option<String>,
+    dirs_home: Option<PathBuf>,
+) -> Result<PathBuf> {
+    test_root
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.filter(|s| !s.trim().is_empty()).map(PathBuf::from))
+        .or_else(|| {
+            userprofile
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| dirs_home.filter(|p| p != Path::new("/")))
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set / cannot resolve store"))
+}
+
 /// Container paths
 pub struct ContainerPaths {
     root_dir: PathBuf,
@@ -36,11 +64,7 @@ pub struct ContainerPaths {
 
 impl ContainerPaths {
     pub fn new() -> Result<Self> {
-        let root = dirs::home_dir()
-            .or_else(|| std::env::var("HOME").ok().map(PathBuf::from))
-            .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
-            .or_else(|| std::env::var("PN_TEST_ROOT").ok().map(PathBuf::from))
-            .unwrap_or_else(|| temp_base().join("pn-next-test"));
+        let root = resolve_home()?;
 
         // Ensure we can create the directory
         std::fs::create_dir_all(&root)?;
@@ -144,5 +168,32 @@ mod tests {
         let got = resolve_temp_base(None, Some(OsString::from("/data/usr")));
         assert_eq!(got, PathBuf::from("/data/usr/tmp"));
         assert_ne!(got, PathBuf::from("/tmp"));
+    }
+
+    #[test]
+    fn resolve_home_fails_when_all_unset_or_root() {
+        let err = resolve_home_from(None, None, None, None).unwrap_err();
+        assert_eq!(err.to_string(), "HOME is not set / cannot resolve store");
+
+        let err2 = resolve_home_from(None, None, None, Some(PathBuf::from("/"))).unwrap_err();
+        assert_eq!(err2.to_string(), "HOME is not set / cannot resolve store");
+
+        let err3 = resolve_home_from(Some("  ".into()), Some("".into()), None, None).unwrap_err();
+        assert_eq!(err3.to_string(), "HOME is not set / cannot resolve store");
+    }
+
+    #[test]
+    fn resolve_home_finds_valid_home() {
+        let home = resolve_home_from(None, Some("/data/home".into()), None, None).unwrap();
+        assert_eq!(home, PathBuf::from("/data/home"));
+
+        let test_root = resolve_home_from(
+            Some("/tmp/test".into()),
+            Some("/data/home".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(test_root, PathBuf::from("/tmp/test"));
     }
 }

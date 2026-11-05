@@ -2774,8 +2774,7 @@ fn read_store_metadata(
 
 async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<()> {
     let image_mgr = proot_distro_core::ImageManager::new()?;
-    let containers_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+    let containers_dir = proot_distro_core::paths::resolve_home()?
         .join(".podnext")
         .join("containers");
 

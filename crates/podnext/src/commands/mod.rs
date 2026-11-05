@@ -3146,7 +3146,7 @@ async fn cmd_dashboard_status(_dashboard: WebDashboard) -> Result<()> {
 
 /// Where the dashboard records its pid, next to the other runtime state.
 fn dashboard_pid_path() -> Result<std::path::PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("no home directory"))?;
+    let home = proot_distro_core::paths::resolve_home()?;
     Ok(home.join(".podnext").join("dashboard.pid"))
 }
 

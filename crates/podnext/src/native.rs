@@ -198,8 +198,7 @@ pub async fn install_image_native(
         fs::create_dir_all(r)?;
         (None, None, r.clone())
     } else {
-        let containers_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/home/user"))
+        let containers_dir = proot_distro_core::paths::resolve_home()?
             .join(".podnext")
             .join("containers");
         fs::create_dir_all(&containers_dir)?;
