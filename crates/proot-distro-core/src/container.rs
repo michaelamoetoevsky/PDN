@@ -176,11 +176,13 @@ impl ContainerManager {
     }
 
     pub async fn kill(&self, name: &str) -> Result<()> {
+        let mut found_session = false;
         // Terminate matching active disk sessions via SIGQUIT (graceful) then SIGKILL
         if let Ok(active) = crate::session::active_sessions() {
             for s in active {
                 if s.container_name == name || name == "all" || name == "--all" {
                     let _ = crate::session::kill_session(s.pid, libc::SIGQUIT);
+                    found_session = true;
                 }
             }
         }
@@ -206,8 +208,10 @@ impl ContainerManager {
             }
             container.status = ContainerStatus::Stopped;
             Ok(())
+        } else if name == "all" || name == "--all" || found_session {
+            Ok(())
         } else {
-            Err(anyhow::anyhow!("Container '{}' not found", name))
+            anyhow::bail!("Container '{}' not found", name);
         }
     }
 

@@ -413,6 +413,9 @@ enum Commands {
         /// Force remove without confirmation
         #[arg(short = 'f', long)]
         force: bool,
+        /// Confirm removal without prompting
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// [Core] Rename an installed container
@@ -709,6 +712,9 @@ enum ImageCommands {
         /// Force removal without confirmation
         #[arg(short = 'f', long)]
         force: bool,
+        /// Confirm removal without prompting
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Tag an image
     Tag {
@@ -846,12 +852,18 @@ enum VolumeCommands {
         /// Force removal
         #[arg(short = 'f', long)]
         force: bool,
+        /// Confirm removal without prompting
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Remove all unused volumes
     Prune {
         /// Force prune without confirmation
         #[arg(short = 'f', long)]
         force: bool,
+        /// Confirm removal without prompting
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -1915,7 +1927,7 @@ async fn execute_command(cmd: Commands) -> Result<()> {
             command,
         } => cmd_attach(container, user, command).await,
         Commands::Kill { container } => cmd_kill(container).await,
-        Commands::Remove { name, force } => cmd_remove(name, force).await,
+        Commands::Remove { name, force, yes } => cmd_remove(name, force || yes).await,
         Commands::Rename { oldname, newname } => cmd_rename(oldname, newname).await,
         Commands::Copy {
             source,
@@ -2006,19 +2018,22 @@ fn execute_config_command(cmd: ConfigCommands) -> Result<()> {
                     .map(PathBuf::from)
             }) {
                 Some(path) => path,
-                None => anyhow::bail!(
-                    "no configuration file given: pass a path or set {}",
-                    GatewayConfig::CONFIG_ENV
-                ),
+                None => {
+                    eprintln!(
+                        "no configuration file given: pass a path or set {}",
+                        GatewayConfig::CONFIG_ENV
+                    );
+                    std::process::exit(3);
+                }
             };
 
             let config = match GatewayConfig::from_toml_file(&path) {
                 Ok(config) => config,
                 Err(err) => {
-                    // Exit code 2 keeps "invalid configuration" distinguishable
-                    // from a generic failure in scripts.
+                    // Exit code 3 keeps "invalid configuration" distinguishable
+                    // from generic application errors (1) and clap usage (2).
                     eprintln!("invalid gateway configuration: {err}");
-                    std::process::exit(2);
+                    std::process::exit(3);
                 }
             };
 
@@ -2315,7 +2330,7 @@ async fn cmd_sessions(format: OutputFormat) -> Result<()> {
             }
         }
     }
-    println!("\nNote: Use 'podnext attach <container>' to create a new session.");
+    eprintln!("\nNote: Use 'podnext attach <container>' to create a new session.");
     Ok(())
 }
 
@@ -2621,7 +2636,7 @@ async fn execute_image_command(cmd: ImageCommands) -> Result<()> {
             all_tags,
         } => cmd_image_pull(image, platform, all_tags).await,
         ImageCommands::Push { image } => cmd_image_push(image).await,
-        ImageCommands::Rm { images, force } => cmd_image_rm(images, force).await,
+        ImageCommands::Rm { images, force, yes } => cmd_image_rm(images, force || yes).await,
         ImageCommands::Tag { source, target } => cmd_image_tag(source, target).await,
         ImageCommands::History {
             image,
@@ -2659,25 +2674,35 @@ async fn cmd_image_push(image: String) -> Result<()> {
 }
 
 async fn cmd_image_rm(images: Vec<String>, force: bool) -> Result<()> {
+    use std::io::IsTerminal;
     let container_mgr = proot_distro_core::ContainerManager::new()?;
 
-    for image in images {
-        if !force {
+    // Check existence first (Finding 04-4, 04-5)
+    for image in &images {
+        container_mgr.get(image).await?;
+    }
+
+    if !force {
+        if !io::stdin().is_terminal() {
+            anyhow::bail!(
+                "stdin is not a tty: use -f/--force or -y/--yes to confirm removal of image(s)"
+            );
+        }
+        for image in &images {
             eprint!("Remove image '{}'? [y/N]: ", image);
             io::stderr().flush()?;
             let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if !input.trim().eq_ignore_ascii_case("y") {
+            let bytes = io::stdin().read_line(&mut input)?;
+            if bytes == 0 || !input.trim().eq_ignore_ascii_case("y") {
                 eprintln!("Cancelled.");
-                continue;
+                std::process::exit(1);
             }
         }
+    }
 
-        // For now, just remove the container if it exists
-        match container_mgr.remove(&image).await {
-            Ok(_) => println!("Removed image: {}", image),
-            Err(e) => eprintln!("Failed to remove image {}: {}", image, e),
-        }
+    for image in &images {
+        container_mgr.remove(image).await?;
+        println!("Removed image: {}", image);
     }
     Ok(())
 }
@@ -3196,8 +3221,12 @@ async fn execute_volume_command(cmd: VolumeCommands) -> Result<()> {
         }
         VolumeCommands::Ls { format } => cmd_volume_ls(format).await,
         VolumeCommands::Inspect { volumes, format } => cmd_volume_inspect(volumes, format).await,
-        VolumeCommands::Rm { volumes, force } => cmd_volume_rm(volumes, force).await,
-        VolumeCommands::Prune { force } => cmd_volume_prune(force).await,
+        VolumeCommands::Rm {
+            volumes,
+            force,
+            yes,
+        } => cmd_volume_rm(volumes, force || yes).await,
+        VolumeCommands::Prune { force, yes } => cmd_volume_prune(force || yes).await,
     }
 }
 
@@ -4057,33 +4086,40 @@ async fn cmd_volume_inspect(volumes: Vec<String>, format: OutputFormat) -> Resul
 }
 
 async fn cmd_volume_rm(volumes: Vec<String>, force: bool) -> Result<()> {
+    use std::io::IsTerminal;
     let mut core = proot_distro_core::ProotDistroCore::new()?;
     let mut errors = 0;
     let validator = proot_distro_core::NameValidator::new();
 
+    // Check existence and validate first (Finding 04-4, 04-5, 05-2)
     for name in &volumes {
-        if let Err(e) = validator.validate_volume_name(name) {
-            eprintln!(
-                "Failed to remove volume {}: {}",
-                proot_distro_core::escape_name(name),
-                e
+        validator.validate_volume_name(name)?;
+        core.storage_manager().inspect_volume(name)?;
+    }
+
+    if !force {
+        use std::io::IsTerminal;
+        if !io::stdin().is_terminal() {
+            anyhow::bail!(
+                "stdin is not a tty: use -f/--force or -y/--yes to confirm removal of volume(s)"
             );
-            errors += 1;
-            continue;
         }
-        if !force {
+        for name in &volumes {
             eprint!(
                 "Remove volume '{}'? [y/N]: ",
                 proot_distro_core::escape_name(name)
             );
             io::stderr().flush()?;
             let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            if !input.trim().eq_ignore_ascii_case("y") {
+            let bytes = io::stdin().read_line(&mut input)?;
+            if bytes == 0 || !input.trim().eq_ignore_ascii_case("y") {
                 eprintln!("Cancelled.");
-                continue;
+                std::process::exit(1);
             }
         }
+    }
+
+    for name in &volumes {
         match core.storage_manager().remove_volume(name) {
             Ok(_) => println!("Removed volume: {}", proot_distro_core::escape_name(name)),
             Err(e) => {
@@ -4139,6 +4175,10 @@ async fn cmd_volume_prune(force: bool) -> Result<()> {
     }
 
     if !force {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() {
+            anyhow::bail!("stdin is not a tty: use -f/--force or -y/--yes to confirm volume prune");
+        }
         eprintln!(
             "Will remove {} volume(s): {}",
             unused.len(),
@@ -4147,10 +4187,10 @@ async fn cmd_volume_prune(force: bool) -> Result<()> {
         eprint!("Continue? [y/N]: ");
         std::io::Write::flush(&mut std::io::stderr())?;
         let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
+        let bytes = std::io::stdin().read_line(&mut input)?;
+        if bytes == 0 || !input.trim().eq_ignore_ascii_case("y") {
             eprintln!("Cancelled.");
-            return Ok(());
+            std::process::exit(1);
         }
     }
 

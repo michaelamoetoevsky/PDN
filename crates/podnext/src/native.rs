@@ -830,14 +830,25 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
         bail!("Container '{}' not found", name);
     }
 
+    // Check existence first (Finding 04-4)
+    container_mgr.get(&name).await?;
+
     if !force {
+        use std::io::IsTerminal;
+        if !io::stdin().is_terminal() {
+            anyhow::bail!(
+                "stdin is not a tty: use -f/--force or -y/--yes to confirm removal of container '{}'",
+                name
+            );
+        }
+
         eprint!("Remove container '{}'? [y/N]: ", name);
         io::stderr().flush()?;
         let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
+        let bytes = io::stdin().read_line(&mut input)?;
+        if bytes == 0 || !input.trim().eq_ignore_ascii_case("y") {
             eprintln!("Cancelled.");
-            return Ok(());
+            std::process::exit(1);
         }
     }
 

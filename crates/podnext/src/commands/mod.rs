@@ -562,6 +562,24 @@ fn print_service_status_local(
 }
 
 async fn cmd_service_logs(name: String, _follow: bool, lines: usize) -> Result<()> {
+    if is_daemon_running().await {
+        let resp = send_daemon_command(serde_json::json!({"cmd": "status", "name": name})).await?;
+        if let Some(_err) = resp
+            .get("type")
+            .and_then(|t| t.as_str())
+            .filter(|&t| t == "error")
+        {
+            let msg = resp
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown error");
+            bail!("Daemon error: {}", msg);
+        }
+    } else {
+        let supervisor = get_supervisor().await?;
+        let _ = supervisor.get_status(&name).await?;
+    }
+
     println!("Service '{}' logs (last {} lines):", name, lines);
     println!(
         "(Log viewing not yet implemented - use 'podnext log query --service {}')",
@@ -571,6 +589,9 @@ async fn cmd_service_logs(name: String, _follow: bool, lines: usize) -> Result<(
 }
 
 async fn cmd_service_enable(name: String) -> Result<()> {
+    let supervisor = get_supervisor().await?;
+    let _ = supervisor.get_status(&name).await?;
+
     let mut boot_manager = TermuxBootManager::new(TermuxBootConfig::default());
     boot_manager.initialize().await?;
     boot_manager.add_auto_start_service(&name).await?;
@@ -579,6 +600,9 @@ async fn cmd_service_enable(name: String) -> Result<()> {
 }
 
 async fn cmd_service_disable(name: String) -> Result<()> {
+    let supervisor = get_supervisor().await?;
+    let _ = supervisor.get_status(&name).await?;
+
     let mut boot_manager = TermuxBootManager::new(TermuxBootConfig::default());
     boot_manager.remove_auto_start_service(&name).await?;
     println!("Service '{}' disabled for auto-start at boot", name);
@@ -801,6 +825,9 @@ async fn cmd_quota_set(
     resource: crate::ResourceTypeArg,
     limit: String,
 ) -> Result<()> {
+    let supervisor = get_supervisor().await?;
+    let _ = supervisor.get_status(&name).await?;
+
     let limit_bytes = parse_quota_limit(&limit, resource)?;
 
     let mut quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
@@ -844,6 +871,9 @@ async fn cmd_quota_set(
 }
 
 async fn cmd_quota_get(name: String, format: crate::OutputFormat) -> Result<()> {
+    let supervisor = get_supervisor().await?;
+    let _ = supervisor.get_status(&name).await?;
+
     let mut quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
     quota_manager.load_quotas()?;
     let quotas = quota_manager.get_quotas(&name);
@@ -1534,6 +1564,9 @@ pub async fn execute_boot_command(cmd: crate::BootCommands) -> Result<()> {
 }
 
 async fn cmd_boot_enable(name: String) -> Result<()> {
+    let supervisor = get_supervisor().await?;
+    let _ = supervisor.get_status(&name).await?;
+
     let mut boot_manager = TermuxBootManager::new(TermuxBootConfig::default());
     boot_manager.initialize().await?;
     boot_manager.add_auto_start_service(&name).await?;
@@ -1542,6 +1575,9 @@ async fn cmd_boot_enable(name: String) -> Result<()> {
 }
 
 async fn cmd_boot_disable(name: String) -> Result<()> {
+    let supervisor = get_supervisor().await?;
+    let _ = supervisor.get_status(&name).await?;
+
     let mut boot_manager = TermuxBootManager::new(TermuxBootConfig::default());
     boot_manager.remove_auto_start_service(&name).await?;
     println!("Service '{}' disabled for Termux:Boot auto-start", name);
@@ -2744,7 +2780,7 @@ async fn gitops_manager() -> Result<GitOpsManager> {
     // default, or every report shows Unknown again.
     manager.load_state().await?;
     if loaded == 0 {
-        println!(
+        eprintln!(
             "No applications found in {}.",
             manager.applications_dir().display()
         );
