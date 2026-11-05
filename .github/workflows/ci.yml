@@ -39,6 +39,59 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Job 0: the CLI must not depend on one machine's Termux layout (roadmap section 9.2).
+  #
+  # TERMUX__PREFIX is deliberately NOT relocated. On Android that variable belongs to
+  # termux-exec (it arrives with LD_PRELOAD=libtermux-exec-ld-preload.so and rewrites
+  # /bin/* into the prefix); setting it elsewhere makes even /bin/sh unresolvable, which
+  # was measured on the target device: TERMUX__HOME relocated -> suite passes, PREFIX
+  # relocated -> passes, TERMUX__PREFIX relocated -> `spawn /bin/sh: NotFound`. The
+  # criterion therefore reads "HOME, PREFIX and the XDG variables", not the variable the
+  # platform owns.
+  relocated-paths:
+    name: Relocated HOME and prefix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Create the relocated directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/relocated/home" "$RUNNER_TEMP/relocated/prefix" \
+                   "$RUNNER_TEMP/relocated/tmp" "$RUNNER_TEMP/relocated/run" \
+                   "$RUNNER_TEMP/relocated/config" "$RUNNER_TEMP/relocated/state"
+
+      - name: Run the suites with a relocated home, prefix and XDG directories
+        env:
+          TERMUX__HOME: ${{ runner.temp }}/relocated/home
+          PREFIX: ${{ runner.temp }}/relocated/prefix
+          TMPDIR: ${{ runner.temp }}/relocated/tmp
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/relocated/run
+          XDG_CONFIG_HOME: ${{ runner.temp }}/relocated/config
+          XDG_STATE_HOME: ${{ runner.temp }}/relocated/state
+        run: |
+          set -eux
+          cargo test --locked -p proot-distro-core --lib
+          cargo test --locked -p podnext --bin podnext
+          cargo test --locked -p podnext --test relocated_paths
+
   # Job 1: Rust Host Build
   rust-host-build:
     name: Rust Host Build

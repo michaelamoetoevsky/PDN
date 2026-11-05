@@ -192,13 +192,13 @@ forward: every row below was produced by the command named in its evidence colum
 | 9.2 cached index | metadata query p50 < 10 ms with 10 containers | **not met** | no index cache exists (`grep` for one: 0) |
 | 9.2 honest size | a real size, or an explicit `unknown` | **met** | `du -sb` is the measurement of record; a failed measurement prints `>= X` or `unknown`; 3 tests; issue #44 |
 | 9.2 daemon routing | CLI latency independent of container count | **not met** | the socket is used for daemon control only; metadata queries still load containers in-process |
-| 9.2 env paths | honour `TERMUX__*`/`XDG_*` instead of 12 hard-coded paths; suite passes with `HOME`/`PREFIX` relocated | **partial** | 11 hard-coded paths → 8 occurrences, and those are the documented defaults (`paths.rs`, `constants.rs`) and two uml4termux paths; resolvers + 5 unit tests + `relocated_paths` 2/2; the relocated **suite** job is not in CI |
+| 9.2 env paths | honour `TERMUX__*`/`XDG_*` instead of 12 hard-coded paths; suite passes with `HOME`/`PREFIX` relocated | **partial** | 11 hard-coded paths → 8 occurrences, and those are the documented defaults (`paths.rs`, `constants.rs`) and two uml4termux paths; resolvers + 5 unit tests + `relocated_paths` 2/2; the relocated-suite job is now a CI job (`Relocated HOME and prefix`); `TERMUX__PREFIX` is excluded because termux-exec owns it |
 | 9.3 `detach`/`attach` | login → detach → attach returns to the same shell | **not met** | `--detach` refuses with a reason (honest, but not the feature) |
 | 9.3 terminal fidelity | `vim`/`htop` render and resize correctly | **not met** | no `SIGWINCH`/`PS1`/`TERM` work or test |
 | 9.3 argv quoting | a table of quoting cases passes | **not met** | 0 tests mention it |
 | 9.3 bindings and USER | `/sdcard`/`/storage` and shared home/tmp documented and tested; build output states USER is not enforced | **partial** | `--volume`/`--bind` now reach the guest (issue #43) and `:ro` is refused with a reason; `podnext info` prints "User (recorded, not enforced)"; the storage presets have no test |
 | 9.3 session hygiene | a soak run leaves no processes behind | **not met** | no soak test |
-| 9.3 `doctor` | reports DNS, `/dev/shm`, `os-release`, cgroup, TMPDIR, **proot argv** with pass/fail | **partial** | `doctor` reports all of them except the argv; `PN_DEBUG=1 podnext run …` prints the argv instead |
+| 9.3 `doctor` | reports DNS, `/dev/shm`, `os-release`, cgroup, TMPDIR, **proot argv** with pass/fail | **met** | 12 checks on a real container, including `guest proot argv` (12,371 characters, 125 `--bind=` entries, elided in the table and whole in `--format json`) |
 | 9.4 non-goals | no new top-level commands | **amended** | `doctor` is the 38th and section 9.3 requires it; the roadmap text now says so |
 | release checklist | section 9 marked shipped, `CHANGELOG.md`, README "What's New", manual smoke test | **not met** | `CHANGELOG.md` absent; README unchanged; section 9 unmarked; smoke test not run |
 

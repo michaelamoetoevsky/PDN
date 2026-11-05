@@ -348,7 +348,7 @@ start plus a full container load; `image ls` reports `SIZE` as a `stat` of the d
 | Cache the container index with mtime invalidation | metadata query p50 < 10 ms with 10 containers |
 | Stop printing a number that is not the image size | either a real size computed once and cached with a staleness marker, or an explicit `unknown` |
 | Route read-only metadata queries through the daemon that already exists (`podnext-daemon`) | CLI latency independent of container count |
-| Honour `TERMUX__HOME`, `TERMUX__PREFIX`, `TERMUX_APP__PACKAGE_NAME` and `XDG_*` instead of 12 hard-coded Termux paths | the suite passes with `HOME` and `PREFIX` relocated |
+| Honour `TERMUX__HOME`, `TERMUX__PREFIX`, `TERMUX_APP__PACKAGE_NAME` and `XDG_*` instead of 12 hard-coded Termux paths | the suite passes with `HOME`, `PREFIX` and the `XDG_*` variables relocated (`TERMUX__PREFIX` excluded: it is owned by termux-exec, and relocating it makes even `/bin/sh` unresolvable - measured, see `known-limitations.md`) |
 
 ### 9.3 The interactive shell — the largest untapped value
 

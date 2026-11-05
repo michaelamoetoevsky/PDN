@@ -71,6 +71,12 @@ It does not print the proot argv; `PN_DEBUG=1 podnext run ...` does.
   writable: proot 5.1.107.101 has no read-only bind form, and a `:ro` suffix would become part of the
   guest path name (`GUEST:ro`), leaving the requested path unmounted. Restrict access inside the guest
   instead, or use a PRoot that supports read-only binds.
+- **`TERMUX__PREFIX` cannot be relocated while the app runs.** It is not a PDN setting: Termux
+  exports it beside `LD_PRELOAD=…/libtermux-exec-ld-preload.so`, whose job is to rewrite `/bin/*`
+  into the prefix (`/bin` is a symlink to `/system/bin`). Pointing it elsewhere makes process
+  startup fail, measured on this device — `TERMUX__HOME` relocated: suite passes; `PREFIX`
+  relocated: passes; `TERMUX__PREFIX` relocated: `spawn /bin/sh: NotFound`. `PREFIX` is the
+  portable override, and it takes precedence after `TERMUX__PREFIX`.
 - **Temporary files live in `$PREFIX/tmp`.** `/tmp` exists on Android but is not writable by an app
   uid, and `std::env::temp_dir()` falls back to it when `TMPDIR` is unset.
 

@@ -597,11 +597,14 @@ Report host and guest diagnostics.
 podnext doctor [--container <NAME>] [--format <FORMAT>]
 ```
 
-Host checks: the proot binary and its version, the temporary directory (`TMPDIR` and whether it is
-writable), shared memory (`/dev/shm`, or the directory PDN binds in its place), DNS (the nameserver
-list from `$PREFIX/etc/resolv.conf`, `/etc/resolv.conf` or `/system/etc/resolv.conf`), the kernel
-(`uname -a`) and cgroups (`/proc/self/cgroup`). With `--container <NAME>` the guest is probed from the
-inside for `os-release`, architecture, `/dev/shm`, the mount count and `resolv.conf`.
+Host checks: the proot binary and its version (path resolved the same way the run path resolves it),
+the temporary directory (`TMPDIR` and whether it is writable), shared memory (`/dev/shm`, or the
+directory PDN binds in its place), DNS (the nameserver list from `$PREFIX/etc/resolv.conf`,
+`/etc/resolv.conf` or `/system/etc/resolv.conf`), the kernel (`uname -a`) and cgroups
+(`/proc/self/cgroup`). With `--container <NAME>` the guest is probed from the inside for `os-release`,
+architecture, `/dev/shm`, the mount count, `resolv.conf` and the **proot command line that ran**
+(captured from the probe, 12,371 characters with 125 `--bind=` arguments for a typical container —
+elided in the table, whole in `--format json`).
 
 Every row carries the value or command it came from. A check that cannot be run reports `unknown`
 instead of passing, and a check that fails is the only thing that changes the exit status:

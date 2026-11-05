@@ -72,9 +72,13 @@ fn version_token(text: &str) -> Option<String> {
 }
 
 fn proot_binary_check() -> Check {
+    // The same resolver the rest of PDN uses, so a relocated prefix is reported as the path
+    // the run path would actually use rather than a second guess at it.
     let binary = std::env::var("PROOT_BIN").unwrap_or_else(|_| {
-        let prefix = std::env::var("PREFIX").unwrap_or_else(|_| "/usr".to_string());
-        format!("{prefix}/bin/proot")
+        proot_distro_core::paths::host::prefix()
+            .join("bin/proot")
+            .display()
+            .to_string()
     });
     match std::process::Command::new(&binary)
         .arg("--version")
@@ -264,6 +268,19 @@ fn cgroups_check() -> Check {
     }
 }
 
+/// The `proot` command line PDN ran, read out of the probe's debug output.
+///
+/// The line is long (every synthetic bind is one argument), so it is reported whole but the
+/// caller decides how much to print; the point is that the report carries the command that
+/// ran rather than a reconstruction of it.
+fn proot_argv(stderr: &str) -> Option<String> {
+    stderr
+        .lines()
+        .find_map(|line| line.split_once("Executing proot command: "))
+        .map(|(_, argv)| argv.trim().to_string())
+        .filter(|argv| !argv.is_empty())
+}
+
 /// Guest checks. They run the container, so they are only attempted when one is named; a
 /// container that cannot be opened is a `Fail` that says which container and why.
 async fn container_checks(container: Option<&str>) -> Vec<Check> {
@@ -291,6 +308,10 @@ async fn container_checks(container: Option<&str>) -> Vec<Check> {
     };
     let output = tokio::process::Command::new(binary)
         .args(["run", name, "--", "/bin/sh", "-c", command])
+        // The argv is the thing to look at when a mount or a stub is missing, and it is only
+        // printed when this is set (see the diagnostic in `proot-core`). Captured here rather
+        // than re-derived, so the report shows the command that actually ran.
+        .env("PN_DEBUG", "1")
         .output()
         .await;
     match output {
@@ -325,6 +346,11 @@ async fn container_checks(container: Option<&str>) -> Vec<Check> {
                     Check::new(&format!("guest {key}"), verdict, detail)
                 })
                 .collect();
+            if let Some(argv) = proot_argv(&stderr) {
+                let mut checks: Vec<Check> = reported.clone();
+                checks.push(Check::new("guest proot argv", Verdict::Ok, argv));
+                return checks;
+            }
             if reported.is_empty() {
                 // The probe ran and reported nothing: that is not a pass. Without this the
                 // guest section simply vanished, and an empty section reads as "no problems".
@@ -349,14 +375,35 @@ stdout={:?} stderr={:?}",
     }
 }
 
+/// How much of a detail the text table shows before it is elided. The proot argv is hundreds of
+/// arguments long (one per synthetic bind), so the table would stop being a table; the JSON and
+/// YAML output carry it whole.
+const TEXT_DETAIL_LIMIT: usize = 200;
+
+fn elide(detail: &str) -> String {
+    if detail.chars().count() <= TEXT_DETAIL_LIMIT {
+        return detail.to_string();
+    }
+    let mut out: String = detail.chars().take(TEXT_DETAIL_LIMIT - 1).collect();
+    out.push('\u{2026}');
+    out
+}
+
 pub fn render_text(checks: &[Check]) {
     for check in checks {
         println!(
-            "{:<10} {:<16} {}",
+            "{:<10} {:<18} {}",
             check.verdict.label(),
             check.name,
-            check.detail
+            elide(&check.detail)
         );
+    }
+    if checks
+        .iter()
+        .any(|c| c.detail.chars().count() > TEXT_DETAIL_LIMIT)
+    {
+        println!();
+        println!("(long details are elided here; `--format json` keeps them whole)");
     }
     let failed = checks.iter().filter(|c| c.verdict == Verdict::Fail).count();
     let warned = checks.iter().filter(|c| c.verdict == Verdict::Warn).count();
@@ -408,6 +455,29 @@ mod tests {
                 check.name
             );
         }
+    }
+
+    #[test]
+    fn short_details_are_whole_and_long_ones_are_elided_with_a_pointer() {
+        let short = "a".repeat(TEXT_DETAIL_LIMIT);
+        assert_eq!(elide(&short), short);
+        let long = "a".repeat(TEXT_DETAIL_LIMIT + 50);
+        let out = elide(&long);
+        assert_eq!(
+            out.chars().count(),
+            TEXT_DETAIL_LIMIT,
+            "the elided form keeps the limit: {out}"
+        );
+        assert!(out.ends_with('\u{2026}'), "the elision is visible: {out}");
+    }
+
+    #[test]
+    fn the_argv_is_read_out_of_the_debug_line() {
+        let stderr = "[DEBUG] Executing proot command: Command { std: cd \"/rootfs\" && \"/usr/bin/proot\" \"--bind=/a:/b\" \"/bin/sh\", kill_on_drop: false }\n";
+        let argv = proot_argv(stderr).expect("the line is present");
+        assert!(argv.contains("--bind=/a:/b"), "{argv}");
+        assert!(argv.starts_with("Command {"), "{argv}");
+        assert_eq!(proot_argv("no debug output here"), None);
     }
 
     /// A guest probe that reports nothing must never produce an `ok` row. In a unit test

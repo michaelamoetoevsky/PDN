@@ -301,6 +301,8 @@ CHECKS: list[dict] = [
          cmd="grep -qF 'Verdict::Unknown' crates/podnext/src/doctor.rs", needle=None),
     dict(issue="45", claim="the command itself is exercised end to end",
          cmd="cargo test -p podnext --test doctor_contract", needle=None, cargo=True),
+    dict(issue="45", claim="doctor reports the proot argv it actually ran",
+         cmd="grep -qF 'guest proot argv' crates/podnext/src/doctor.rs", needle=None),
     # ── #46: path defaults follow the environment (section 9.2) ─────────────────────
     dict(issue="46", claim="the daemon binary carries no hard-coded home path",
          cmd="! grep -qF '/data/data/com.termux/files/home' crates/podnext/src/daemon.rs",
@@ -313,6 +315,10 @@ CHECKS: list[dict] = [
          cmd="cargo test -p proot-distro-core --lib host_path_tests", needle=None, cargo=True),
     dict(issue="46", claim="the binary follows a relocated home and the XDG variables",
          cmd="cargo test -p podnext --test relocated_paths", needle=None, cargo=True),
+    dict(issue="46", claim="CI runs the suites with HOME, PREFIX and XDG relocated",
+         cmd="grep -qF 'Relocated HOME and prefix' .github/workflows/ci.yml", needle=None),
+    dict(issue="46", claim="the platform-owned TERMUX__PREFIX exclusion is documented",
+         cmd="grep -qF 'TERMUX__PREFIX' docs/src/known-limitations.md", needle=None),
     # ── #47: run refuses the options it cannot honour ────────────────────────
     dict(issue="47", claim="the refusal names the options it cannot honour",
          cmd="grep -qF 'not implemented for `run`' crates/podnext/src/main.rs", needle=None),
