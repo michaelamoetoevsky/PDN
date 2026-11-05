@@ -14,7 +14,7 @@ exclude = [
 
 # Single source of truth for crate versions: `version.workspace = true` in each crate
 [workspace.package]
-version = "0.1.8"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-2.0-or-later"
 repository = "https://github.com/michaelamoetoevsky/PDN"

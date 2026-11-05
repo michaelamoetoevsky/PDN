@@ -2709,7 +2709,7 @@ dependencies = [
 
 [[package]]
 name = "pdn-integration-tests"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2812,7 +2812,7 @@ dependencies = [
 
 [[package]]
 name = "pn-gateway"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2838,7 +2838,7 @@ dependencies = [
 
 [[package]]
 name = "pn-next"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2903,7 +2903,7 @@ dependencies = [
 
 [[package]]
 name = "podnext"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3032,7 +3032,7 @@ dependencies = [
 
 [[package]]
 name = "proot-compat"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3052,7 +3052,7 @@ dependencies = [
 
 [[package]]
 name = "proot-core"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3072,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "proot-distro-core"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
