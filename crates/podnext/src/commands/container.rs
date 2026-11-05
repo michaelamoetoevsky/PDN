@@ -4,7 +4,7 @@
 //! Split out of `main.rs` for roadmap section 9.2. Re-exported with `use commands::container::*`.
 
 use anyhow::{bail, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use tabled::Tabled;
@@ -45,18 +45,50 @@ pub fn default_container_name(image: &str) -> String {
     proot_distro_core::names::store_key(image)
 }
 
+/// Ask the running daemon for a read-only metadata query (roadmap section 9.2).
+///
+/// One connect, one request, one response: the round-trip count is a property of
+/// the probe, not of the container count. `None` means the daemon is not running
+/// (or cannot answer) and the caller reads the store in-process instead. Nothing is
+/// printed on that path, so a stopped daemon changes nothing the CLI emits.
+async fn daemon_query<T: serde::de::DeserializeOwned>(cmd: &str) -> Option<T> {
+    let resp = super::service::send_daemon_command(serde_json::json!({ "cmd": cmd }))
+        .await
+        .ok()?;
+    if resp.get("type").and_then(|t| t.as_str()) != Some("ok") {
+        return None;
+    }
+    serde_json::from_value(resp.get("data")?.clone()).ok()
+}
+
 pub async fn cmd_list(_all: bool, no_all: bool, format: OutputFormat) -> Result<()> {
     let show_all = !no_all;
-    // The metadata query — building the manager (which loads or serves the index)
-    // plus listing it. Timed here, not in the library, so the benchmark harness can
-    // read an in-process number instead of one inflated by process start.
+    // The metadata query — the daemon answers it when it runs, otherwise the store
+    // is read in-process. Timed here, not in the library, so the benchmark harness
+    // can read an in-process number instead of one inflated by process start.
     let t0 = std::time::Instant::now();
-    let containers = list_containers_native(show_all).await?;
+    let via_daemon = daemon_query::<Vec<proot_distro_core::ContainerInfo>>("containers").await;
+    let round_trips = u32::from(via_daemon.is_some());
+    let mut containers = match via_daemon {
+        Some(all) => all,
+        None => list_containers_native(true).await?,
+    };
+    if !show_all {
+        containers.retain(|c| c.status == proot_distro_core::ContainerStatus::Running);
+    }
+    // `ContainerManager` holds containers in a `HashMap`, so the scan order is not
+    // stable across processes. Sorting by name is what makes the daemon path and
+    // the in-process path byte-identical (the acceptance criterion) and makes `list`
+    // deterministic run to run.
+    containers.sort_by(|a, b| a.name.cmp(&b.name));
     if std::env::var_os("PODNEXT_BENCH").is_some() {
         eprintln!(
             "PODNEXT_BENCH_MS={:.4}",
             t0.elapsed().as_secs_f64() * 1000.0
         );
+        // Round trips for this query: 1 when the daemon answered, 0 on the
+        // in-process path. Constant in the container count either way.
+        eprintln!("PODNEXT_BENCH_RT={}", round_trips);
     }
 
     #[derive(Tabled, Serialize)]
@@ -203,7 +235,13 @@ pub async fn cmd_run(
 }
 
 pub async fn cmd_ps(format: OutputFormat) -> Result<()> {
-    let sessions = list_sessions_native_full().await?;
+    let mut sessions = match daemon_query::<Vec<proot_distro_core::Session>>("sessions").await {
+        Some(s) => s,
+        None => list_sessions_native_full().await?,
+    };
+    // Same `HashMap`-order caveat as `list`: sorted so both paths (and repeated
+    // runs) render the same bytes.
+    sessions.sort_by(|a, b| a.id.cmp(&b.id));
     let active_disk_sessions = proot_distro_core::session::active_sessions().unwrap_or_default();
 
     #[derive(Tabled, Serialize)]
@@ -260,6 +298,11 @@ pub async fn cmd_ps(format: OutputFormat) -> Result<()> {
             });
         }
     }
+
+    // The disk rows are appended after the store rows and `active_sessions()` reads a
+    // directory, so its order is not guaranteed either: one more sort keeps the table
+    // and text output deterministic between the two paths.
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
 
     match format {
         OutputFormat::Table => output_table(&rows),
@@ -420,12 +463,24 @@ pub async fn cmd_remove(name: String, force: bool) -> Result<()> {
 }
 
 pub async fn cmd_info(format: OutputFormat) -> Result<()> {
+    // The daemon answers this while it runs; the literals are the in-process fallback
+    // and must stay identical to `podnext-daemon`'s `info` handler.
+    let payload = daemon_query::<SerializableInfo>("info")
+        .await
+        .unwrap_or_else(|| SerializableInfo {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            platform: "Termux/Android".to_string(),
+            rust_version: "1.80+".to_string(),
+            backend: "proot-distro-core".to_string(),
+            isolation: "proot (unmapped host tree, masked /proc)".to_string(),
+        });
+
     let info = SystemInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        platform: "Termux/Android".to_string(),
-        rust_version: "1.80+".to_string(),
-        backend: "proot-distro-core".to_string(),
-        isolation: "proot (unmapped host tree, masked /proc)".to_string(),
+        version: payload.version,
+        platform: payload.platform,
+        rust_version: payload.rust_version,
+        backend: payload.backend,
+        isolation: payload.isolation,
     };
 
     #[derive(Tabled, Serialize)]
@@ -473,7 +528,7 @@ pub async fn cmd_info(format: OutputFormat) -> Result<()> {
     }
     Ok(())
 }
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct SerializableInfo {
     version: String,
     platform: String,

@@ -32,6 +32,13 @@ enum DaemonCommand {
     Load { name: String },
     Subscribe,
     Ping,
+    // Read-only metadata queries the CLI routes here while the daemon runs (roadmap
+    // section 9.2): one request/response serves `list`, `info` and `ps` regardless of
+    // how many containers exist, and the CLI falls back in-process when it is not
+    // running.
+    Containers,
+    Sessions,
+    Info,
 }
 
 /// Daemon response
@@ -359,6 +366,9 @@ async fn handle_connection(stream: UnixStream, state: Arc<DaemonState>) -> Resul
             }
             DaemonCommand::Load { name } => handle_load(state.supervisor.as_ref(), &name).await,
             DaemonCommand::Subscribe => handle_subscribe(state.event_sender.subscribe()).await,
+            DaemonCommand::Containers => handle_containers().await,
+            DaemonCommand::Sessions => handle_sessions().await,
+            DaemonCommand::Info => handle_info().await,
         };
 
         send_response(&mut reader.get_mut(), &resp).await?;
@@ -466,6 +476,62 @@ async fn handle_subscribe(_events: broadcast::Receiver<SupervisorEvent>) -> Daem
     DaemonResponse::Ok {
         data: serde_json::json!({"message": "Subscribed to events"}),
     }
+}
+
+/// Wrap a serialisable payload in the `ok` response, or report the encode failure.
+fn encoded<T: Serialize>(value: &T) -> DaemonResponse {
+    match serde_json::to_value(value) {
+        Ok(data) => DaemonResponse::Ok { data },
+        Err(e) => DaemonResponse::Error {
+            message: format!("Failed to encode the response: {}", e),
+        },
+    }
+}
+
+/// Container metadata for `podnext list` (roadmap section 9.2).
+///
+/// The manager is rebuilt per query, so the answer tracks the store: a container
+/// created after the daemon started is visible on the next query rather than
+/// served from a stale snapshot. The index cache is what makes that cheap, and it
+/// is read in-process through the same `container_index` path the CLI uses, so the
+/// two answers are the same data, not a second cache.
+async fn handle_containers() -> DaemonResponse {
+    let manager = match proot_distro_core::ContainerManager::new() {
+        Ok(m) => m,
+        Err(e) => {
+            return DaemonResponse::Error {
+                message: format!("Failed to open the container store: {}", e),
+            }
+        }
+    };
+    match manager.list().await {
+        Ok(containers) => encoded(&containers),
+        Err(e) => DaemonResponse::Error {
+            message: format!("Failed to list containers: {}", e),
+        },
+    }
+}
+
+/// Session metadata for `podnext ps`.
+async fn handle_sessions() -> DaemonResponse {
+    match proot_distro_core::SessionManager::new() {
+        Ok(manager) => encoded(&manager.list_all_full()),
+        Err(e) => DaemonResponse::Error {
+            message: format!("Failed to open the session store: {}", e),
+        },
+    }
+}
+
+/// Static system information for `podnext info`. Identical literals to the CLI's
+/// in-process fallback, which is the point: both paths must render the same bytes.
+async fn handle_info() -> DaemonResponse {
+    encoded(&serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "platform": "Termux/Android",
+        "rust_version": "1.80+",
+        "backend": "proot-distro-core",
+        "isolation": "proot (unmapped host tree, masked /proc)",
+    }))
 }
 
 #[cfg(test)]
