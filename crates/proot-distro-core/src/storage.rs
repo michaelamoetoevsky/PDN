@@ -113,6 +113,12 @@ impl StorageManager {
 
     pub fn remove_volume(&mut self, name: &str) -> Result<()> {
         if self.volumes.remove(name).is_some() {
+            let mountpoint = self.mountpoint(name);
+            if mountpoint.is_dir() {
+                std::fs::remove_dir_all(&mountpoint)?;
+            } else if mountpoint.exists() || mountpoint.is_symlink() {
+                std::fs::remove_file(&mountpoint)?;
+            }
             self.save()?;
             Ok(())
         } else {
@@ -185,6 +191,29 @@ mod tests {
             );
         }
         assert!(!sm.storage_root.parent().unwrap().join("PWNED").exists());
+        let _ = std::fs::remove_dir_all(sm.storage_root.parent().unwrap());
+    }
+
+    #[test]
+    fn remove_volume_deletes_directory_and_metadata() {
+        let mut sm = StorageManager::tmp_manager("rm");
+        let cfg = VolumeConfig {
+            name: "testvol".to_string(),
+            ..Default::default()
+        };
+        sm.create_volume(&cfg).unwrap();
+        let mp = sm.mountpoint("testvol");
+        assert!(mp.exists());
+        assert!(mp.is_dir());
+
+        // Create a file inside to ensure remove_dir_all handles non-empty dirs
+        std::fs::write(mp.join("data.txt"), "hello").unwrap();
+
+        sm.remove_volume("testvol").unwrap();
+        assert!(!mp.exists());
+        assert!(sm.inspect_volume("testvol").is_err());
+        assert!(sm.list_volumes().unwrap().is_empty());
+
         let _ = std::fs::remove_dir_all(sm.storage_root.parent().unwrap());
     }
 }
