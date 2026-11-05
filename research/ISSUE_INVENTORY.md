@@ -105,13 +105,11 @@ backlog items are feature requests with no commitment attached.
 
 | Remaining roadmap work | Ticket |
 |---|---|
-| Extract the build, gitops and compose domains out of `commands/mod.rs` | #54 |
-| Terminal fidelity: resize, `TERM`, `PS1`, UTF-8 locale measured inside the guest | #56 |
-| `detach`/`attach` round trip and session hygiene | #57 |
-| Soak: repeated start and stop leaves no guest process behind | #58 |
-| Route read-only metadata through `podnext-daemon` (the end-to-end latency criterion) | #59 |
-| Decide the seccomp profiles: verify per distro, or decline with the measurement | #60 |
-| `--no-kill-on-exit` in the direct-execution path: measure, then decide | #63 |
+| Real `detach` plus `attach`, held behind the metadata work | #57 |
+| Execute the documented examples in `cli-reference.md`, with an exclusion list | #64 |
+| Bring `cli.rs` 1,445 and `main.rs` 1,040 under the ceiling, or record the exception | #65 |
+| Measure the bindings and the `USER` story inside a guest | #66 |
+| The direct-execution scanner drops every flag it parses except rootfs/cmd/verbose | #67 |
 | Execute the documented examples in `cli-reference.md`, with a written exclusion list | #64 |
 | Bring `cli.rs`, `main.rs` and `commands/mod.rs` under the ~800-line ceiling, or record the exception | #65 |
 | Measure the bindings and the `USER` story inside a guest | #66 |

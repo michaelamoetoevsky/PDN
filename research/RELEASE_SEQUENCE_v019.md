@@ -32,20 +32,20 @@ there is no `v0.1.10`.
 | 9.1 exit-code contract | met | `crates/podnext/tests/exit_codes.rs`, 5 classes; `665b3ba` |
 | 9.1 contract test incl. examples | **half** | commands and flags gated by `28c4594`; ~100 example blocks in `cli-reference.md` are never executed - #64 |
 | 9.1 triage of the audit | met | the ledger now fails on an untriaged issue; 0 of 61 untriaged (`research/AUDIT_FINDINGS_DISPOSITION.md`) |
-| 9.2 split, no file over ~800 lines | **half** | `main.rs` 4,679 to 1,040, `commands/mod.rs` 3,719 to 1,945, Clap surface in `cli.rs` 1,445; 123 help screens byte-identical - but three files are above the ceiling, #65 |
+| 9.2 split, no file over ~800 lines | **half** | `main.rs` 4,679 to 1,040, `commands/mod.rs` 3,719 to **813**, Clap surface in `cli.rs` 1,445; 123 help screens byte-identical - two files are still above the ceiling, #65 |
 | 9.2 index cache p50 under 10 ms | met in-process | `cf3f487`: 1.3-2.2 ms in-process with ten containers; process start alone is 31-36 ms, so end-to-end belongs to #59 |
 | 9.2 honest image size | met | `#44`: a measured size, a `>=` bound, or `unknown` |
-| 9.2 metadata through the daemon | **not met** | #59, dispatched |
+| 9.2 metadata through the daemon | **exception, recorded** | routed: six queries diff empty against the fallback, round trips constant (1 vs 0), never stale; latency independence NOT met (5.20 vs 1.48 ms at n=10) and left unmet on purpose, with the reason |
 | 9.2 environment paths | met | `#46`: `TERMUX__HOME`, `PREFIX`, `XDG_*`; `TERMUX__PREFIX` excluded with the measurement |
 | 9.3 detach and attach | **not met** | #57, held behind #59 (same file) |
-| 9.3 terminal fidelity | **not met** | #56, dispatched |
+| 9.3 terminal fidelity | met | `scripts/shell_fidelity.py` PASS - winsize, live resize, `TERM`, `COLORTERM`, `PS1`, prompt, UTF-8 both ways, with a control that goes red; it also found and proved the #68 regression, now fixed |
 | 9.3 argv quoting | met | `5c34115`: 15 cases against a real guest, NUL-separated |
 | 9.3 bindings and `USER` | **half** | documented; never measured inside a guest - #66 |
-| 9.3 session hygiene and soak | **not met** | #58, dispatched |
+| 9.3 session hygiene and soak | met | `scripts/soak_sessions.py` - 20/20 iterations with zero container processes left, and an injected leak caught at iteration 7 |
 | 9.3 doctor | met | `#45`: host and guest checks including the proot argv |
 
-**9 met, 3 half, 4 not met.** The half rows are the ones a status paragraph tends to round up, which
-is why they are rows here.
+**11 met, 3 half, 1 recorded exception, 1 not met.** The half rows and the exception are the ones a
+status paragraph tends to round up, which is why they are rows here.
 
 ## 3. The sequence
 
