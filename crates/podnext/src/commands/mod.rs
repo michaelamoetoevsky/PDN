@@ -18,10 +18,13 @@ use pn_next::{
     // Phase 7 modules
     BackupManager,
     BackupType,
+    DaemonRuntime,
+    DaemonRuntimeConfig,
     GitOpsConfig,
     GitOpsManager,
     GitOpsResourceStatus,
     RestoreOptions,
+    ServiceState,
     ServiceSupervisor,
     SupervisorBuilder,
     SyncStatus,
@@ -42,6 +45,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use tabled::{Table, Tabled};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
 
 mod compose;
 pub mod container;
@@ -50,18 +55,22 @@ pub mod image;
 pub mod log;
 pub mod network;
 pub mod policy;
+pub mod power;
 pub mod quota;
 pub mod service;
 pub mod socket;
 pub mod sync;
 pub mod volume;
+pub mod watchdog;
 pub use compose::execute_compose_command;
 pub use dbus::*;
 pub use log::*;
 pub use policy::*;
+pub use power::{execute_boot_command, execute_wakelock_command};
 pub use quota::*;
 pub use service::{execute_daemon_command, execute_service_command};
 pub use socket::*;
+pub use watchdog::execute_watchdog_command;
 
 // Output formatters
 fn output_table<T: Tabled>(items: &[T]) {
@@ -77,6 +86,8 @@ fn output_yaml<T: Serialize>(items: &T) -> Result<()> {
     println!("{}", serde_yaml::to_string(items)?);
     Ok(())
 }
+
+// ============ Service Commands ============
 
 async fn get_supervisor() -> Result<ServiceSupervisor> {
     // Derived from the home directory rather than a hardcoded Termux path, so the
@@ -104,263 +115,13 @@ async fn get_supervisor() -> Result<ServiceSupervisor> {
     Ok(supervisor)
 }
 
+// ============ Daemon Commands ============
+
 // ============ Watchdog Commands ============
-
-pub async fn execute_watchdog_command(cmd: crate::WatchdogCommands) -> Result<()> {
-    match cmd {
-        crate::WatchdogCommands::Status { format } => cmd_watchdog_status(format).await,
-        crate::WatchdogCommands::SetPolicy {
-            name,
-            policy,
-            max_restarts,
-            window_secs,
-        } => cmd_watchdog_set_policy(name, policy, max_restarts, window_secs).await,
-        crate::WatchdogCommands::Reset { name } => cmd_watchdog_reset(name).await,
-        crate::WatchdogCommands::Events { limit } => cmd_watchdog_events(limit).await,
-    }
-}
-
-async fn cmd_watchdog_status(format: crate::OutputFormat) -> Result<()> {
-    let watchdog = WatchdogManager::new(WatchdogConfig::default());
-    let states = watchdog.get_all_states().await;
-
-    #[derive(Tabled, Serialize)]
-    struct WatchdogRow {
-        #[tabled(rename = "SERVICE")]
-        service: String,
-        #[tabled(rename = "POLICY")]
-        policy: String,
-        #[tabled(rename = "RESTARTS")]
-        restart_count: u32,
-        #[tabled(rename = "ESCALATION")]
-        escalation_level: u32,
-        #[tabled(rename = "QUARANTINED")]
-        quarantined: bool,
-        #[tabled(rename = "STOPPED")]
-        stopped_by_watchdog: bool,
-    }
-
-    let rows: Vec<WatchdogRow> = states
-        .iter()
-        .map(|s| WatchdogRow {
-            service: s.service.clone(),
-            policy: format!("{:?}", s.policy),
-            restart_count: s.restart_count,
-            escalation_level: s.escalation_level,
-            quarantined: s.quarantined,
-            stopped_by_watchdog: s.stopped_by_watchdog,
-        })
-        .collect();
-
-    match format {
-        crate::OutputFormat::Table => output_table(&rows),
-        crate::OutputFormat::Json => output_json(&states)?,
-        crate::OutputFormat::Yaml => output_yaml(&states)?,
-        crate::OutputFormat::Text => {
-            for s in rows {
-                println!(
-                    "{} {} {} {} {} {}",
-                    s.service,
-                    s.policy,
-                    s.restart_count,
-                    s.escalation_level,
-                    s.quarantined,
-                    s.stopped_by_watchdog
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn cmd_watchdog_set_policy(
-    name: String,
-    policy: crate::RestartPolicyArg,
-    max_restarts: u32,
-    window_secs: u64,
-) -> Result<()> {
-    let mut watchdog = WatchdogManager::new(WatchdogConfig::default());
-    let pn_policy = match policy {
-        crate::RestartPolicyArg::Never => pn_next::watchdog::RestartPolicy::Never,
-        crate::RestartPolicyArg::OnFailure => pn_next::watchdog::RestartPolicy::OnFailure,
-        crate::RestartPolicyArg::Always => pn_next::watchdog::RestartPolicy::Always,
-        crate::RestartPolicyArg::UnlessStopped => pn_next::watchdog::RestartPolicy::UnlessStopped,
-        crate::RestartPolicyArg::OnFailureOrCrash => {
-            pn_next::watchdog::RestartPolicy::OnFailureOrCrash
-        }
-    };
-    watchdog.set_policy(&name, pn_policy);
-
-    println!(
-        "Watchdog policy set for '{}': {:?} (max restarts: {}, window: {}s)",
-        name, policy, max_restarts, window_secs
-    );
-    Ok(())
-}
-
-async fn cmd_watchdog_reset(name: String) -> Result<()> {
-    let watchdog = WatchdogManager::new(WatchdogConfig::default());
-    watchdog.reset_service(&name).await?;
-    println!("Watchdog state reset for '{}'", name);
-    Ok(())
-}
-
-async fn cmd_watchdog_events(_limit: usize) -> Result<()> {
-    Err(anyhow::anyhow!(
-        "'watchdog events' is not implemented: the watchdog keeps its state in memory and records \
-         transitions in the container log. Use `podnext watchdog status` for the current state and \
-         `podnext log tail <service>` for the log."
-    ))
-}
 
 // ============ Boot Commands ============
 
-pub async fn execute_boot_command(cmd: crate::BootCommands) -> Result<()> {
-    match cmd {
-        crate::BootCommands::Enable { name } => cmd_boot_enable(name).await,
-        crate::BootCommands::Disable { name } => cmd_boot_disable(name).await,
-        crate::BootCommands::Status { format } => cmd_boot_status(format).await,
-    }
-}
-
-async fn cmd_boot_enable(name: String) -> Result<()> {
-    let supervisor = get_supervisor().await?;
-    let _ = supervisor.get_status(&name).await?;
-
-    let mut boot_manager = TermuxBootManager::new(TermuxBootConfig::default());
-    boot_manager.initialize().await?;
-    boot_manager.add_auto_start_service(&name).await?;
-    println!("Service '{}' enabled for Termux:Boot auto-start", name);
-    Ok(())
-}
-
-async fn cmd_boot_disable(name: String) -> Result<()> {
-    let supervisor = get_supervisor().await?;
-    let _ = supervisor.get_status(&name).await?;
-
-    let mut boot_manager = TermuxBootManager::new(TermuxBootConfig::default());
-    boot_manager.remove_auto_start_service(&name).await?;
-    println!("Service '{}' disabled for Termux:Boot auto-start", name);
-    Ok(())
-}
-
-async fn cmd_boot_status(format: crate::OutputFormat) -> Result<()> {
-    let boot_manager = TermuxBootManager::new(TermuxBootConfig::default());
-
-    #[derive(Tabled, Serialize)]
-    struct BootRow {
-        #[tabled(rename = "SERVICE")]
-        service: String,
-        #[tabled(rename = "ENABLED")]
-        enabled: bool,
-    }
-
-    let auto_start_services = boot_manager.get_auto_start_services();
-    let rows: Vec<BootRow> = auto_start_services
-        .iter()
-        .map(|s| BootRow {
-            service: s.clone(),
-            enabled: true,
-        })
-        .collect();
-
-    let services_vec: Vec<String> = auto_start_services.to_vec();
-
-    match format {
-        crate::OutputFormat::Table => output_table(&rows),
-        crate::OutputFormat::Json => output_json(&services_vec)?,
-        crate::OutputFormat::Yaml => output_yaml(&services_vec)?,
-        crate::OutputFormat::Text => {
-            for s in rows {
-                println!(
-                    "{} - {}",
-                    s.service,
-                    if s.enabled { "enabled" } else { "disabled" }
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
 // ============ Wake Lock Commands ============
-
-pub async fn execute_wakelock_command(cmd: crate::WakelockCommands) -> Result<()> {
-    match cmd {
-        crate::WakelockCommands::Acquire { name, lock_type } => {
-            cmd_wakelock_acquire(name, lock_type).await
-        }
-        crate::WakelockCommands::Release { name } => cmd_wakelock_release(name).await,
-        crate::WakelockCommands::Status { format } => cmd_wakelock_status(format).await,
-    }
-}
-
-async fn cmd_wakelock_acquire(name: String, lock_type: crate::WakeLockTypeArg) -> Result<()> {
-    let mut wake_manager = WakeLockManager::new(WakeLockConfig::default());
-    wake_manager.initialize_android().await?;
-
-    let lock_type = match lock_type {
-        crate::WakeLockTypeArg::Partial => WakeLockType::Partial,
-        crate::WakeLockTypeArg::Full => WakeLockType::Full,
-        crate::WakeLockTypeArg::DozeExemption => WakeLockType::DozeExemption,
-    };
-
-    wake_manager.acquire(&name, Some(lock_type)).await?;
-    println!("Wake lock acquired for '{}': {:?}", name, lock_type);
-    Ok(())
-}
-
-async fn cmd_wakelock_release(name: String) -> Result<()> {
-    let wake_manager = WakeLockManager::new(WakeLockConfig::default());
-    wake_manager.release(&name).await?;
-    println!("Wake lock released for '{}'", name);
-    Ok(())
-}
-
-async fn cmd_wakelock_status(format: crate::OutputFormat) -> Result<()> {
-    let wake_manager = WakeLockManager::new(WakeLockConfig::default());
-    let states = wake_manager.get_all_states().await;
-
-    #[derive(Tabled, Serialize)]
-    struct WakeRow {
-        #[tabled(rename = "SERVICE")]
-        service: String,
-        #[tabled(rename = "TYPE")]
-        lock_type: String,
-        #[tabled(rename = "HELD")]
-        held: bool,
-        #[tabled(rename = "REF COUNT")]
-        ref_count: u32,
-        #[tabled(rename = "PID")]
-        pid: String,
-    }
-
-    let rows: Vec<WakeRow> = states
-        .iter()
-        .map(|s| WakeRow {
-            service: s.service_name.clone(),
-            lock_type: format!("{:?}", s.lock_type),
-            held: s.held,
-            ref_count: s.ref_count,
-            pid: s.holder_pid.map_or("-".to_string(), |p| p.to_string()),
-        })
-        .collect();
-
-    match format {
-        crate::OutputFormat::Table => output_table(&rows),
-        crate::OutputFormat::Json => output_json(&states)?,
-        crate::OutputFormat::Yaml => output_yaml(&states)?,
-        crate::OutputFormat::Text => {
-            for s in rows {
-                println!(
-                    "{} {} {} {} {:?}",
-                    s.service, s.lock_type, s.held, s.ref_count, s.pid
-                );
-            }
-        }
-    }
-    Ok(())
-}
 
 // ============ Backup Commands ============
 
@@ -570,12 +331,8 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
     if key != target_tag {
         println!("  Stored as container '{key}' (a tag is not a path component)");
     }
-    // `args_os`, not `args`: std caches argv once, and `args()` panics re-reading it when any
-    // argument was not valid UTF-8 - the defect of issue #41, which this line kept alive on the
-    // build path because the regression test only ever ran `list`.
-    let bin_name = std::env::args_os()
+    let bin_name = std::env::args()
         .next()
-        .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "podnext".to_string());
     let rootfs = image_dir.join("rootfs");
     let has_sh = rootfs.join("bin/sh").symlink_metadata().is_ok()
