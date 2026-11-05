@@ -53,13 +53,13 @@ wayfinder work items with their acceptance criteria in the map issue.
 | #38 | CLOSED | A FROM scratch image is unreachable by run/list/remove after a successful buil | fixed or present: 4 predicate(s) in the ledger |
 | #39 | OPEN | push: the store holds no layer blobs, so push cannot work even once the lookup | declined: OPEN defect: push cannot work because the store holds no layer blobs. The CLI now refuses |
 | #40 | CLOSED | LICENSE, Cargo.toml and README.md disagree about the project licence | fixed or present: 4 predicate(s) in the ledger |
-| #41 | OPEN | A non-UTF-8 byte in any argument aborts podnext with SIGABRT (std::env::args p | fixed or present: 4 predicate(s) in the ledger |
-| #42 | OPEN | [BUG-DOC] CLI reference documented options that do not exist (exit codes 3-12, | fixed or present: 7 predicate(s) in the ledger |
-| #43 | OPEN | [BUG] --bind/--volume were no-ops: the flag was discarded and the rendered bin | fixed or present: 6 predicate(s) in the ledger |
+| #41 | CLOSED | A non-UTF-8 byte in any argument aborts podnext with SIGABRT (std::env::args p | fixed or present: 4 predicate(s) in the ledger |
+| #42 | CLOSED | [BUG-DOC] CLI reference documented options that do not exist (exit codes 3-12, | fixed or present: 7 predicate(s) in the ledger |
+| #43 | CLOSED | [BUG] --bind/--volume were no-ops: the flag was discarded and the rendered bin | fixed or present: 6 predicate(s) in the ledger |
 | #44 | CLOSED | [BUG] image ls printed a size that was never measured and called the container | fixed or present: 4 predicate(s) in the ledger |
-| #45 | OPEN | [GAP §9.3] podnext doctor did not exist: no host/guest diagnostic report | fixed or present: 6 predicate(s) in the ledger |
-| #46 | OPEN | [GAP §9.2] Path defaults were hard-coded to one machine's Termux home | fixed or present: 7 predicate(s) in the ledger |
-| #47 | OPEN | [BUG] run accepted nine options and dropped all of them, while --help advertis | fixed or present: 6 predicate(s) in the ledger |
+| #45 | CLOSED | [GAP §9.3] podnext doctor did not exist: no host/guest diagnostic report | fixed or present: 6 predicate(s) in the ledger |
+| #46 | CLOSED | [GAP §9.2] Path defaults were hard-coded to one machine's Termux home | fixed or present: 7 predicate(s) in the ledger |
+| #47 | CLOSED | [BUG] run accepted nine options and dropped all of them, while --help advertis | fixed or present: 6 predicate(s) in the ledger |
 | #48 | OPEN | Wayfinder map: v0.1.9 shipped (roadmap section 9 met) | work item: tracked by the map #48 |
 | #49 | CLOSED | CLI split: extract the observability domains (policy, quota, log, dbus, socket | work item: tracked by the map #48 |
 | #50 | CLOSED | CLI split: extract the supervision domains (service, daemon, watchdog, boot, w | work item: tracked by the map #48 |
@@ -77,7 +77,7 @@ wayfinder work items with their acceptance criteria in the map issue.
 | #62 | CLOSED | [BUG] run --seccomp is accepted and never applied | fixed or present: 3 predicate(s) in the ledger |
 | #63 | OPEN | [BUG] direct-execution argv scanner parses --no-kill-on-exit and never uses it | declined: OPEN defect of the compiler-warning class: the direct-execution scanner assigns |
 
-Untriaged issues: **0** - the rule holds for every issue on the tracker.
+Untriaged issues: **0** - every issue is either covered by a predicate, declined in writing, or a backlog request
 
 ## What changed in this round
 
