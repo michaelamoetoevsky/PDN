@@ -186,7 +186,16 @@ impl ContainerManager {
         }
 
         let mut containers = self.containers.lock().await;
-        if let Some(container) = containers.get_mut(name) {
+        if name == "all" || name == "--all" {
+            for container in containers.values_mut() {
+                if let Some(pid) = container.pid {
+                    let _ = terminate_group(pid, KILL_TIMEOUT_SECS).await;
+                    container.pid = None;
+                }
+                container.status = ContainerStatus::Stopped;
+            }
+            Ok(())
+        } else if let Some(container) = containers.get_mut(name) {
             if let Some(pid) = container.pid {
                 // Only claim Stopped once the whole group is verifiably gone.
                 if let Err(e) = terminate_group(pid, KILL_TIMEOUT_SECS).await {
@@ -198,7 +207,7 @@ impl ContainerManager {
             container.status = ContainerStatus::Stopped;
             Ok(())
         } else {
-            Ok(())
+            Err(anyhow::anyhow!("Container '{}' not found", name))
         }
     }
 

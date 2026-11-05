@@ -2315,8 +2315,8 @@ async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result
 }
 
 async fn cmd_kill(container: String) -> Result<()> {
+    let mut killed_any = false;
     if let Ok(active) = proot_distro_core::session::active_sessions() {
-        let mut killed_any = false;
         for s in active {
             if s.container_name == container || container == "all" || container == "--all" {
                 if let Ok(()) = proot_distro_core::session::kill_session(s.pid, libc::SIGQUIT) {
@@ -2332,7 +2332,19 @@ async fn cmd_kill(container: String) -> Result<()> {
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
     }
-    kill_container_native(&container).await
+    kill_container_native(&container).await?;
+    if container == "all" || container == "--all" {
+        if killed_any {
+            println!("Killed all active container sessions.");
+        } else {
+            println!("No active container sessions found.");
+        }
+    } else if killed_any {
+        println!("Container '{}' killed.", container);
+    } else {
+        println!("Container '{}' is not running.", container);
+    }
+    Ok(())
 }
 
 async fn cmd_remove(name: String, force: bool) -> Result<()> {
@@ -2927,6 +2939,25 @@ async fn cmd_image_inspect(images: Vec<String>, format: OutputFormat) -> Result<
     Ok(())
 }
 
+fn du_size_bytes(path: &std::path::Path) -> u64 {
+    std::process::Command::new("du")
+        .args(["-sb", &path.to_string_lossy()])
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                stdout
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse::<u64>().ok())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| path.metadata().map(|m| m.len()).unwrap_or(0))
+}
+
 async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     let containers = container_mgr.list().await?;
@@ -2947,12 +2978,36 @@ async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
 
     let rows: Vec<ImageRow> = containers
         .iter()
-        .map(|c| ImageRow {
-            repository: c.distro.clone(),
-            tag: c.version.clone(),
-            image_id: c.name.clone(),
-            created: c.created_at.format("%Y-%m-%d %H:%M").to_string(),
-            size: format_size(c.rootfs_path.metadata().map(|m| m.len()).unwrap_or(0)),
+        .map(|c| {
+            let meta_path = c.rootfs_path.parent().map(|p| p.join("metadata.json"));
+            let (repo, tag) = if let Some(mp) = meta_path {
+                if let Ok(meta_str) = std::fs::read_to_string(mp) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                        let r = val
+                            .get("image")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
+                        let t = val.get("tag").and_then(|v| v.as_str()).map(str::to_string);
+                        (r, t)
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+            let repository = repo.unwrap_or_else(|| c.distro.clone());
+            let tag = tag.unwrap_or_else(|| c.version.clone());
+            let size = format_size(du_size_bytes(&c.rootfs_path));
+            ImageRow {
+                repository,
+                tag,
+                image_id: c.name.clone(),
+                created: c.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                size,
+            }
         })
         .collect();
 
@@ -2961,14 +3016,8 @@ async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
         OutputFormat::Json => output_json(&containers)?,
         OutputFormat::Yaml => output_yaml(&containers)?,
         OutputFormat::Text => {
-            for c in containers {
-                println!(
-                    "{} {} {} {}",
-                    c.distro,
-                    c.version,
-                    c.name,
-                    c.created_at.format("%Y-%m-%d %H:%M")
-                );
+            for r in &rows {
+                println!("{} {} {} {}", r.repository, r.tag, r.image_id, r.created);
             }
         }
     }

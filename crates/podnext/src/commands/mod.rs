@@ -2052,7 +2052,30 @@ async fn cmd_build_local(tag: Option<String>, file: Option<PathBuf>, path: PathB
     if key != target_tag {
         println!("  Stored as container '{key}' (a tag is not a path component)");
     }
-    println!("  Run it with: podnext run {key}");
+    let bin_name = std::env::args()
+        .next()
+        .unwrap_or_else(|| "podnext".to_string());
+    let rootfs = image_dir.join("rootfs");
+    let has_sh = rootfs.join("bin/sh").symlink_metadata().is_ok()
+        || rootfs.join("usr/bin/sh").symlink_metadata().is_ok();
+    if has_sh {
+        println!("  Run it with: {bin_name} run {key}");
+    } else {
+        let meta_cmd: Vec<String> = std::fs::read_to_string(image_dir.join("metadata.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.get("cmd").cloned())
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        if !meta_cmd.is_empty() {
+            println!(
+                "  Run it with: {bin_name} run {key} -- {}",
+                meta_cmd.join(" ")
+            );
+        } else {
+            println!("  Run it with: {bin_name} run {key} -- <command>");
+        }
+    }
     Ok(())
 }
 
@@ -2295,10 +2318,16 @@ async fn build_local_image(
     }
 
     // Record image metadata so `podnext image ls` / `inspect` can see the result.
+    let (target_repo, target_tag) = if let Some((r, t)) = tag.split_once(':') {
+        (r, t)
+    } else {
+        (tag, "latest")
+    };
     let metadata = serde_json::json!({
         "name": tag,
-        "image": base_image,
-        "tag": tag.rsplit(':').next().unwrap_or(tag),
+        "image": target_repo,
+        "tag": target_tag,
+        "base_image": base_image,
         "rootfs": rootfs.to_string_lossy(),
         "created_at": chrono::Utc::now().to_rfc3339(),
         "status": "Stopped",
@@ -3600,5 +3629,25 @@ mod build_local_tests {
             private: false,
         };
         assert_eq!(good.to_argument().unwrap(), "/srv/data:/data:ro");
+    }
+
+    #[tokio::test]
+    async fn build_local_metadata_splits_image_and_tag() {
+        let ctx = colon_free_ctx();
+        let store = tempfile::tempdir().unwrap();
+        let store_path = store.path().to_path_buf();
+
+        let dir = build_local_image("mycustom/repo:v1.2", None, ctx.path(), Some(store_path))
+            .await
+            .expect("build image");
+
+        let meta_file = dir.join("metadata.json");
+        assert!(meta_file.exists());
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(meta_file).unwrap()).unwrap();
+        assert_eq!(meta["name"], "mycustom/repo:v1.2");
+        assert_eq!(meta["image"], "mycustom/repo");
+        assert_eq!(meta["tag"], "v1.2");
+        assert_eq!(meta["base_image"], "scratch");
     }
 }

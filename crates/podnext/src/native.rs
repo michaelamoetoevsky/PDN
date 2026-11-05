@@ -26,7 +26,6 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use tar::Archive;
 use tokio::signal::unix::{signal, SignalKind};
 use urlencoding::encode;
 
@@ -113,6 +112,61 @@ struct ImageLayer {
     media_type: String,
 }
 
+async fn smoke_test_rootfs(rootfs: &Path) -> Result<()> {
+    let has_sh = rootfs.join("bin/sh").symlink_metadata().is_ok()
+        || rootfs.join("usr/bin/sh").symlink_metadata().is_ok();
+    if !has_sh {
+        return Ok(());
+    }
+
+    let proot_bin = std::env::var("PROOT_BIN").unwrap_or_else(|_| "proot".to_string());
+    let mut cmd = tokio::process::Command::new(proot_bin);
+    cmd.arg("--kill-on-exit")
+        .arg("--link2symlink")
+        .arg("--sysvipc")
+        .arg("-L")
+        .arg("--change-id=0:0")
+        .arg("--rootfs=.")
+        .current_dir(rootfs)
+        .arg("--bind=/dev")
+        .arg("--bind=/proc")
+        .arg("--bind=/sys")
+        .env_clear()
+        .env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        )
+        .env("HOME", "/root")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg("exit 0");
+
+    match cmd.output().await {
+        Ok(out) => {
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if stderr.contains("signal 4") || stderr.contains("SIGILL") {
+                    eprintln!(
+                        "Warning: guest shell terminated with signal 4 (SIGILL).\n\
+                         The guest binaries appear incompatible with host CPU/PRoot.\n\
+                         Consider using QEMU emulation (-q) or a different distribution."
+                    );
+                } else {
+                    eprintln!(
+                        "Warning: guest shell smoke test failed (status: {:?}): {}",
+                        out.status.code(),
+                        stderr.trim()
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: could not execute post-extract smoke test: {}", e);
+        }
+    }
+    Ok(())
+}
+
 pub async fn install_image_native(
     image_ref: &str,
     container_name: &str,
@@ -126,74 +180,99 @@ pub async fn install_image_native(
 
     println!("Installing '{}' as '{}'...", image_ref, container_name);
 
-    // Determine rootfs path
-    let rootfs = rootfs_path.unwrap_or_else(|| {
-        dirs::home_dir()
+    let (target_container_dir, staging_dir, staging_rootfs) = if let Some(ref r) = rootfs_path {
+        if r.exists() && !force {
+            bail!(
+                "Container '{}' already exists at {}. Use --force to overwrite.",
+                container_name,
+                r.display()
+            );
+        }
+        fs::create_dir_all(r)?;
+        (None, None, r.clone())
+    } else {
+        let containers_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/home/user"))
             .join(".podnext")
-            .join("containers")
-            .join(&container_name)
-            .join("rootfs")
-    });
+            .join("containers");
+        fs::create_dir_all(&containers_dir)?;
+        let target_dir = containers_dir.join(&container_name);
+        if target_dir.exists() && !force {
+            bail!(
+                "Container '{}' already exists at {}. Use --force to overwrite.",
+                container_name,
+                target_dir.display()
+            );
+        }
+        let staging_name = format!(".tmp-install-{}-{}", container_name, uuid::Uuid::new_v4());
+        let stage_dir = containers_dir.join(staging_name);
+        let stage_rootfs = stage_dir.join("rootfs");
+        fs::create_dir_all(&stage_rootfs)?;
+        (Some(target_dir), Some(stage_dir), stage_rootfs)
+    };
 
-    // Check if container already exists (before creating directory)
-    if rootfs.exists() && !force {
-        bail!(
-            "Container '{}' already exists at {}. Use --force to overwrite.",
-            container_name,
-            rootfs.display()
+    let install_work = async {
+        // Step 1: Get auth token from Docker Hub
+        println!("[1/4] Authenticating with Docker Hub registry...");
+        let token = get_docker_hub_token(&name).await?;
+
+        // Step 2: Get manifest list to find correct platform
+        println!(
+            "[2/4] Fetching image manifest (linux/{})...",
+            std::env::consts::ARCH
         );
+        let manifest = get_manifest(&name, &tag, &token).await?;
+
+        // Step 3: Download and extract layers
+        println!("[3/4] Downloading and extracting OCI layers (Android-safe)...");
+        download_and_extract_layers(&name, &manifest, &token, &staging_rootfs).await?;
+
+        // Step 4: Apply proot-compat patches
+        println!("[4/4] Configuring guest environment, DNS, and /dev/shm...");
+        proot_compat::patch_rootfs(&staging_rootfs)?;
+
+        configure_guest_network(&staging_rootfs, &container_name)?;
+
+        if let Some(container_dir) = staging_rootfs.parent() {
+            proot_distro_core::sysdata::ensure(container_dir)?;
+            proot_distro_core::guestdirs::ensure(container_dir)?;
+        }
+
+        // Post-extract smoke test
+        smoke_test_rootfs(&staging_rootfs).await?;
+
+        // Step 5: Save container metadata
+        save_container_metadata(&container_name, &name, &tag, &staging_rootfs)?;
+
+        Ok::<(), anyhow::Error>(())
     }
+    .await;
 
-    // Create rootfs directory
-    fs::create_dir_all(&rootfs)?;
-
-    // Step 1: Get auth token from Docker Hub
-    println!("[1/4] Authenticating with Docker Hub registry...");
-    let token = get_docker_hub_token(&name).await?;
-
-    // Step 2: Get manifest list to find correct platform
-    println!(
-        "[2/4] Fetching image manifest (linux/{})...",
-        std::env::consts::ARCH
-    );
-    let manifest = get_manifest(&name, &tag, &token).await?;
-
-    // Step 3: Download and extract layers
-    println!("[3/4] Downloading and extracting OCI layers (Android-safe)...");
-    if let Err(e) = download_and_extract_layers(&name, &manifest, &token, &rootfs).await {
-        // Clean up partial rootfs directory on failure so it does not leave a broken state
-        let _ = fs::remove_dir_all(&rootfs);
+    if let Err(e) = install_work {
+        if let Some(ref stage) = staging_dir {
+            let _ = fs::remove_dir_all(stage);
+        } else if let Some(ref r) = rootfs_path {
+            let _ = fs::remove_dir_all(r);
+        }
         return Err(e);
     }
 
-    // Step 4: Apply proot-compat patches
-    println!("[4/4] Configuring guest environment, DNS, and /dev/shm...");
-    proot_compat::patch_rootfs(&rootfs)?;
-
-    // Step 4b: Set up guest network config files.
-    // Without /etc/resolv.conf the guest has no DNS at all (docker images
-    // ship none, and the host has none to inherit); `apk update` then fails
-    // with "temporary error". /etc/hosts is normalised the same way.
-    configure_guest_network(&rootfs, &container_name)?;
-
-    // Prepare the fake /proc stubs alongside the rootfs, so the container is
-    // complete before its first login. `login` regenerates `stat`/`uptime` for
-    // whatever CPU set the device has at that moment.
-    if let Some(container_dir) = rootfs.parent() {
-        proot_distro_core::sysdata::ensure(container_dir)?;
-        proot_distro_core::guestdirs::ensure(container_dir)?;
-    }
-
-    // Step 5: Save container metadata
-    save_container_metadata(&container_name, &name, &tag, &rootfs)?;
+    let final_rootfs = if let (Some(target), Some(stage)) = (target_container_dir, staging_dir) {
+        if target.exists() {
+            fs::remove_dir_all(&target)?;
+        }
+        fs::rename(&stage, &target)?;
+        target.join("rootfs")
+    } else {
+        staging_rootfs
+    };
 
     println!("\nContainer '{}' installed successfully!", container_name);
-    println!("Rootfs: {}", rootfs.display());
+    println!("Rootfs: {}", final_rootfs.display());
     println!("\nTo start the container:");
     println!("  podnext login {}", container_name);
 
-    Ok(rootfs)
+    Ok(final_rootfs)
 }
 
 /// Check that an image reference can actually be fetched, before anything destructive.
@@ -273,6 +352,20 @@ async fn get_docker_hub_token(repo: &str) -> Result<String> {
     );
 
     let response = client.get(&url).send().await?;
+    if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::NOT_FOUND
+        {
+            bail!(
+                "Image '{}' not found (or private). Check the name with 'podnext search'.",
+                repo
+            );
+        }
+        bail!(
+            "Failed to authenticate with registry: {}",
+            response.status()
+        );
+    }
     let token_resp: DockerHubTokenResponse = response.json().await?;
     Ok(token_resp.token)
 }
@@ -306,6 +399,15 @@ async fn get_manifest(name: &str, tag: &str, token: &str) -> Result<ImageManifes
         .await?;
 
     if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::NOT_FOUND
+        {
+            bail!(
+                "Image '{}:{}' not found (or private). Check the name with 'podnext search'.",
+                name,
+                tag
+            );
+        }
         bail!("Failed to fetch manifest: {}", response.status());
     }
 
@@ -372,6 +474,15 @@ async fn get_manifest_by_digest(name: &str, digest: &str, token: &str) -> Result
         .await?;
 
     if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::NOT_FOUND
+        {
+            bail!(
+                "Image manifest for '{}' (digest {}) not found (or private). Check the name with 'podnext search'.",
+                name,
+                digest
+            );
+        }
         bail!("Failed to fetch manifest by digest: {}", response.status());
     }
 
@@ -677,6 +788,12 @@ pub async fn run_container_native(
         }
     }
     if exit_code != 0 {
+        if exit_code == 255 {
+            eprintln!(
+                "Hint: if the guest terminated with signal 4 (SIGILL), its binaries are \
+                 incompatible with this host CPU/kernel; consider running with QEMU emulation (-q)."
+            );
+        }
         return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
     Ok(())
@@ -699,6 +816,13 @@ pub async fn kill_container_native(container_name: &str) -> Result<()> {
 
 pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
+    let container_dir = dirs::home_dir().map(|h| h.join(".podnext").join("containers").join(&name));
+    let dir_exists = container_dir.as_ref().map(|d| d.exists()).unwrap_or(false);
+    let in_mgr = container_mgr.get(&name).await.is_ok();
+
+    if !in_mgr && !dir_exists {
+        bail!("Container '{}' not found", name);
+    }
 
     if !force {
         print!("Remove container '{}'? [y/N]: ", name);
@@ -711,14 +835,12 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
         }
     }
 
-    container_mgr.remove(&name).await?;
+    if in_mgr {
+        let _ = container_mgr.remove(&name).await;
+    }
 
-    // ContainerManager::remove() only drops the in-memory entry; the rootfs
-    // stayed on disk, so `remove` printed success while the container was
-    // still installed (and the next `install` said "already exists").
-    // Delete the on-disk container directory to make removal real.
-    if let Some(home) = dirs::home_dir() {
-        let dir = home.join(".podnext").join("containers").join(&name);
+    // Delete the on-disk container directory (including orphan directories without metadata)
+    if let Some(dir) = container_dir {
         if dir.exists() {
             fs::remove_dir_all(&dir).map_err(|e| {
                 anyhow::anyhow!(
@@ -864,5 +986,13 @@ mod signal_tests {
                 .is_some()),
             "child survived SIGTERM forwarded to its process group"
         );
+    }
+
+    #[tokio::test]
+    async fn smoke_test_rootfs_skips_when_no_sh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rootfs = tmp.path().join("rootfs");
+        std::fs::create_dir_all(&rootfs).unwrap();
+        assert!(smoke_test_rootfs(&rootfs).await.is_ok());
     }
 }
