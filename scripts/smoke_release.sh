@@ -31,9 +31,10 @@ die() { printf 'CANNOT MEASURE: %s\n' "$1" >&2; exit 2; }
 mkdir -p "$TMPBASE" || die "temporary base not writable: $TMPBASE"
 
 # Never destroy evidence or user state: refuse to run against an existing container.
-# `list -a` is a pipe table: the name is the first column of a data row, and the row itself does NOT end
-# with the name (it ends with ` |`). Matching on end-of-line would silently fail to find a collision.
-if "$BIN" list -a 2>/dev/null | grep -qE "^\| *$NAME *\|"; then
+# Ask for JSON: `list -a` renders a pipe table by default, and the name is never at end-of-line there (the
+# row ends with ` |`), so any check that matched on end-of-line would silently miss a real collision. The
+# machine-readable form has one shape instead of two, so this test never parses a human table.
+if "$BIN" list -a -f json 2>/dev/null | grep -q "\"name\": *\"$NAME\""; then
   die "container '$NAME' already exists - pick another name; nothing was changed"
 fi
 
@@ -92,7 +93,7 @@ step "doctor (host)" 0 "$BIN" doctor
 step "install alpine" 0 "$BIN" install alpine:latest --name "$NAME"
 
 # 4. It is listed, and the listing knows its name - asserted, not merely "the command exited 0".
-if "$BIN" list -a 2>/dev/null | grep -qE "^\| *$NAME *\|"; then
+if "$BIN" list -a -f json 2>/dev/null | grep -q "\"name\": *\"$NAME\""; then
   printf '  %-34s ok\n' "list shows the container"
   STEPS="$STEPS""list shows the container|0|ok
 "
@@ -123,15 +124,36 @@ step "login -- true" 0 "$BIN" login "$NAME" -- true
 # 7. The guest side of doctor, which is the part that reads the proot argv.
 step "doctor --container" 0 "$BIN" doctor --container "$NAME"
 
-# 8. Sessions listing stays honest with nothing running.
-step "sessions" 0 "$BIN" sessions
+# 8. The detach/attach round trip. `attach` is interactive, so its stdin has to stay OPEN: a bare
+#    `printf ... | attach` reaches EOF at once and attach reconnects and disconnects with rc=0 and no
+#    output - correct behaviour, and the trap that made this look like a regression during the split.
+step "run --detach" 0 "$BIN" run --detach "$NAME"
+sleep 2
+ATT=${TMPBASE}/smoke-attach.out
+( printf 'echo SMOKE-ATTACH-MARKER\n'; sleep 6 ) | timeout 25 "$BIN" attach "$NAME" > "$ATT" 2>&1
+if grep -q SMOKE-ATTACH-MARKER "$ATT"; then
+  printf '  %-34s ok (%s bytes, marker seen)\n' "attach round trip" "$(wc -c < "$ATT" | tr -d ' ')"
+  STEPS="$STEPS""attach round trip (marker seen)|0|ok
+"
+else
+  printf '  %-34s FAILED (%s bytes, no marker)\n' "attach round trip" "$(wc -c < "$ATT" | tr -d ' ')"
+  STEPS="$STEPS""attach round trip|-|FAILED
+"
+  FAILED=1
+fi
 
-# 9. Clean removal. `remove` refuses without a tty unless forced, and that refusal is correct behaviour -
+# 9. Nothing has closed the session, so `sessions` has something real to list.
+step "sessions (one live)" 0 "$BIN" sessions
+
+# 10. End the session before removal, so removal is not racing a live supervisor.
+step "kill" 0 "$BIN" kill "$NAME"
+
+# 11. Clean removal. `remove` refuses without a tty unless forced, and that refusal is correct behaviour -
 #    it names the escape hatch and exits 1 - so a non-interactive smoke test must pass it explicitly.
 step "remove --force" 0 "$BIN" remove "$NAME" --force
 
 # 10. And it is gone - a removal that leaves the container behind is not a removal.
-if "$BIN" list -a 2>/dev/null | grep -qE "^\| *$NAME *\|"; then
+if "$BIN" list -a -f json 2>/dev/null | grep -q "\"name\": *\"$NAME\""; then
   printf '  %-34s FAILED (still listed)\n' "container is gone"
   STEPS="$STEPS""container is gone|-|FAILED
 "

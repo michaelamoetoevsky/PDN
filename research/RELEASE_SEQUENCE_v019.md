@@ -175,7 +175,10 @@ else chases the tag.
 1. Land S5, then wait for the **PDN CI/CD** run on that commit to be green. Its
    `Rust Android Cross-Compile (aarch64)` job uploads `pn-android-aarch64` - a release-mode aarch64 Android
    binary - and that is the artifact to test, not the debug binary the device builds locally.
-2. Download and smoke-test it **before any tag exists**:
+2. Download and smoke-test it **before any tag exists** - now one command, so the order cannot be
+   remembered wrongly: `sh scripts/preflight_release.sh <sha> 0.2.0` finds the PDN CI/CD run for the commit,
+   refuses to continue unless it is `success`, downloads `pn-android-aarch64`, proves it is a ~20 MB aarch64
+   ELF, and runs the smoke test against it. Detail of what it does by hand:
    `gh run download <run-id> -n pn-android-aarch64 -D $PREFIX/tmp/rel-art`, `chmod +x`, then
    `sh scripts/smoke_release.sh $PREFIX/tmp/rel-art/podnext 0.2.0`. This is not theoretical: it was
    exercised against `fc6d288`'s artifact - 11 of 11 steps ok, exit 0, on this device.

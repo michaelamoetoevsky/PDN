@@ -25,7 +25,7 @@ because the suite does not drive them yet. Re-derive this table with `podnext --
 | `podnext search` | `[experimental]` | no automated test covers it yet |
 | `podnext image` | `[experimental]` | `pull` and `push` refuse: there is no OCI image store before v0.3.0 |
 | `podnext sessions` | `[stable]` | exercised by `crates/podnext/tests/automation_contract.rs` |
-| `podnext attach` | `[experimental]` | the reattach path has no automated test; only its no-session refusal is covered (`crates/podnext/tests/stub_refusals.rs`) |
+| `podnext attach` | `[experimental]` | the reattach path is covered by `scripts/smoke_release.sh` (which asserts a marker across a reconnect) rather than by the crate's test suite; the no-session refusal is covered by `crates/podnext/tests/stub_refusals.rs` |
 | `podnext info` | `[experimental]` | no automated test covers it yet |
 | `podnext version` | `[experimental]` | no automated test covers it yet |
 | `podnext doctor` | `[stable]` | exercised by `crates/podnext/tests/doctor_contract.rs` |

@@ -94,14 +94,20 @@ to stderr and nothing to stdout.
   real (`9076b93`, #57): `run --detach` starts the guest under a supervised PTY and prints the
   supervisor pid, and `attach <container>` reconnects to the same live shell — the same guest pid
   answers two attaches, a marker written while attached survives a detach, and no `podnext` or
-  `proot` process is left after the guest exits. Two things are deliberately **not** done, declared
+  `proot` process is left after the guest exits. Three things are deliberately **not** done, declared
   here rather than discovered: (1) a resize of the attaching terminal **is not re-forwarded** while
   attached — a client sends its size once when it connects and the supervisor has no `SIGWINCH`
   handler, so a full-screen program opened before a resize keeps the old geometry until the next
   attach; (2) output produced while detached is appended to the session log
   (`sessions_dir()/<pid>.log`) but **is not replayed** on reconnect, so lines printed while nobody
   was attached do not appear — read the log file for them. Both are simplifications of the current
-  supervisor, not defects it reports.
+  supervisor, not defects it reports. A third property is worth stating because a script will otherwise
+  read it as a failure: **`attach` is interactive and its stdin must stay open.** When stdin reaches EOF —
+  `printf 'cmd\n' | podnext attach c`, or any pipe that closes — attach reconnects, ends and exits **0 with
+  no output**, which is correct and is not detectable from the exit status. Measured on this device:
+  closed pipe 0 bytes / rc 0; open pipe (`( printf 'echo M\n'; sleep 6 ) | podnext attach c`) 33 bytes with
+  the marker echoed and the `/ # ` prompt. `scripts/smoke_release.sh` drives it the second way and asserts
+  the marker, which is also the only automated coverage the reattach path has.
 - **`image pull` / `image push`** refuse with an explanation instead of reporting a success they did
   not achieve: there is no OCI blob store yet, and `podnext install <image>` is the working path.
 - **`build submit|status|cancel|list|artifacts|logs`**, **`watchdog events`**, **`service logs`** and
