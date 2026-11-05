@@ -114,6 +114,30 @@ jobs:
           cargo build -p podnext --locked --quiet
           python3 scripts/check_non_goals.py --binary target/debug/podnext
 
+      - name: Check the warning ceiling (ratchet)
+        # 290 warnings scroll past this build and nothing counted them, so the split's own residue
+        # (unused imports left behind by moving symbols out of commands/mod.rs) was invisible. The
+        # ceiling only moves down.
+        #
+        # `--cold` is the point, not a detail: rustc caches its diagnostics along with the artefacts,
+        # so a `cargo check` after this job's build re-emits NOTHING and the comparison would pass
+        # while measuring zero. A gate that cannot fail is worse than no gate, so this one pays for a
+        # fresh target directory and reads the real counts.
+        #
+        # Exit 2 is "cannot measure": the baseline is stored per toolchain, and this runner uses
+        # `stable`, which moves on its own. That is not a defect in the tree, so it must not fail the
+        # build - but it must not pass quietly either. It prints the counts it measured and says the
+        # ratchet did not run.
+        run: |
+          set +e
+          python3 scripts/check_warnings.py compare --cold
+          rc=$?
+          if [ "$rc" = "2" ]; then
+            echo "::warning title=Warning ratchet did not run::no baseline recorded for this runner's toolchain. Exit 2 means cannot measure - it is never a pass. Record it deliberately with: python3 scripts/check_warnings.py record --cold"
+            exit 0
+          fi
+          exit $rc
+
       - name: Fail if the ledger reported a FAIL
         if: always()
         run: |

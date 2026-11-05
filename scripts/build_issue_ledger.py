@@ -287,6 +287,16 @@ CHECKS: list[dict] = [
          needle="assert_seccomp_profile_supported"),
     dict(issue="60", claim="the guard is unit tested", cargo=True, needle=None,
          cmd="cargo test -p proot-distro-core --lib seccomp_profile_is_refused_not_dropped --locked"),
+    # ── #69: the warning count has a ceiling and the gate can fail ────────────
+    dict(issue="69", claim="the warning ratchet can actually fail, not merely report",
+         cmd="python3 scripts/check_warnings.py self-check", needle="fires on growth"),
+    dict(issue="69", claim="ceilings are stored per toolchain, so a rustc change reads as cannot-measure rather than as a pass",
+         cmd="grep -F '\"baselines\"' scripts/warning_baseline.json", needle=None),
+    dict(issue="69", claim="a toolchain with no recorded ceiling is not silently treated as clean",
+         cmd="grep -F 'no baseline recorded for this toolchain' scripts/check_warnings.py",
+         needle="no baseline recorded for this toolchain"),
+    dict(issue="69", claim="CI runs the comparison, so the number cannot grow unnoticed",
+         cmd="grep -rnF 'check_warnings.py compare' .github/workflows", needle="check_warnings.py compare"),
     # ── #68: an interactive guest must keep the terminal it was given ─────────
     dict(issue="68", claim="an interactive run keeps the caller's process group, asserted in code",
          cmd="grep -rnF 'an_interactive_run_does_not_take_its_own_process_group' crates/proot-core/src/lib.rs",
@@ -530,11 +540,76 @@ def _predicate_context(c: dict) -> str:
             " - if a refactor removed the symbol the predicate is stale, not the fix")
 
 
+DISPOSITION_OUT = REPO / "research" / "AUDIT_FINDINGS_DISPOSITION.md"
+
+
+def write_disposition(by_num: dict, tracked_by_map: list, head: str, generated: str) -> None:
+    """Rewrite the prose disposition list from this run's data.
+
+    This file used to be assembled by hand while claiming to be generated, and drifted: its header
+    said 61 issues while its table held 71, and issues filed later never appeared at all. A document
+    that describes verification is part of the verification, so it is produced from the same tables
+    the ledger prints rather than maintained alongside them.
+
+    Every issue gets a row, because a finding that is simply absent from the list reads as resolved.
+    """
+    claims: dict[str, list[str]] = {}
+    for c in CHECKS:
+        claims.setdefault(str(c["issue"]), []).append(c["claim"])
+
+    covered = sum(1 for n in by_num if str(n) in claims)
+    declined = sum(1 for n in by_num
+                   if str(n) not in claims and str(n) in NO_CHECK_REASON)
+    work_items = [n for n in tracked_by_map]
+
+    out = [
+        "# Dispositions for the audit findings (roadmap section 9.1)",
+        "",
+        "Section 9.1 asks that every finding be triaged: fixed, filed, or declined with a reason. The",
+        "ledger enforces the rule mechanically - an issue with neither a predicate nor a hand-written",
+        "reason fails the gate, and a generated fallback no longer masquerades as a disposition. This",
+        "file is the prose form of the same thing, so a reader of the release does not have to read",
+        "Python. **It is generated, not maintained**: `scripts/build_issue_ledger.py --disposition`",
+        "rewrites it from the same tables the ledger prints, so it cannot drift from the gate.",
+        "",
+        f"Generated {generated} against `{head}`: **{len(by_num)} issues**, of which {covered} carry",
+        f"predicates, {declined} are declined with a written reason, and {len(work_items)} are wayfinder",
+        "work items whose acceptance criteria live in the map issue (#48) rather than in a predicate.",
+        "",
+        "| # | state | title | disposition |",
+        "|---|---|---|---|",
+    ]
+    for n in sorted(by_num, key=lambda x: int(x)):
+        i = by_num[n]
+        if str(n) in claims:
+            how = "predicate(s): " + "; ".join(claims[str(n)])
+        elif str(n) in NO_CHECK_REASON:
+            how = "declined: " + NO_CHECK_REASON[str(n)].strip()
+        else:
+            how = "**UNTRIAGED - the ledger fails until this is written down**"
+        if n in work_items:
+            how = "work item (acceptance criteria in the map issue): " + how
+        title = i["title"].replace("|", "\\|")[:90]
+        out.append(f"| {n} | {i['state']} | {title} | {how} |")
+    out += [
+        "",
+        "**A row is not a resolution.** `predicate(s)` means the fix is asserted by a check that this",
+        "ledger runs and that can fail; `declined` means the reason is written down. Neither is a",
+        "statement that the underlying behaviour was observed end to end - see the ledger's own SKIPPED",
+        "section for the checks that produced no verdict.",
+        "",
+    ]
+    DISPOSITION_OUT.write_text("\n".join(out))
+    print(f"written: {DISPOSITION_OUT}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Re-verify every issue fix against HEAD.")
     ap.add_argument("--json", action="store_true", help="print a machine-readable summary to stdout")
     ap.add_argument("--cargo", action="store_true", help="also run the gated cargo/behaviour checks")
     ap.add_argument("--no-write", action="store_true", help="do not rewrite ISSUE_LEDGER.md")
+    ap.add_argument("--disposition", action="store_true",
+                    help="also rewrite research/AUDIT_FINDINGS_DISPOSITION.md from this run's data")
     ap.add_argument("--offline", action="store_true",
                     help="CI gate: run the source predicates, never call gh and never write the ledger")
     args = ap.parse_args()
@@ -746,6 +821,8 @@ def main() -> int:
         "cargo_enabled": args.cargo,
     }
 
+    if args.disposition and not args.offline:
+        write_disposition(by_num, tracked_by_map, head, generated)
     if write_ledger:
         OUT.write_text("\n".join(lines))
         print(f"\nwritten: {OUT}", file=(sys.stderr if args.json else sys.stdout))
