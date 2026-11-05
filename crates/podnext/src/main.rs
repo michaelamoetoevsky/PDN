@@ -170,6 +170,7 @@ struct Cli {
     #[arg(
         long = "no-sysvipc",
         global = true,
+        conflicts_with = "sysvipc",
         help = "Disable System V IPC emulation"
     )]
     no_sysvipc: bool,
@@ -177,6 +178,7 @@ struct Cli {
     #[arg(
         long = "sysvipc",
         global = true,
+        conflicts_with = "no_sysvipc",
         help = "Enable System V IPC emulation"
     )]
     sysvipc: bool,
@@ -197,21 +199,37 @@ struct Cli {
     #[arg(long = "gid", global = true, help = "Group ID to run as")]
     gid: Option<u32>,
 
-    #[arg(long = "seccomp", global = true, help = "Enable seccomp filtering")]
+    #[arg(
+        long = "seccomp",
+        global = true,
+        conflicts_with = "no_seccomp",
+        help = "Enable seccomp filtering"
+    )]
     seccomp: bool,
 
-    #[arg(long = "no-seccomp", global = true, help = "Disable seccomp filtering")]
+    #[arg(
+        long = "no-seccomp",
+        global = true,
+        conflicts_with = "seccomp",
+        help = "Disable seccomp filtering"
+    )]
     no_seccomp: bool,
 
     #[arg(long = "trace", global = true, help = "Enable syscall tracing")]
     trace: bool,
 
-    #[arg(long = "kill-on-exit", global = true, help = "Kill processes on exit")]
+    #[arg(
+        long = "kill-on-exit",
+        global = true,
+        conflicts_with = "no_kill_on_exit",
+        help = "Kill processes on exit"
+    )]
     kill_on_exit: bool,
 
     #[arg(
         long = "no-kill-on-exit",
         global = true,
+        conflicts_with = "kill_on_exit",
         help = "Don't kill processes on exit"
     )]
     no_kill_on_exit: bool,
@@ -275,10 +293,10 @@ enum Commands {
     )]
     List {
         /// Show all (including stopped)
-        #[arg(short = 'a', long, default_value = "true")]
+        #[arg(short = 'a', long, conflicts_with = "no_all")]
         all: bool,
         /// Hide stopped containers
-        #[arg(long = "no-all", action = clap::ArgAction::SetTrue)]
+        #[arg(long = "no-all", action = clap::ArgAction::SetTrue, conflicts_with = "all")]
         no_all: bool,
         /// Output format
         #[arg(short, long, value_enum, default_value = "table")]
@@ -2084,8 +2102,8 @@ fn default_container_name(image: &str) -> String {
     proot_distro_core::names::store_key(image)
 }
 
-async fn cmd_list(all: bool, no_all: bool, format: OutputFormat) -> Result<()> {
-    let show_all = all && !no_all;
+async fn cmd_list(_all: bool, no_all: bool, format: OutputFormat) -> Result<()> {
+    let show_all = !no_all;
     let containers = list_containers_native(show_all).await?;
 
     #[derive(Tabled, Serialize)]
@@ -4374,5 +4392,41 @@ mod tests {
         use clap::Parser;
         let cli = Cli::try_parse_from(&["podnext", "--format", "json", "list"]).unwrap();
         assert_eq!(cli.format, Some(OutputFormat::Json));
+    }
+
+    #[test]
+    fn conflicting_flags_error() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(&["podnext", "list", "--all", "--no-all"]).is_err());
+        assert!(Cli::try_parse_from(&[
+            "podnext",
+            "-r",
+            "/tmp",
+            "--seccomp",
+            "--no-seccomp",
+            "--",
+            "ls"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from(&[
+            "podnext",
+            "-r",
+            "/tmp",
+            "--sysvipc",
+            "--no-sysvipc",
+            "--",
+            "ls"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from(&[
+            "podnext",
+            "-r",
+            "/tmp",
+            "--kill-on-exit",
+            "--no-kill-on-exit",
+            "--",
+            "ls"
+        ])
+        .is_err());
     }
 }
