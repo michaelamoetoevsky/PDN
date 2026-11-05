@@ -95,7 +95,7 @@ wired both new harnesses into CI, and filed #70 for a committed conflict marker 
 | `login --user` is accepted and ignored while `run --user` refuses | `container.rs`/`native.rs` ownership, and it is a behaviour change, not a text change |
 | `run`/`login` print no user, which 9.3 asks the build/run output to state | same files, and it needs a decision about the output format |
 | Two fabricated sample outputs in `cli-reference.md`; `config validate` exits 3 where the doc says 2 | doc plus contract question |
-| #65: `cli.rs` 1,445 and `main.rs` 1,040 above the ceiling | held until `main.rs` was free - it is now |
+| #65: `cli.rs` 1,450 and `main.rs` 1,170 above the ceiling | in flight (wave 6, `dept/split`); the tracked help fixture is its guard rail |
 
 ### S4 - integration
 
@@ -109,8 +109,10 @@ wired both new harnesses into CI, and filed #70 for a committed conflict marker 
    to that file is silently undone by taking the branch's copy, and that is exactly how the #41
    `args_os` fix was lost and caught.
 4. Gates on the merged tree: `cargo fmt --all -- --check`; `--bin podnext` plus every test target;
-   `proot-distro-core --lib`; the 123-screen help dump against `$PREFIX/tmp/help-baseline.txt`;
-   `build_issue_ledger.py --offline` with 0 FAIL; `check_non_goals.py`.
+   `proot-distro-core --lib`; the 123-screen help dump against the TRACKED fixture
+   `research/cli-help-baseline.txt`; `build_issue_ledger.py --offline` with 0 FAIL; `check_non_goals.py`.
+   (That path is not the untracked scratch file: comparing one of those across worktrees cost three
+   defects in a single round - see `86a148b`)
 5. Provenance, because the target directory is shared: build and copy inside the lock, prove the
    binary with a string only this tree has, prove the library with the test names in the output.
 6. Push, then read the CI run on the pushed head: the ledger job must report all predicates with
@@ -118,8 +120,17 @@ wired both new harnesses into CI, and filed #70 for a committed conflict marker 
 
 ### S5 - release preparation (documentation only, no behaviour change)
 
-- `Cargo.toml` `0.1.8` to `0.1.9`; `Cargo.lock` follows.
-- `CHANGELOG.md`: move `[Unreleased]` to `## [0.1.9] - <date>`, with every entry naming its commit.
+- `Cargo.toml` `0.1.8` to **`0.2.0`**; `Cargo.lock` follows. It is `0.2.0` and not `0.1.9` or `0.1.10`
+  because `v0.1.9` was tagged and withdrawn (`ed7dc3f`, before any release existed) and `roadmap.md`
+  section 10 names `v0.2.0` as the mobility target; a withdrawn tag is not a released version.
+- `CHANGELOG.md`: move `[Unreleased]` to `## [0.2.0] - <date>`, with every entry naming its commit.
+- Re-record the warning ceiling to the value the settled tree actually produces. It is 290 in the fixture
+  today and the runner measured **266** - the detach/attach work consumes symbols that the extraction had
+  left as unused imports. A ceiling only refuses growth, so the gap is safe but it is slack, and slack is
+  what the next unrelated change spends. Re-measure **cold** on the device (`--cold`) and record both
+  toolchains, because the ceiling is keyed by toolchain and a warm build measures zero.
+- Housekeeping entry for the nine one-shot commit scripts removed in `28dba29`, so the release notes do not
+  imply the repository always looked like this.
 - `docs/src/roadmap.md`: stamp section 9 statuses with the measured numbers, including any criterion
   that ends the release as a **recorded exception** rather than met.
 - `README.md`: "What's New" reflects the same list.
@@ -131,7 +142,7 @@ The release workflow (`.github/workflows/release.yml`) triggers on a `v*` tag an
 build, test and clippy per target, then uploads `podnext-<target>`, `install.sh` and
 `install-short.sh`, runs the security audit, and creates the release. So the sequence is:
 
-1. Tag `v0.1.9` on the S5 commit, push the tag, watch `Release Automation` to completion.
+1. Tag **`v0.2.0`** on the S5 commit, push the tag, watch `Release Automation` to completion.
 2. Download one artifact and run the **smoke test on this device**, which the withdrawn attempt
    never did: `podnext install alpine`, `run`, `login`, `remove`, and `doctor` - each command's exit
    status recorded.
