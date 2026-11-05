@@ -10,14 +10,15 @@ what the code does, function by function, and what PDN should take from it.
   and per its own `AGENTS.md` a fork with *no upstream sync*). Scale: **138 `.c` files / 32,638 lines**, 71
   headers, **113 test scripts**, `src/{cli,execve,extension,loader,path,ptrace,syscall,tracee}`. Every file
   was enumerated and a **symbol index** was generated mechanically into
-  `~/.hermes/cache/scratch/proot_symbol_index.txt` (every top-level function per file, 630 lines). The
+  `~/.hermes/cache/scratch/proot_symbol_index.txt` - 69 files of `src/`, **498 function definitions, 636
+  lines** - and the command that produces it is in section 0's reproduction block. The
   functions carrying semantics PDN depends on were then **read in full** (`path/binding.c`,
   `path/path.c`, the CLI/extension layout).
 - **proot-distro** - read in place from the installed package
   (`$PREFIX/lib/python3.14/site-packages/proot_distro`, where 5.10.3 lives): **77 Python files / 29,015
-  lines** plus three shell completions (bash, zsh, fish). Every file was enumerated with per-file line,
-  `def` and `class` counts into
-  `~/.hermes/cache/scratch/proot_distro_inventory.txt` (1,100 lines). For every module, the **module
+  lines** plus three shell completions (bash, zsh, fish). Every file was enumerated with its **every
+  top-level symbol** - classes, functions, assignments - into
+  `~/.hermes/cache/scratch/proot_distro_inventory.txt`: **77 files, 942 symbols, 1,096 lines**. For every module, the **module
   docstring and every function docstring** were extracted mechanically (AST, not grep) and read; the
   functions whose behaviour would be *copied* were read as code.
 
@@ -25,6 +26,32 @@ what the code does, function by function, and what PDN should take from it.
 marked **code**, what I read as docstring/signature is marked **surface**, and every claim carries a
 `file:function` citation so the next reader can check it. Anything I could not verify is marked **unknown**
 (section 6).
+
+**Reproducing the two mechanical inventories** (the scratch files named above are pruned after a day;
+these regenerate them):
+
+```sh
+# proot: clone the fork that builds the proot on this device, then index every file's functions
+D=$HOME/.hermes/cache/scratch/proot-src
+git clone --depth 1 https://github.com/termux/proot "$D"
+find "$D/src" -name '*.c' | sort | while read f; do
+  printf '\n### %s (%s lines)\n' "${f#$D/}" "$(wc -l < "$f")"
+  grep -nE '^[a-zA-Z_][a-zA-Z0-9_ *]*\(' "$f" | sed 's/^/    /'
+done > $HOME/.hermes/cache/scratch/proot_symbol_index.txt
+# expected: 69 files, 498 function definitions, 636 lines
+grep -c '^### ' $HOME/.hermes/cache/scratch/proot_symbol_index.txt
+grep -cE '^    [0-9]+:' $HOME/.hermes/cache/scratch/proot_symbol_index.txt
+
+# proot-distro: the installed package, every file with each of its top-level symbols
+S=$PREFIX/lib/python3.14/site-packages/proot_distro
+find "$S" -name '*.py' | sort | while read f; do
+  printf '\n### %s (%s lines)\n' "${f#$S/}" "$(wc -l < "$f")"
+  grep -nE "^(class |def |async def |[A-Z_]+ *=)" "$f" | sed 's/^/    /'
+done > $HOME/.hermes/cache/scratch/proot_distro_inventory.txt
+# expected: 77 files, 942 symbols, 1096 lines
+grep -c '^### ' $HOME/.hermes/cache/scratch/proot_distro_inventory.txt
+grep -cE '^    [0-9]+:' $HOME/.hermes/cache/scratch/proot_distro_inventory.txt
+```
 
 ---
 
