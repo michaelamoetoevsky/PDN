@@ -70,6 +70,7 @@ use tokio::net::UnixStream;
 use crate::utils::format_size;
 
 mod compose;
+pub mod image;
 pub use compose::execute_compose_command;
 
 // Daemon socket path

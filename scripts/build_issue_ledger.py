@@ -286,8 +286,10 @@ CHECKS: list[dict] = [
     dict(issue="44", claim="the inode size is no longer used as the size",
          cmd='! grep -qF \'path.metadata().map(|m| m.len())\' crates/podnext/src/main.rs',
          needle=None),
+    # Scoped to the crate, not one file: the size rendering moved to commands/image.rs when the
+    # CLI was split, and a predicate pinned to a path would have gone green by disappearing.
     dict(issue="44", claim="an unmeasurable rootfs prints unknown",
-         cmd='grep -qF \'None => "unknown"\' crates/podnext/src/main.rs', needle=None),
+         cmd="grep -rqF 'None => \"unknown\"' crates/podnext/src", needle=None),
     dict(issue="44", claim="a failed measurement is reported as a bound, never as a bare number",
          cmd="cargo test -p podnext --bin podnext size_measurement_tests", needle=None, cargo=True),
     # ── #45: podnext doctor exists and is driven by a test ───────────────────
