@@ -3094,6 +3094,7 @@ async fn cmd_network_create(
     subnet: Option<String>,
     gateway: Option<String>,
 ) -> Result<()> {
+    proot_distro_core::NameValidator::new().validate_network_name(&name)?;
     let mut core = proot_distro_core::ProotDistroCore::new()?;
     let config = NetworkConfig {
         name: name.clone(),
@@ -3811,6 +3812,7 @@ async fn cmd_network_disconnect(network: String, container: String) -> Result<()
 }
 
 async fn cmd_volume_create(name: String, driver: String, opts: Vec<String>) -> Result<()> {
+    proot_distro_core::NameValidator::new().validate_volume_name(&name)?;
     let mut core = proot_distro_core::ProotDistroCore::new()?;
     let labels = std::collections::HashMap::new();
     let mut options = std::collections::HashMap::new();

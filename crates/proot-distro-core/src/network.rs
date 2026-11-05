@@ -78,6 +78,7 @@ impl NetworkManager {
     }
 
     pub fn create(&mut self, config: &NetworkConfig) -> Result<()> {
+        crate::names::NameValidator::new().validate_network_name(&config.name)?;
         if self.networks.contains_key(&config.name) {
             anyhow::bail!("Network '{}' already exists", config.name);
         }

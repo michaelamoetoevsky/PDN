@@ -42,6 +42,7 @@ fn volumes_root() -> PathBuf {
 pub struct StorageManager {
     volumes: HashMap<String, VolumeConfig>,
     config_path: PathBuf,
+    storage_root: PathBuf,
 }
 
 impl StorageManager {
@@ -55,9 +56,26 @@ impl StorageManager {
         let mut manager = Self {
             volumes: HashMap::new(),
             config_path,
+            storage_root: volumes_root(),
         };
         manager.load()?;
         Ok(manager)
+    }
+
+    #[cfg(test)]
+    pub fn tmp_manager(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("pdn-vol-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Self {
+            volumes: HashMap::new(),
+            config_path: dir.join("volumes.toml"),
+            storage_root: dir.join("volumes"),
+        }
+    }
+
+    pub fn mountpoint(&self, name: &str) -> PathBuf {
+        self.storage_root.join(name)
     }
 
     fn load(&mut self) -> Result<()> {
@@ -76,6 +94,7 @@ impl StorageManager {
     }
 
     pub fn create_volume(&mut self, config: &VolumeConfig) -> Result<()> {
+        crate::names::NameValidator::new().validate_volume_name(&config.name)?;
         if self.volumes.contains_key(&config.name) {
             return Err(Error::msg(format!(
                 "Volume '{}' already exists",
@@ -84,7 +103,7 @@ impl StorageManager {
         }
         // Materialise the mountpoint: a volume the guest can bind into must
         // have a real directory to bind from.
-        let mountpoint = volumes_root().join(&config.name);
+        let mountpoint = self.mountpoint(&config.name);
         std::fs::create_dir_all(&mountpoint)?;
 
         self.volumes.insert(config.name.clone(), config.clone());
@@ -108,7 +127,7 @@ impl StorageManager {
             .map(|(_, config)| VolumeInfo {
                 name: config.name.clone(),
                 driver: config.driver.clone(),
-                mountpoint: volumes_root().join(&config.name),
+                mountpoint: self.mountpoint(&config.name),
                 labels: config.labels.clone(),
                 options: config.options.clone(),
                 size: 0,
@@ -122,7 +141,7 @@ impl StorageManager {
             Ok(VolumeInfo {
                 name: config.name.clone(),
                 driver: config.driver.clone(),
-                mountpoint: volumes_root().join(&config.name),
+                mountpoint: self.mountpoint(&config.name),
                 labels: config.labels.clone(),
                 options: config.options.clone(),
                 size: 0,
@@ -130,5 +149,36 @@ impl StorageManager {
         } else {
             Err(Error::msg(format!("Volume '{}' not found", name)))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_volume_rejects_path_traversal() {
+        let mut sm = StorageManager::tmp_manager("traversal");
+        let bad_names = [
+            "x/../../../../PWNED",
+            "../escape",
+            "/abs/path",
+            "a/b",
+            "win\\slash",
+            "..",
+            ".",
+        ];
+        for bad in bad_names {
+            let cfg = VolumeConfig {
+                name: bad.to_string(),
+                ..Default::default()
+            };
+            assert!(
+                sm.create_volume(&cfg).is_err(),
+                "create_volume({bad:?}) must fail"
+            );
+        }
+        assert!(!sm.storage_root.parent().unwrap().join("PWNED").exists());
+        let _ = std::fs::remove_dir_all(sm.storage_root.parent().unwrap());
     }
 }

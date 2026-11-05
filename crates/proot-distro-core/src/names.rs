@@ -85,45 +85,11 @@ impl NameValidator {
     }
 
     pub fn validate_network_name(&self, name: &str) -> Result<()> {
-        if name.is_empty() {
-            return Err(anyhow::anyhow!("Network name cannot be empty"));
-        }
-
-        if name.len() > 32 {
-            return Err(anyhow::anyhow!("Network name too long (max 32 chars)"));
-        }
-
-        if !name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-        {
-            return Err(anyhow::anyhow!(
-                "Network name can only contain alphanumeric, hyphen, and underscore"
-            ));
-        }
-
-        Ok(())
+        self.validate_container_name(name)
     }
 
     pub fn validate_volume_name(&self, name: &str) -> Result<()> {
-        if name.is_empty() {
-            return Err(anyhow::anyhow!("Volume name cannot be empty"));
-        }
-
-        if name.len() > 64 {
-            return Err(anyhow::anyhow!("Volume name too long (max 64 chars)"));
-        }
-
-        if !name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-        {
-            return Err(anyhow::anyhow!(
-                "Volume name can only contain alphanumeric, hyphen, underscore, and dot"
-            ));
-        }
-
-        Ok(())
+        self.validate_container_name(name)
     }
 }
 
@@ -185,6 +151,29 @@ mod store_key_tests {
             assert!(
                 !key.is_empty(),
                 "store_key({reference:?}) must not be empty"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_path_traversal_in_volume_and_network_names() {
+        let v = super::NameValidator::new();
+        for bad in [
+            "x/../../../../PWNED",
+            "../escape",
+            "/abs/path",
+            "a/b",
+            "win\\slash",
+            "..",
+            ".",
+        ] {
+            assert!(
+                v.validate_volume_name(bad).is_err(),
+                "validate_volume_name({bad:?}) must fail"
+            );
+            assert!(
+                v.validate_network_name(bad).is_err(),
+                "validate_network_name({bad:?}) must fail"
             );
         }
     }
