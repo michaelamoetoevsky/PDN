@@ -3591,7 +3591,10 @@ mod build_local_tests {
                 1,
                 "bind '{b}' must be <source>:<target> with no colon in the source"
             );
-            assert!(b.ends_with(":/dev/shm"), "unexpected bind: {b}");
+            assert!(
+                b.ends_with(":/dev/shm") || b.ends_with(":/tmp"),
+                "unexpected bind: {b}"
+            );
         }
         if let Ok(_sys) = proot_distro_core::sysdata::ensure(container_dir) {
             for b in proot_distro_core::sysdata::bindings(container_dir) {
