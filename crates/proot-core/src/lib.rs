@@ -421,13 +421,6 @@ impl ProotEngine {
             pn_trace!("[DEBUG] Env: {:?}", self.config.env);
         }
 
-        // Spawn and wait for completion
-        let mut child = cmd
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .stdin(std::process::Stdio::inherit())
-            // Own process group (pgid == this pid) so callers can group-signal.
-            .process_group(0);
         unsafe {
             cmd.pre_exec(|| {
                 libc::umask(0o022);
@@ -439,7 +432,15 @@ impl ProotEngine {
                 Ok(())
             });
         }
-        let mut child = child.spawn()?;
+
+        // Spawn and wait for completion
+        let mut child = cmd
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .stdin(std::process::Stdio::inherit())
+            // Own process group (pgid == this pid) so callers can group-signal.
+            .process_group(0)
+            .spawn()?;
         let pid = child
             .id()
             .ok_or_else(|| anyhow::anyhow!("Failed to get PID"))?;

@@ -52,13 +52,6 @@ const FAKE_INOTIFY_WATCHES: &str = "4096\n";
 
 const FAKE_CMDLINE: &str = "boot_cpu=0 quiet\n";
 
-const FAKE_MOUNTS: &str = "\
-rootfs / rootfs rw,relatime 0 0
-proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
-sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
-devpts /dev/pts devpts rw,nosuid,noexec,relatime 0 0
-";
-
 const FAKE_FILESYSTEMS: &str = "\
 nodev\tsysfs
 nodev\trootfs
@@ -407,44 +400,6 @@ pub fn fake_uptime(cpus: &[u32]) -> String {
 pub fn fake_uptime_with_uptime(cpus: &[u32], uptime: f64) -> String {
     let idle: u64 = cpu_rows(cpus).iter().map(|(_, r)| r[IDLE_COLUMN]).sum();
     format!("{:.2} {:.2}\n", uptime, idle as f64 / USER_HZ as f64)
-}
-
-fn fake_vmstat() -> String {
-    let mut free_pages = 1743136u64;
-    if let Ok(mem) = fs::read_to_string("/proc/meminfo") {
-        for line in mem.lines() {
-            if line.starts_with("MemFree:") {
-                if let Some(kb_str) = line.split_whitespace().nth(1) {
-                    if let Ok(kb) = kb_str.parse::<u64>() {
-                        free_pages = kb / 4;
-                    }
-                }
-                break;
-            }
-        }
-    }
-    format!(
-        "nr_free_pages {}\n\
-nr_zone_inactive_anon 179281\n\
-nr_zone_active_anon 7183\n\
-nr_zone_inactive_file 22858\n\
-nr_zone_active_file 51328\n\
-nr_zone_unevictable 642\n\
-nr_zone_write_pending 0\n\
-nr_mlock 0\n\
-nr_bounce 0\n\
-nr_zspages 0\n\
-nr_free_cma 0\n\
-numa_hit 1259626\n\
-numa_miss 0\n\
-numa_foreign 0\n\
-numa_interleave 720\n\
-pgpgin 200232\n\
-pgpgout 180764\n\
-pswpin 0\n\
-pswpout 0\n",
-        free_pages
-    )
 }
 
 fn fake_version() -> String {

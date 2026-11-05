@@ -123,7 +123,6 @@ impl VfsManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn test_vfs_manager_creation() {
