@@ -71,6 +71,7 @@ use crate::utils::format_size;
 
 mod compose;
 pub mod image;
+pub mod network;
 pub mod volume;
 pub use compose::execute_compose_command;
 
