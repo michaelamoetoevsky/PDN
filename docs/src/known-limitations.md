@@ -42,8 +42,10 @@ readable files supplies a figure marked `>=` when subtrees could not be read, an
 be measured at all prints `unknown`. The column that held the container name is now `CONTAINER`; no
 image ID exists to print, because the metadata carries the image name and tag and no digest.
 
-**`podnext doctor` does not exist.** The roadmap (§9.3) expects a host-and-guest report covering DNS,
-`/dev/shm`, `os-release`, cgroups, `TMPDIR` and the proot argv.
+**`podnext doctor` did not exist.** It does now (see [CLI reference](cli-reference.md#podnext-doctor)):
+host checks for the proot binary and its version, `TMPDIR`, shared memory, DNS, the kernel and cgroups,
+plus guest checks (os-release, architecture, `/dev/shm`, mounts, resolv.conf) when a container is named.
+It does not print the proot argv; `PN_DEBUG=1 podnext run ...` does.
 
 ## Deliberate limitations
 

@@ -197,3 +197,200 @@ mod tests {
         assert_eq!(test_root, PathBuf::from("/tmp/test"));
     }
 }
+
+/// Termux and XDG aware host paths.
+///
+/// The Termux layout (`/data/data/<package>/files/{home,usr}`) is a default, not a law:
+/// the app's own environment names the real locations, and `termux-exec`/`proot-distro`
+/// export them. Roadmap §9.2 asks for these to be honoured instead of hard-coded, so the
+/// binary keeps working when the home or the prefix moves (a second profile, a container,
+/// a relocated install). Every resolver follows the documented order and falls back to the
+/// default only when nothing is set.
+pub mod host {
+    use std::path::{Path, PathBuf};
+
+    /// `/data/data/com.termux/files/usr`, the documented default.
+    pub const DEFAULT_PREFIX: &str = "/data/data/com.termux/files/usr";
+    /// `com.termux`, the documented default package name.
+    pub const DEFAULT_PACKAGE: &str = "com.termux";
+
+    fn first_non_empty(values: &[Option<String>]) -> Option<PathBuf> {
+        values
+            .iter()
+            .flatten()
+            .map(|v| v.trim())
+            .find(|v| !v.is_empty())
+            .map(PathBuf::from)
+    }
+
+    /// Resolve the prefix from explicit values; split out so the order is testable
+    /// without mutating this process's environment.
+    pub fn resolve_prefix(termux_prefix: Option<String>, prefix: Option<String>) -> PathBuf {
+        first_non_empty(&[termux_prefix, prefix]).unwrap_or_else(|| PathBuf::from(DEFAULT_PREFIX))
+    }
+
+    /// The Termux prefix: `TERMUX__PREFIX`, then `PREFIX`, then the default.
+    pub fn prefix() -> PathBuf {
+        resolve_prefix(
+            std::env::var("TERMUX__PREFIX").ok(),
+            std::env::var("PREFIX").ok(),
+        )
+    }
+
+    /// The Termux home: `TERMUX__HOME`, then `HOME`. `None` when neither is usable, which
+    /// callers must treat as an error rather than guessing a location.
+    pub fn home() -> Option<PathBuf> {
+        resolve_home(
+            std::env::var("TERMUX__HOME").ok(),
+            std::env::var("HOME").ok(),
+        )
+    }
+
+    pub fn resolve_home(termux_home: Option<String>, home: Option<String>) -> Option<PathBuf> {
+        first_non_empty(&[termux_home, home])
+    }
+
+    /// `XDG_RUNTIME_DIR`, else `$HOME/.local/run`, else the prefix's tmp directory. The
+    /// last resort exists so a socket path can always be formed on a host with neither.
+    pub fn runtime_dir() -> PathBuf {
+        resolve_runtime_dir(
+            std::env::var("XDG_RUNTIME_DIR").ok(),
+            home(),
+            Some(prefix()),
+        )
+    }
+
+    pub fn resolve_runtime_dir(
+        xdg_runtime: Option<String>,
+        home: Option<PathBuf>,
+        prefix: Option<PathBuf>,
+    ) -> PathBuf {
+        first_non_empty(&[xdg_runtime])
+            .or_else(|| home.map(|h| h.join(".local/run")))
+            .or_else(|| prefix.map(|p| p.join("tmp")))
+            .unwrap_or_else(|| PathBuf::from("/data/local/tmp"))
+    }
+
+    /// `XDG_CONFIG_HOME`, else `$HOME/.config`.
+    pub fn config_dir() -> Option<PathBuf> {
+        resolve_config_dir(std::env::var("XDG_CONFIG_HOME").ok(), home())
+    }
+
+    pub fn resolve_config_dir(
+        xdg_config: Option<String>,
+        home: Option<PathBuf>,
+    ) -> Option<PathBuf> {
+        first_non_empty(&[xdg_config]).or_else(|| home.map(|h| h.join(".config")))
+    }
+
+    /// `XDG_STATE_HOME`, else `$HOME/.local/state`. Used for logs, which are state rather
+    /// than cache or configuration.
+    pub fn state_dir() -> Option<PathBuf> {
+        resolve_state_dir(std::env::var("XDG_STATE_HOME").ok(), home())
+    }
+
+    pub fn resolve_state_dir(xdg_state: Option<String>, home: Option<PathBuf>) -> Option<PathBuf> {
+        first_non_empty(&[xdg_state]).or_else(|| home.map(|h| h.join(".local/state")))
+    }
+
+    /// The Android package name of the host app: `TERMUX_APP__PACKAGE_NAME`, else
+    /// `TERMUX__PACKAGE_NAME`, else the documented default.
+    pub fn package_name() -> String {
+        std::env::var("TERMUX_APP__PACKAGE_NAME")
+            .ok()
+            .or_else(|| std::env::var("TERMUX__PACKAGE_NAME").ok())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| DEFAULT_PACKAGE.to_string())
+    }
+
+    /// The prefix for the host app named by [`package_name`], used when the prefix is not
+    /// exported at all.
+    pub fn prefix_for_package(package: &str) -> PathBuf {
+        Path::new("/data/data").join(package).join("files/usr")
+    }
+}
+
+#[cfg(test)]
+mod host_path_tests {
+    use super::host::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn the_termux_variables_win_over_the_generic_ones() {
+        assert_eq!(
+            resolve_prefix(
+                Some("/data/data/app.x/files/usr".into()),
+                Some("/usr".into())
+            ),
+            PathBuf::from("/data/data/app.x/files/usr")
+        );
+        assert_eq!(
+            resolve_prefix(None, Some("/opt/termux/usr".into())),
+            PathBuf::from("/opt/termux/usr")
+        );
+        assert_eq!(resolve_prefix(None, None), PathBuf::from(DEFAULT_PREFIX));
+        // An empty variable is not a value.
+        assert_eq!(
+            resolve_prefix(Some("   ".into()), Some("/opt/termux/usr".into())),
+            PathBuf::from("/opt/termux/usr")
+        );
+    }
+
+    #[test]
+    fn the_home_prefers_the_termux_variable_and_refuses_to_guess() {
+        assert_eq!(
+            resolve_home(
+                Some("/data/data/app.x/files/home".into()),
+                Some("/root".into())
+            ),
+            Some(PathBuf::from("/data/data/app.x/files/home"))
+        );
+        assert_eq!(
+            resolve_home(None, None),
+            None,
+            "no home must stay unresolved"
+        );
+    }
+
+    #[test]
+    fn the_runtime_directory_follows_xdg_then_home_then_the_prefix() {
+        assert_eq!(
+            resolve_runtime_dir(Some("/run/user/0".into()), Some(PathBuf::from("/h")), None),
+            PathBuf::from("/run/user/0")
+        );
+        assert_eq!(
+            resolve_runtime_dir(None, Some(PathBuf::from("/h")), None),
+            PathBuf::from("/h/.local/run")
+        );
+        assert_eq!(
+            resolve_runtime_dir(None, None, Some(PathBuf::from("/usr"))),
+            PathBuf::from("/usr/tmp")
+        );
+    }
+
+    #[test]
+    fn configuration_and_state_follow_xdg() {
+        assert_eq!(
+            resolve_config_dir(Some("/etc/xdgapp".into()), Some(PathBuf::from("/h"))),
+            Some(PathBuf::from("/etc/xdgapp"))
+        );
+        assert_eq!(
+            resolve_config_dir(None, Some(PathBuf::from("/h"))),
+            Some(PathBuf::from("/h/.config"))
+        );
+        assert_eq!(
+            resolve_state_dir(None, Some(PathBuf::from("/h"))),
+            Some(PathBuf::from("/h/.local/state"))
+        );
+        assert_eq!(resolve_state_dir(None, None), None);
+    }
+
+    #[test]
+    fn a_package_specific_prefix_is_derived_from_the_package_name() {
+        assert_eq!(
+            prefix_for_package("com.termux"),
+            PathBuf::from("/data/data/com.termux/files/usr")
+        );
+    }
+}

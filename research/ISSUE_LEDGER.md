@@ -1,6 +1,6 @@
 # PDN issue ledger — fixes re-verified against HEAD
 
-Generated 2026-11-05 09:17:28Z from `28c4594` (test(ledger): gate the CLI reference against the real binary (#42)).
+Generated 2026-11-05 11:02:55Z from `8477181` (fix(image): report a measured size or say so, and name the column what).
 
 ## Why this exists
 
@@ -17,14 +17,16 @@ silently-regressed fix shows up as a FAIL in a document rather than as a surpris
 | **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
 | **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
 
-**Coverage: 64 checks PASS by direct observation · 0 FAIL · 0 SKIPPED**, across 64 checks covering 26 of 40 issues (14 issues have no automated check).
+**Coverage: 71 checks PASS by direct observation · 1 FAIL · 0 SKIPPED**, across 72 checks covering 27 of 40 issues (14 issues have no automated check).
 
 **Every check in this run produced a verdict**, including the cargo-gated behaviour checks,
 so no fix in this ledger is recorded as PASS on the strength of a source grep alone.
 
 ## Checks that FAIL (a fix that is no longer present)
 
-None.
+- **#42 — every documented command and option exists in the real CLI**
+  - `cargo test -p podnext --test cli_reference_contract`
+  - output: `memguard: env-u-LD pid=16346 pgid=16346 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T110049Z-env-u-LD.log | memguard: completed exit=101 reason=exited normally peak=1780MB dur=64s`
 
 ## Checks SKIPPED (no verdict was produced)
 
@@ -60,7 +62,7 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:23:37Z
 
 - [PASS] install validates the container name before creating anything
   - `grep -nF 'validate_container_name' crates/podnext/src/main.rs`
-  - → `2102:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 2810:            .validate_container_name(&candidate) | 3401:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;`
+  - → `2105:    proot_distro_core::NameValidator::new().validate_container_name(&container_name)?; | 2830:            .validate_container_name(&candidate) | 3421:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?;`
 
 **#12 [BUG-C2] backup delete deadlocks permanently (tokio RwLock read guard held across write)**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T04:23:41Z
@@ -107,36 +109,36 @@ _state_: CLOSED  ·  _labels_: performance  ·  _closed_: 2026-11-04T11:04:51Z
   - → `crates/proot-distro-core/tests/deep_fs_recursion.rs`
 - [PASS] the deep-recursion test passes
   - `cargo test -p proot-distro-core --test deep_fs_recursion --locked`
-  - → `memguard: env-u-LD pid=23850 pgid=23850 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091717Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=101MB dur=4s`
+  - → `memguard: env-u-LD pid=11058 pgid=11058 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T105745Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=666MB dur=27s`
 
 **#17 [BUG-L1] podnext build local rejects ARG, skips RUN, and produces no usable OCI image**  
 _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T11:04:52Z
 
 - [PASS] build local consumes ARG before the parser rejects it
   - `grep -nF 'fn preprocess_build_args' crates/podnext/src/commands/mod.rs`
-  - → `2625:fn preprocess_build_args(content: &str) -> (String, Vec<(String, String)>) {`
+  - → `2627:fn preprocess_build_args(content: &str) -> (String, Vec<(String, String)>) {`
 - [PASS] build local matches a RUN instruction instead of printing it
   - `grep -nF 'Instr::Run(run_cmd)' crates/podnext/src/commands/mod.rs`
-  - → `2297:            Instr::Run(run_cmd) => {`
+  - → `2299:            Instr::Run(run_cmd) => {`
 - [PASS] build local delegates RUN to the container engine
   - `grep -nF 'execute_container(' crates/podnext/src/commands/mod.rs`
-  - → `2309:                    .execute_container(`
+  - → `2311:                    .execute_container(`
 - [PASS] build local fails the build when RUN exits non-zero
   - `grep -nF 'RUN instruction failed (exit' crates/podnext/src/commands/mod.rs`
-  - → `2315:                    bail!("RUN instruction failed (exit {}): '{}'", code, run_cmd);`
+  - → `2317:                    bail!("RUN instruction failed (exit {}): '{}'", code, run_cmd);`
 
 **#18 [BUG-L2] copy/sync expand sparse files to dense allocation**  
 _state_: CLOSED  ·  _labels_: bug, performance  ·  _closed_: 2026-11-04T11:04:53Z
 
 - [PASS] sparse copies probe holes with SEEK_DATA/SEEK_HOLE
   - `grep -nF 'libc::SEEK_DATA' crates/podnext/src/main.rs`
-  - → `3747:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
+  - → `3816:        let data = match lseek(fd, offset, libc::SEEK_DATA) {`
 - [PASS] the sparse-copy regression test exists
   - `grep -nF 'fn copy_keeps_sparse_files_sparse' crates/podnext/src/main.rs`
-  - → `4336:    fn copy_keeps_sparse_files_sparse() {`
+  - → `4459:    fn copy_keeps_sparse_files_sparse() {`
 - [PASS] the sparse-copy unit test passes
   - `cargo test -p podnext --bins copy_keeps_sparse_files_sparse --locked`
-  - → `memguard: env-u-LD pid=23264 pgid=23264 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091713Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=193MB dur=4s`
+  - → `memguard: env-u-LD pid=9459 pgid=9459 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T105721Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1437MB dur=23s`
 
 **#19 [CI-1] test_restart_policy_unless_stopped fails: explicit stop loses to restart policy**  
 _state_: CLOSED  ·  _labels_: bug, ci  ·  _closed_: 2026-11-04T04:23:51Z
@@ -188,7 +190,7 @@ _state_: CLOSED  ·  _labels_: bug, ci, performance  ·  _closed_: 2026-11-04T10
   - → `103:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 108:          cargo bench --workspace --bench benchmarks --locked -- \ | 130:          cargo bench --workspace --bench benchmarks --locked -- \`
 - [PASS] the benchmark targets compile (the false-green defect)
   - `cargo bench -p pn-next --no-run --locked`
-  - → `memguard: env-u-LD pid=23013 pgid=23013 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091708Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=105MB dur=4s`
+  - → `memguard: env-u-LD pid=20619 pgid=20619 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T104545Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1534MB dur=696s`
 
 **#30 [CI-5] Benchmark job is unpredictable: 25.7 min then 43+ min, and a baseline step killed with SIGTERM**  
 _state_: CLOSED  ·  _labels_: ci, performance  ·  _closed_: 2026-11-04T15:35:42Z
@@ -211,20 +213,20 @@ _state_: CLOSED  ·  _labels_: ci, flaky-test  ·  _closed_: 2026-11-04T14:30:47
   - → `25:const DEADLINE: Duration = Duration::from_secs(30);`
 - [PASS] the abnormal-restart test passes
   - `cargo test -p pn-next --test supervisor_e2e test_restart_policy_on_abnormal --locked`
-  - → `memguard: env-u-LD pid=24132 pgid=24132 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091722Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=0MB dur=2s`
+  - → `memguard: env-u-LD pid=12247 pgid=12247 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T105812Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=1243MB dur=156s`
 
 **#32 Signal lifecycle: stopping a PDN process orphans the guest, and podnext-daemon ignores SIGTERM**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:18Z
 
 - [PASS] spawned proot gets its own process group
   - `grep -nF 'process_group(0)' crates/proot-core/src/lib.rs`
-  - → `275:        cmd.process_group(0); | 442:            .process_group(0)`
+  - → `277:        cmd.process_group(0); | 446:            .process_group(0)`
 - [PASS] container stop signals the group and reaps (zombie-aware)
   - `grep -nF 'async fn terminate_group' crates/proot-distro-core/src/container.rs`
-  - → `653:async fn terminate_group(pgid: u32, timeout: u64) -> Result<()> {`
+  - → `654:async fn terminate_group(pgid: u32, timeout: u64) -> Result<()> {`
 - [PASS] podnext run forwards signals to the guest group
   - `grep -nF 'fn forward_to_guest' crates/podnext/src/native.rs | head -3`
-  - → `687:fn forward_to_guest(sig: i32) { | 980:    fn forward_to_guest_terminates_child_group() {`
+  - → `738:fn forward_to_guest(sig: i32) { | 1116:    fn forward_to_guest_terminates_child_group() {`
 - [PASS] the daemon handles SIGTERM, not only Ctrl-C
   - `grep -nF 'SignalKind::terminate' crates/podnext/src/daemon.rs`
   - → `70:    if kind == SignalKind::terminate() || kind == SignalKind::interrupt() { | 136:    let mut sigterm = signal(SignalKind::terminate()).context("install SIGTERM handler")?; | 143:                _ = sigterm.recv() => SignalKind::terminate(),`
@@ -263,26 +265,26 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T21:44:04Z
   - → `120:pub fn store_key(reference: &str) -> String {`
 - [PASS] build local stores under the derived key, not the raw tag
   - `grep -nF 'names::store_key(tag)' crates/podnext/src/commands/mod.rs`
-  - → `2204:    let key = proot_distro_core::names::store_key(tag);`
+  - → `2206:    let key = proot_distro_core::names::store_key(tag);`
 - [PASS] the raw tag is no longer used as a directory name
   - `grep -nF 'containers_dir.join(tag)' crates/podnext/src/commands/mod.rs`
   - → ``
 - [PASS] the RUN/install path resolves the container by the same key
   - `grep -nF 'mgr.get(&key)' crates/podnext/src/commands/mod.rs`
-  - → `2303:                let mut c = mgr.get(&key).await?;`
+  - → `2305:                let mut c = mgr.get(&key).await?;`
 - [PASS] a colon in a bind source is an error, not a dropped mount
   - `grep -nF 'pub fn ensure_bindable' crates/proot-distro-core/src/bindings.rs`
   - → `108:pub fn ensure_bindable(source: &str) -> anyhow::Result<()> {`
 - [PASS] a colon tag is tested end to end at the store level
   - `grep -nF 'a_colon_tag_builds_under_a_colon_free_store_key' crates/podnext/src/commands/mod.rs`
-  - → `3550:    async fn a_colon_tag_builds_under_a_colon_free_store_key() {`
+  - → `3537:    async fn a_colon_tag_builds_under_a_colon_free_store_key() {`
 
 **#38 A FROM scratch image is unreachable by run/list/remove after a successful build**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T21:56:44Z
 
 - [PASS] container detection is metadata-based, not an etc/bin/usr guess
   - `grep -nF 'pub fn is_container_dir' crates/proot-distro-core/src/container.rs`
-  - → `842:pub fn is_container_dir(dir: &std::path::Path) -> bool {`
+  - → `843:pub fn is_container_dir(dir: &std::path::Path) -> bool {`
 - [PASS] load_containers uses the metadata-based check
   - `grep -nF 'is_container_dir(&entry.path())' crates/proot-distro-core/src/container.rs`
   - → `65:            if !is_container_dir(&entry.path()) {`
@@ -291,7 +293,7 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T21:56:44Z
   - → ``
 - [PASS] a scratch image with metadata is tested as a container
   - `grep -nF 'a_scratch_image_with_metadata_is_a_container' crates/proot-distro-core/src/container.rs`
-  - → `864:    fn a_scratch_image_with_metadata_is_a_container() {`
+  - → `865:    fn a_scratch_image_with_metadata_is_a_container() {`
 
 **#40 LICENSE, Cargo.toml and README.md disagree about the project licence**  
 _state_: CLOSED  ·  _labels_: documentation  ·  _closed_: 2026-11-05T00:19:42Z
@@ -324,9 +326,36 @@ _state_: OPEN  ·  _labels_: (none)  ·  _closed_: —
 - [PASS] known-limitations.md is registered in the book summary
   - `grep -qF 'known-limitations.md' docs/src/SUMMARY.md`
   - → ``
-- [PASS] every documented command and option exists in the real CLI
+- [FAIL] every documented command and option exists in the real CLI
   - `cargo test -p podnext --test cli_reference_contract`
-  - → `memguard: env-u-LD pid=24228 pgid=24228 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T091724Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=117MB dur=4s`
+  - → `memguard: env-u-LD pid=16346 pgid=16346 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T110049Z-env-u-LD.log | memguard: completed exit=101 reason=exited normally peak=1780MB dur=64s`
+- [PASS] no command reports a not-implemented stub on stdout
+  - `! (grep -rn 'not yet implemented' crates/podnext/src --include=*.rs | grep -vE ':[0-9]+:[[:space:]]*//[^/]' | grep -q .)`
+  - → ``
+- [PASS] a stub must refuse with a reason, not exit 0
+  - `cargo test -p podnext --test stub_refusals`
+  - → `memguard: env-u-LD pid=19737 pgid=19737 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T110153Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=3MB dur=4s`
+
+#43 (not in the fetched list)
+
+- [PASS] the run flag is no longer discarded
+  - `! grep -qF '_volume: Vec<String>,' crates/podnext/src/main.rs`
+  - → ``
+- [PASS] run folds --volume into the mounts it passes on
+  - `grep -qF 'specs.extend(volume)' crates/podnext/src/main.rs`
+  - → ``
+- [PASS] login folds its binds into the container config
+  - `grep -qF 'append(&mut options.bind_mounts)' crates/proot-distro-core/src/lib.rs`
+  - → ``
+- [PASS] the renderer no longer appends a :ro/:rw suffix
+  - `! grep -qF 'if readonly { "ro" }' crates/proot-distro-core/src/bindings.rs`
+  - → ``
+- [PASS] the rendered bind form is exactly host:target, pinned by a test
+  - `cargo test -p proot-distro-core --lib argument_tests`
+  - → `memguard: env-u-LD pid=19998 pgid=19998 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T110158Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=632MB dur=14s`
+- [PASS] a malformed or read-only mount spec is refused
+  - `cargo test -p podnext --bin podnext mount_spec_tests`
+  - → `memguard: env-u-LD pid=20474 pgid=20474 budget=2000MB min_avail=700MB | memguard: log=/data/data/com.termux/files/home/.hermes/logs/heavy/20261105T110212Z-env-u-LD.log | memguard: completed exit=0 reason=exited normally peak=850MB dur=43s`
 
 ## Issues with no automated check (the honest gap)
 

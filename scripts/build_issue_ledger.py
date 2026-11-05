@@ -290,6 +290,29 @@ CHECKS: list[dict] = [
          cmd='grep -qF \'None => "unknown"\' crates/podnext/src/main.rs', needle=None),
     dict(issue="44", claim="a failed measurement is reported as a bound, never as a bare number",
          cmd="cargo test -p podnext --bin podnext size_measurement_tests", needle=None, cargo=True),
+    # ── #45: podnext doctor exists and is driven by a test ───────────────────
+    dict(issue="45", claim="the doctor command is dispatched",
+         cmd="grep -qF 'Commands::Doctor' crates/podnext/src/main.rs", needle=None),
+    dict(issue="45", claim="the doctor command is implemented",
+         cmd="grep -qF 'async fn cmd_doctor' crates/podnext/src/main.rs", needle=None),
+    dict(issue="45", claim="the reference documents it and names the test that covers it",
+         cmd="grep -qF 'doctor_contract.rs' docs/src/cli-reference.md", needle=None),
+    dict(issue="45", claim="a check that cannot run reports unknown, never ok",
+         cmd="grep -qF 'Verdict::Unknown' crates/podnext/src/doctor.rs", needle=None),
+    dict(issue="45", claim="the command itself is exercised end to end",
+         cmd="cargo test -p podnext --test doctor_contract", needle=None, cargo=True),
+    # ── #46: path defaults follow the environment (§9.2) ─────────────────────
+    dict(issue="46", claim="the daemon binary carries no hard-coded home path",
+         cmd="! grep -qF '/data/data/com.termux/files/home' crates/podnext/src/daemon.rs",
+         needle=None),
+    dict(issue="46", claim="the daemon socket is resolved from the environment",
+         cmd="grep -qF 'paths::host::runtime_dir' crates/podnext/src/commands/mod.rs", needle=None),
+    dict(issue="46", claim="the prefix honours TERMUX__PREFIX before PREFIX",
+         cmd="grep -qF 'TERMUX__PREFIX' crates/proot-distro-core/src/paths.rs", needle=None),
+    dict(issue="46", claim="the resolution order is unit tested",
+         cmd="cargo test -p proot-distro-core --lib host_path_tests", needle=None, cargo=True),
+    dict(issue="46", claim="the binary follows a relocated home and the XDG variables",
+         cmd="cargo test -p podnext --test relocated_paths", needle=None, cargo=True),
 ]
 
 # Issues with no honest automated check, and why. Every key is an issue that exists.

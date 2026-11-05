@@ -73,11 +73,16 @@ mod compose;
 pub use compose::execute_compose_command;
 
 // Daemon socket path
-const DAEMON_SOCKET: &str = "/data/data/com.termux/files/home/.local/run/pn-next/daemon.sock";
+/// The daemon socket, resolved from the environment rather than hard-coded: a home that
+/// moves (second profile, relocated install, `TERMUX__HOME`) must take the socket with it.
+/// `XDG_RUNTIME_DIR` wins when set, then `$HOME/.local/run`, then the prefix's tmp.
+fn daemon_socket() -> std::path::PathBuf {
+    proot_distro_core::paths::host::runtime_dir().join("pn-next/daemon.sock")
+}
 
 /// Send a command to the daemon and get response
 async fn send_daemon_command(cmd: serde_json::Value) -> Result<serde_json::Value> {
-    let stream = UnixStream::connect(DAEMON_SOCKET)
+    let stream = UnixStream::connect(daemon_socket())
         .await
         .context("Failed to connect to daemon. Is podnext-daemon running?")?;
     let mut stream = stream;
@@ -97,7 +102,7 @@ async fn send_daemon_command(cmd: serde_json::Value) -> Result<serde_json::Value
 
 /// Check if daemon is running
 async fn is_daemon_running() -> bool {
-    UnixStream::connect(DAEMON_SOCKET).await.is_ok()
+    UnixStream::connect(daemon_socket()).await.is_ok()
 }
 
 // Output formatters
@@ -612,9 +617,18 @@ async fn cmd_service_disable(name: String) -> Result<()> {
 
 async fn cmd_service_load(name: String) -> Result<()> {
     eprintln!("Loading service '{}' from TOML config...", name);
-    let services_dir = std::env::var("PN_NEXT_SERVICES_DIR").unwrap_or_else(|_| {
-        "/data/data/com.termux/files/home/.config/pn-next/services".to_string()
-    });
+    // Same reason as `daemon_socket`: the services directory is the daemon's default, so
+    // it is resolved the same way instead of naming one machine's home directory.
+    let services_dir = std::env::var("PN_NEXT_SERVICES_DIR")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            proot_distro_core::paths::host::config_dir().map(|c| c.join("pn-next/services"))
+        })
+        .unwrap_or_else(|| proot_distro_core::paths::host::prefix().join("etc/pn-next/services"))
+        .display()
+        .to_string();
     let config_path = PathBuf::from(services_dir).join(format!("{}.toml", name));
     let _service_config = ServiceSupervisor::load_service_from_file(&config_path).await?;
     println!("Service '{}' loaded from {}", name, config_path.display());

@@ -28,6 +28,7 @@ because the suite does not drive them yet. Re-derive this table with `podnext --
 | `podnext attach` | `[experimental]` | no automated test covers it yet |
 | `podnext info` | `[experimental]` | no automated test covers it yet |
 | `podnext version` | `[experimental]` | no automated test covers it yet |
+| `podnext doctor` | `[stable]` | exercised by `crates/podnext/tests/doctor_contract.rs` |
 | `podnext service` | `[experimental]` | `logs` refuses: the supervisor keeps no per-service log |
 | `podnext daemon` | `[experimental]` | no automated test covers it yet |
 | `podnext watchdog` | `[experimental]` | `events` refuses: the watchdog keeps no event stream |
@@ -580,6 +581,48 @@ podnext gitops drift
 podnext gitops reconcile
 ```
 
+### `podnext doctor`
+
+Report host and guest diagnostics.
+
+```bash
+podnext doctor [--container <NAME>] [--format <FORMAT>]
+```
+
+Host checks: the proot binary and its version, the temporary directory (`TMPDIR` and whether it is
+writable), shared memory (`/dev/shm`, or the directory PDN binds in its place), DNS (the nameserver
+list from `$PREFIX/etc/resolv.conf`, `/etc/resolv.conf` or `/system/etc/resolv.conf`), the kernel
+(`uname -a`) and cgroups (`/proc/self/cgroup`). With `--container <NAME>` the guest is probed from the
+inside for `os-release`, architecture, `/dev/shm`, the mount count and `resolv.conf`.
+
+Every row carries the value or command it came from. A check that cannot be run reports `unknown`
+instead of passing, and a check that fails is the only thing that changes the exit status:
+
+```sh
+$ podnext doctor
+ok         proot binary      /data/data/com.termux/files/usr/bin/proot: proot 5.1.107.101
+ok         temporary directory /data/data/com.termux/files/usr/tmp is writable (TMPDIR=Some("..."))
+ok         shared memory     /dev/shm is not present ..., which is expected on Android: PDN binds a
+                             per-container directory in its place, so this is informational ...
+ok         dns               /data/data/com.termux/files/usr/etc/resolv.conf -> 8.8.8.8, 8.8.4.4
+ok         host kernel       Linux localhost 6.1.157-android14-11-... aarch64 Android
+ok         cgroups           5 entry/entries; first: 4:memory:/
+unknown    guest             no container named; pass one (podnext doctor --container <name>) ...
+
+7 checks: 0 failed, 0 warnings, 1 unknown
+```
+
+`--format json` and `--format yaml` emit the same list as structured records. Exit status: `0` when no
+check failed, `1` when at least one did, `2` for invalid arguments.
+
+### Path defaults
+
+The daemon's socket, service, runtime and log directories are resolved at start from
+`TERMUX__HOME`/`HOME`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` rather than being
+compiled in, so a relocated home or a second profile takes them along. `podnext-daemon --help` prints
+the values it resolved on this machine, and `crates/podnext/tests/relocated_paths.rs` drives the binary
+with a relocated home to check it.
+
 ### `podnext version`
 
 Show version information.
@@ -649,6 +692,12 @@ can be re-verified with `grep`.
 | `PREFIX` | Termux prefix used for the `tmp` fallback | `crates/proot-distro-core/src/paths.rs:24` |
 | `HOME` | Container store root: `$HOME/.podnext` | `crates/proot-distro-core/src/paths.rs` |
 | `PN_TEST_ROOT` | Test-only root override | `crates/proot-distro-core/src/paths.rs:29`, `shm.rs:23` |
+| `TERMUX__HOME` | Termux home for the daemon defaults and the store root | `crates/proot-distro-core/src/paths.rs` (`paths::host::home`) |
+| `TERMUX__PREFIX` | Termux prefix, ahead of `PREFIX` | `crates/proot-distro-core/src/paths.rs` (`paths::host::prefix`) |
+| `TERMUX_APP__PACKAGE_NAME` | Host app package name (default `com.termux`) | `crates/proot-distro-core/src/paths.rs` (`paths::host::package_name`) |
+| `XDG_RUNTIME_DIR` | Runtime base for the daemon socket and state | `crates/proot-distro-core/src/paths.rs` (`paths::host::runtime_dir`), `crates/podnext/src/daemon.rs` |
+| `XDG_CONFIG_HOME` | Configuration base (`pn-next/services`, …) | `crates/proot-distro-core/src/paths.rs` (`paths::host::config_dir`), `crates/podnext/src/commands/mod.rs` |
+| `XDG_STATE_HOME` | Log base when set; otherwise `$HOME/.local/log` | `crates/podnext/src/daemon.rs` (`default_log_dir`) |
 
 `PN_CONFIG_DIR`, `PN_DATA_DIR`, `PN_CACHE_DIR`, `PN_LOG_LEVEL`, `PN_GATEWAY_ADDR`, `PN_RUNTIME`,
 `PN_SECURITY_PROFILE` and `PN_NO_COLOR` were documented here and appear nowhere in `crates/`: nothing

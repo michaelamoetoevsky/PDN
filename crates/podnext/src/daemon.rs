@@ -74,6 +74,46 @@ fn signal_action(kind: SignalKind) -> SignalAction {
     }
 }
 
+/// Defaults resolved from the environment (roadmap §9.2). `XDG_RUNTIME_DIR` and
+/// `XDG_CONFIG_HOME` win when set; otherwise these reproduce the documented layout under
+/// whatever `TERMUX__HOME`/`HOME` names, instead of one machine's absolute path.
+fn default_runtime_dir() -> String {
+    proot_distro_core::paths::host::runtime_dir()
+        .join("pn-next")
+        .display()
+        .to_string()
+}
+
+fn default_socket() -> String {
+    proot_distro_core::paths::host::runtime_dir()
+        .join("pn-next/daemon.sock")
+        .display()
+        .to_string()
+}
+
+fn default_services_dir() -> String {
+    proot_distro_core::paths::host::config_dir()
+        .map(|c| c.join("pn-next/services"))
+        .unwrap_or_else(|| proot_distro_core::paths::host::prefix().join("etc/pn-next/services"))
+        .display()
+        .to_string()
+}
+
+/// Logs follow `XDG_STATE_HOME` when it is set and otherwise stay on the documented
+/// `$HOME/.local/log` layout, so an existing install does not silently lose its logs.
+fn default_log_dir() -> String {
+    let base = std::env::var("XDG_STATE_HOME")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| proot_distro_core::paths::host::home().map(|h| h.join(".local/log")));
+    base.unwrap_or_else(|| proot_distro_core::paths::host::prefix().join("var/log"))
+        .join("pn-next")
+        .display()
+        .to_string()
+}
+
 #[derive(Parser)]
 #[command(name = "podnext-daemon")]
 #[command(about = "podnext persistent service supervisor daemon")]
@@ -83,30 +123,30 @@ struct Args {
     #[arg(
         short,
         long,
-        default_value = "/data/data/com.termux/files/home/.local/run/pn-next/daemon.sock"
+        default_value_t = default_socket()
     )]
-    socket: PathBuf,
+    socket: String,
 
     /// Service definitions directory
     #[arg(
         long,
-        default_value = "/data/data/com.termux/files/home/.config/pn-next/services"
+        default_value_t = default_services_dir()
     )]
-    services_dir: PathBuf,
+    services_dir: String,
 
     /// Runtime directory
     #[arg(
         long,
-        default_value = "/data/data/com.termux/files/home/.local/run/pn-next"
+        default_value_t = default_runtime_dir()
     )]
-    runtime_dir: PathBuf,
+    runtime_dir: String,
 
     /// Log directory
     #[arg(
         long,
-        default_value = "/data/data/com.termux/files/home/.local/log/pn-next"
+        default_value_t = default_log_dir()
     )]
-    log_dir: PathBuf,
+    log_dir: String,
 
     /// Supervision interval (ms)
     #[arg(long, default_value = "1000")]
@@ -165,20 +205,27 @@ async fn main() -> Result<()> {
 /// can trust); any setup failure returns `Err` and a non-zero status.
 async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Result<()> {
     // Ensure directories exist
-    std::fs::create_dir_all(&args.services_dir)?;
-    std::fs::create_dir_all(&args.runtime_dir)?;
-    std::fs::create_dir_all(&args.log_dir)?;
+    // `String` in the parsed arguments (clap needs a Display default), `PathBuf` from here
+    // on so the rest of the daemon works in paths rather than text.
+    let socket = PathBuf::from(args.socket);
+    let services_dir = PathBuf::from(args.services_dir);
+    let runtime_dir = PathBuf::from(args.runtime_dir);
+    let log_dir = PathBuf::from(args.log_dir);
+
+    std::fs::create_dir_all(&services_dir)?;
+    std::fs::create_dir_all(&runtime_dir)?;
+    std::fs::create_dir_all(&log_dir)?;
 
     // Remove existing socket
-    if args.socket.exists() {
-        std::fs::remove_file(&args.socket)?;
+    if socket.exists() {
+        std::fs::remove_file(&socket)?;
     }
 
     // Build supervisor config
     let _config = SupervisorConfig {
-        services_dir: args.services_dir.clone(),
-        runtime_dir: args.runtime_dir.clone(),
-        log_dir: args.log_dir.clone(),
+        services_dir: services_dir.clone(),
+        runtime_dir: runtime_dir.clone(),
+        log_dir: log_dir.clone(),
         supervision_interval_ms: args.interval_ms,
         enable_cgroups: args.enable_cgroups,
         ..Default::default()
@@ -187,9 +234,9 @@ async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Res
     // Create supervisor
     let supervisor = Arc::new(
         SupervisorBuilder::new()
-            .services_dir(args.services_dir)
-            .runtime_dir(args.runtime_dir)
-            .log_dir(args.log_dir)
+            .services_dir(services_dir)
+            .runtime_dir(runtime_dir)
+            .log_dir(log_dir)
             .build()
             .context("Failed to build supervisor")?,
     );
@@ -219,10 +266,10 @@ async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Res
     });
 
     // Bind Unix socket
-    let listener = UnixListener::bind(&args.socket)
-        .with_context(|| format!("Failed to bind to {:?}", args.socket))?;
+    let listener =
+        UnixListener::bind(&socket).with_context(|| format!("Failed to bind to {:?}", socket))?;
 
-    info!("podnext-daemon listening on {:?}", args.socket);
+    info!("podnext-daemon listening on {:?}", socket);
 
     tokio::pin!(shutdown);
 
@@ -266,9 +313,9 @@ async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Res
     }
 
     // Clean up the socket file now that we own the shutdown.
-    if let Err(e) = std::fs::remove_file(&args.socket) {
+    if let Err(e) = std::fs::remove_file(&socket) {
         if e.kind() != std::io::ErrorKind::NotFound {
-            warn!("Failed to remove socket {:?}: {}", args.socket, e);
+            warn!("Failed to remove socket {:?}: {}", socket, e);
         }
     }
 
@@ -441,16 +488,19 @@ mod tests {
     #[tokio::test]
     async fn graceful_shutdown_removes_socket_and_returns_ok() {
         let dir = tempfile::tempdir().unwrap();
+        // The parsed arguments carry text (clap needs a Display default), so the fixture
+        // spells them the same way and the assertion watches the resolved path.
+        let socket_path = dir.path().join("daemon.sock");
         let args = Args {
-            socket: dir.path().join("daemon.sock"),
-            services_dir: dir.path().join("services"),
-            runtime_dir: dir.path().join("run"),
-            log_dir: dir.path().join("log"),
+            socket: socket_path.display().to_string(),
+            services_dir: dir.path().join("services").display().to_string(),
+            runtime_dir: dir.path().join("run").display().to_string(),
+            log_dir: dir.path().join("log").display().to_string(),
             interval_ms: 1000,
             enable_cgroups: false,
             foreground: true,
         };
-        let socket = args.socket.clone();
+        let socket = socket_path.clone();
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         let daemon = tokio::spawn(run(args, async move {

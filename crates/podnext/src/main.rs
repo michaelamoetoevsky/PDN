@@ -28,6 +28,7 @@ use tabled::{Table, Tabled};
 use tracing_subscriber::EnvFilter;
 
 mod commands;
+mod doctor;
 mod native;
 mod utils;
 
@@ -554,6 +555,29 @@ enum Commands {
         podnext version\n  \
         podnext version --format json")]
     Version {
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// [stable] Report host and guest diagnostics, with the value behind every verdict
+    #[command(
+        long_about = "Run host checks (proot binary, temporary directory, shared memory, DNS, \
+kernel, cgroups) and, when a container is named, guest checks (os-release, architecture, \
+/dev/shm, mount count, resolv.conf). Every line carries the value or command it came from; a \
+check that cannot run reports `unknown` rather than passing.\n\n\
+EXIT STATUS:\n  0  no failing check\n  1  at least one check failed\n  2  invalid arguments\n\n\
+EXAMPLES:\n  \
+podnext doctor\n  \
+podnext doctor --container alpine\n  \
+podnext doctor --format json",
+        after_help = "A failing check is the only thing that changes the exit status; warnings and \
+unknowns are reported without failing the command."
+    )]
+    Doctor {
+        /// Container to probe from the inside (guest checks are skipped without it)
+        #[arg(short, long)]
+        container: Option<String>,
         /// Output format
         #[arg(short, long, value_enum, default_value = "text")]
         format: OutputFormat,
@@ -1954,6 +1978,7 @@ async fn execute_command(cmd: Commands, global_binds: Vec<String>) -> Result<()>
         Commands::Volume(cmd) => execute_volume_command(cmd).await,
         Commands::Info { format } => cmd_info(format).await,
         Commands::Version { format } => cmd_version(format).await,
+        Commands::Doctor { container, format } => cmd_doctor(container, format).await,
 
         // Service orchestration commands
         Commands::Service(cmd) => execute_service_command(cmd).await,
@@ -3166,6 +3191,24 @@ async fn cmd_image_ls(format: OutputFormat, _all: bool) -> Result<()> {
                 println!("{} {} {} {}", r.repository, r.tag, r.image_id, r.created);
             }
         }
+    }
+    Ok(())
+}
+
+/// `podnext doctor`: report what the host and the guest actually look like.
+///
+/// Exit status is driven by the worst verdict: a failing check exits 1. Warnings and
+/// unknowns are printed without failing the command, because "not measured" is not the
+/// same as "broken".
+async fn cmd_doctor(container: Option<String>, format: OutputFormat) -> Result<()> {
+    let checks = doctor::collect(container.as_deref()).await;
+    match format {
+        OutputFormat::Table | OutputFormat::Text => doctor::render_text(&checks),
+        OutputFormat::Json => output_json(&checks)?,
+        OutputFormat::Yaml => output_yaml(&checks)?,
+    }
+    if doctor::worst_verdict(&checks) == doctor::Verdict::Fail {
+        anyhow::bail!("one or more checks failed; the rows marked `fail` name what and why");
     }
     Ok(())
 }
