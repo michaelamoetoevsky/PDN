@@ -173,17 +173,6 @@ pub async fn cmd_run(
     isolated: bool,
     binds: Vec<String>,
 ) -> Result<()> {
-    if detach {
-        // Refusing beats the previous behaviour, which printed a warning and ran in the
-        // foreground anyway: a caller that asked for background got a blocking process and
-        // no way to tell from the exit status.
-        anyhow::bail!(
-            "--detach is not implemented: a detached session cannot be re-entered yet, so the \
-             command would run in the foreground while reporting otherwise. Run it in the \
-             foreground, or run the command under `podnext service` supervision."
-        );
-    }
-
     // Flags that were parsed and then dropped. Each one changes what the command DOES, so
     // accepting it silently means the caller gets a run that is not the one they asked for
     // and no way to tell from the exit status. They are named together so one run reports
@@ -230,6 +219,13 @@ pub async fn cmd_run(
     let mut specs = binds;
     specs.extend(volume);
     let mounts = parse_mount_specs(&specs)?;
+
+    // `--detach` starts the guest in the background under a supervised PTY and returns; the
+    // session is then reachable with `podnext attach <container>` (PDN#57). The mount specs and
+    // the refused-flag checks above run first, so a detached run is the run that was asked for.
+    if detach {
+        return crate::native::spawn_detached_session(&container, command, isolated, mounts).await;
+    }
 
     run_container_native(&container, command, isolated, mounts).await
 }
@@ -373,18 +369,20 @@ pub async fn cmd_sessions(format: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// `podnext attach <container>`: reconnect to a running detached session (PDN#57).
+///
+/// The same argv is how `run --detach` re-invokes this binary to run the
+/// supervisor; the environment marker switches between the two sides of the
+/// round trip, so no new subcommand is needed.
 pub async fn cmd_attach(
     container: String,
     user: Option<String>,
     command: Vec<String>,
 ) -> Result<()> {
-    let cmd = if command.is_empty() {
-        vec!["/bin/bash".to_string()]
-    } else {
-        command
-    };
-
-    login_container_native(&container, user, false, cmd, Vec::new()).await
+    if crate::native::is_session_host() {
+        return crate::native::run_session_host(&container).await;
+    }
+    crate::native::attach_session(&container, user, command).await
 }
 
 pub async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result<()> {

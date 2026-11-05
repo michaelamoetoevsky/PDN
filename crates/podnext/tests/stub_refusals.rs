@@ -56,12 +56,14 @@ fn watchdog_events_refuses_with_a_reason() {
 }
 
 #[test]
-fn run_detach_refuses_instead_of_quietly_running_in_the_foreground() {
-    let (code, stdout, stderr) = run(&["run", "no-such-container-xyz", "-d", "--", "true"]);
+fn attach_without_a_running_session_refuses_with_a_reason() {
+    // PDN#57: `attach` reconnects to a running detached session and never starts one, so with
+    // nothing running it must say so and exit 1 - not silently open a fresh shell.
+    let (code, stdout, stderr) = run(&["attach", "no-such-container-xyz"]);
     assert_eq!(code, 1, "stdout={stdout:?} stderr={stderr:?}");
     assert!(
-        stderr.contains("--detach is not implemented"),
-        "stderr={stderr:?}"
+        stderr.contains("No running session"),
+        "the refusal must name the state it found: {stderr:?}"
     );
     assert!(
         !stderr.contains("not fully implemented"),

@@ -75,9 +75,10 @@ fn a_usage_error_is_two_and_says_nothing_on_stdout() {
 
 #[test]
 fn a_documented_refusal_is_one_with_a_reason() {
-    // --detach is documented as refused (roadmap section 9.4 / issue #47): the class must be
-    // distinguishable from a usage error, so exit 1 with a reason and no stdout.
-    let out = run(&["run", "--detach", "alpine", "--", "true"]);
+    // `--rm` is documented as refused (roadmap section 9.4 / issue #47): the class must be
+    // distinguishable from a usage error, so exit 1 with a reason and no stdout. (`--detach`
+    // held this example until PDN#57 made it a real supervised background session.)
+    let out = run(&["run", "--rm", "alpine", "--", "true"]);
     assert_eq!(
         code(&out),
         1,
@@ -87,7 +88,7 @@ fn a_documented_refusal_is_one_with_a_reason() {
     assert!(out.stdout.is_empty(), "a refusal must not write to stdout");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("--detach"),
+        err.contains("--rm"),
         "the refusal must name what it refused: {err}"
     );
     assert!(

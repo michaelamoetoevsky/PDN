@@ -36,6 +36,59 @@ pub fn session_file_path(pid: u32) -> PathBuf {
     sessions_dir().join(format!("{}.json", pid))
 }
 
+/// Rendezvous socket a detached session's supervisor listens on (PDN#57).
+///
+/// Keyed by the supervisor's pid, beside the session record it answers for.
+/// `active_sessions()` reads only `*.json`, so this extra file in the same
+/// directory is invisible to the registry scan.
+pub fn session_socket_path(pid: u32) -> PathBuf {
+    sessions_dir().join(format!("{}.sock", pid))
+}
+
+/// Transcript the detached supervisor appends the guest's output to (PDN#57).
+///
+/// Kept beside the record so a reattach can be diagnosed even when nobody was
+/// connected; same `active_sessions()` caveat as the socket.
+pub fn session_log_path(pid: u32) -> PathBuf {
+    sessions_dir().join(format!("{}.log", pid))
+}
+
+/// Remove rendezvous files whose supervisor is gone (PDN#57).
+///
+/// A supervisor that exits normally unlinks its own socket; one killed by a
+/// signal cannot, so its `{pid}.sock`/`{pid}.log` would accumulate. Called when
+/// a new supervisor starts: any such file whose pid names no live process is
+/// dead weight. A live supervisor's own pid is skipped, and the file for *this*
+/// pid is left to the caller's reclaim step.
+pub fn reap_stale_rendezvous() {
+    let dir = sessions_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let me = std::process::id();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str());
+        if ext != Some("sock") && ext != Some("log") {
+            continue;
+        }
+        let Some(pid) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == me {
+            continue;
+        }
+        // `kill(pid, 0)` is the existence probe: 0 means alive.
+        if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// Register a new running session, taking an inherited exclusive lock.
 pub fn register_session(
     container: &str,
