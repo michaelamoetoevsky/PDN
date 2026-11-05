@@ -154,14 +154,22 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--name <NAME>` | Assign a name to the container |
+| `--name <NAME>` | Refused: `run` uses the named container it was given, so a second name would be ignored |
 | `--isolated` | Run in isolated mode (do not mount host storage or Termux home directory) |
 | `-d, --detach` | Run in background — not implemented yet: the command refuses rather than pretending |
-| `--rm` | Remove container after exit |
+| `--rm` | Refused: removing the container after the run needs ephemeral containers, which PDN does not have yet |
 | `--volume <HOST:GUEST>` | Mount a host directory into the container (repeatable). A `:ro` suffix is refused — proot has no read-only bind form, and the suffix would become part of the guest path name |
 | `-e, --env <VAR=VALUE>` | Set environment variable (repeatable) |
-| `-w, --workdir <DIR>` | Working directory inside container |
-| `--network <NETWORK>` | Connect container to a network |
+| `-w, --workdir <DIR>` | Refused: the work dir belongs to the login polygon (v0.2.0) |
+| `--network <NETWORK>` | Refused: the run path does not attach networks |
+| `-p, --publish <HOST:CONTAINER[/PROTO]>` | Refused: port publishing is not wired into the run path |
+| `--entrypoint <ENTRYPOINT>` | Refused: the run path uses the command recorded for the container |
+| `-u, --user <USER>` | Refused: the guest runs as the mapped root; `--user` belongs to the login polygon (v0.2.0) |
+| `-t, --tty` | Accepted for compatibility: stdio is inherited, so a TTY is used when the caller has one |
+| `-i, --interactive` | Accepted for compatibility: stdin is inherited unless the caller redirects it |
+
+A **refused** flag exits 1 with the reason on stderr and does not run the command. Accepting a flag and
+then ignoring it is what `run` used to do, and a caller cannot tell that from success.
 
 **Examples:**
 ```bash

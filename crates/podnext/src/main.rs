@@ -340,26 +340,26 @@ enum Commands {
         /// Command to run (after --)
         #[arg(last = true)]
         command: Vec<String>,
-        /// Automatically remove the container when it exits
+        /// Remove the container when it exits (not implemented: `run` refuses it)
         #[arg(long = "rm", global = false)]
         rm: bool,
-        /// Run container in background and print container ID
+        /// Run in the background (not implemented: `run` refuses it rather than running in the foreground)
         #[arg(long = "detach", short = 'd', global = false)]
         detach: bool,
-        /// Assign a name to the container
+        /// Assign a name to the container (not implemented: `run` refuses it)
         #[arg(long = "name", global = false)]
         name: Option<String>,
-        /// Connect a container to a network
+        /// Connect a container to a network (not implemented: `run` refuses it)
         #[arg(long = "network", global = false)]
         network: Option<String>,
-        /// Bind mount a volume (host_path:container_path[:ro])
+        /// Bind mount a host directory into the guest as HOST:GUEST (repeatable)
         #[arg(
             long = "volume",
             global = false,
-            value_name = "HOST_PATH:CONTAINER_PATH[:ro]"
+            value_name = "HOST_PATH:CONTAINER_PATH"
         )]
         volume: Vec<String>,
-        /// Publish a container's port(s) to the host (host_port:container_port[/protocol])
+        /// Publish a container's port(s) to the host (not implemented: `run` refuses it)
         #[arg(
             long = "publish",
             short = 'p',
@@ -367,19 +367,19 @@ enum Commands {
             value_name = "HOST_PORT:CONTAINER_PORT[/PROTOCOL]"
         )]
         publish: Vec<String>,
-        /// Overwrite the default ENTRYPOINT of the image
+        /// Overwrite the default ENTRYPOINT of the image (not implemented: `run` refuses it)
         #[arg(long = "entrypoint", global = false)]
         entrypoint: Option<String>,
-        /// Allocate a pseudo-TTY
+        /// Accepted for compatibility: stdio is inherited, so a TTY is used when the caller has one
         #[arg(long = "tty", short = 't', global = false)]
         tty: bool,
-        /// Keep STDIN open even if not attached
+        /// Accepted for compatibility: stdin is inherited unless the caller redirects it
         #[arg(long = "interactive", short = 'i', global = false)]
         interactive: bool,
-        /// User to run as (format: <name|uid>[:<group|gid>])
+        /// User to run as (not implemented: `run` refuses it; the guest runs as the mapped root)
         #[arg(long = "user", short = 'u', global = false)]
         user: Option<String>,
-        /// Working directory inside the container
+        /// Working directory inside the container (not implemented: `run` refuses it)
         #[arg(long = "workdir", global = false)]
         workdir: Option<String>,
         /// Run in isolated mode (do not mount host storage or Termux home directory)
@@ -2240,6 +2240,47 @@ async fn cmd_run(
              command would run in the foreground while reporting otherwise. Run it in the \
              foreground, or run the command under `podnext service` supervision."
         );
+    }
+
+    // Flags that were parsed and then dropped. Each one changes what the command DOES, so
+    // accepting it silently means the caller gets a run that is not the one they asked for
+    // and no way to tell from the exit status. They are named together so one run reports
+    // every reason instead of one per attempt.
+    let mut ignored: Vec<&str> = Vec::new();
+    let mut reasons: Vec<String> = Vec::new();
+    if _rm {
+        ignored.push("--rm");
+    }
+    if _name.is_some() {
+        ignored.push("--name");
+    }
+    if _network.is_some() {
+        ignored.push("--network");
+    }
+    if !_publish.is_empty() {
+        ignored.push("--publish");
+    }
+    if _entrypoint.is_some() {
+        ignored.push("--entrypoint");
+    }
+    if _user.is_some() {
+        ignored.push("--user");
+    }
+    if _workdir.is_some() {
+        ignored.push("--workdir");
+    }
+    if !ignored.is_empty() {
+        reasons.push(format!(
+            "{} not implemented for `run`; the guest would run without it. \
+             --workdir and --user are part of the login polygon (v0.2.0), --rm needs ephemeral \
+             containers, --name/--network/--publish need the network and naming work that \
+             `podnext create` will own. Use `podnext login` for an interactive shell, or drop \
+             the flag so the run does what it says",
+            ignored.join(", ")
+        ));
+    }
+    if !reasons.is_empty() {
+        anyhow::bail!("{}", reasons.join("; "));
     }
 
     // `--volume` (run) and `--bind` (global) are the same thing; both were parsed and

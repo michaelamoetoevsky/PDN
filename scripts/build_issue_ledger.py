@@ -313,6 +313,17 @@ CHECKS: list[dict] = [
          cmd="cargo test -p proot-distro-core --lib host_path_tests", needle=None, cargo=True),
     dict(issue="46", claim="the binary follows a relocated home and the XDG variables",
          cmd="cargo test -p podnext --test relocated_paths", needle=None, cargo=True),
+    # ── #47: run refuses the options it cannot honour ────────────────────────
+    dict(issue="47", claim="the refusal names the options it cannot honour",
+         cmd="grep -qF 'not implemented for `run`' crates/podnext/src/main.rs", needle=None),
+    dict(issue="47", claim="the help no longer claims --detach runs in the background",
+         cmd="! grep -qF 'Run container in background and print container ID' "
+             "crates/podnext/src/main.rs",
+         needle=None),
+    dict(issue="47", claim="every unhonoured option is marked refused in the reference",
+         cmd="[ $(grep -c 'Refused:' docs/src/cli-reference.md) -ge 7 ]", needle=None),
+    dict(issue="47", claim="each refused option exits 1 without running the command",
+         cmd="cargo test -p podnext --test stub_refusals", needle=None, cargo=True),
 ]
 
 # Issues with no honest automated check, and why. Every key is an issue that exists.

@@ -68,3 +68,85 @@ fn run_detach_refuses_instead_of_quietly_running_in_the_foreground() {
         "the old warning must be gone: {stderr:?}"
     );
 }
+
+/// `run` accepted nine options and dropped every one of them, so the command that ran was not
+/// the one the caller asked for. They are refused by name now, and the refusal names the flag.
+#[test]
+fn run_refuses_the_options_it_cannot_honour() {
+    let cases: [&[&str]; 7] = [
+        &["run", "no-such-container-xyz", "--rm", "--", "true"],
+        &[
+            "run",
+            "no-such-container-xyz",
+            "--name",
+            "other",
+            "--",
+            "true",
+        ],
+        &[
+            "run",
+            "no-such-container-xyz",
+            "--network",
+            "net1",
+            "--",
+            "true",
+        ],
+        &[
+            "run",
+            "no-such-container-xyz",
+            "-p",
+            "8080:80",
+            "--",
+            "true",
+        ],
+        &[
+            "run",
+            "no-such-container-xyz",
+            "--entrypoint",
+            "/bin/sh",
+            "--",
+            "true",
+        ],
+        &["run", "no-such-container-xyz", "-u", "1000", "--", "true"],
+        &[
+            "run",
+            "no-such-container-xyz",
+            "--workdir",
+            "/tmp",
+            "--",
+            "true",
+        ],
+    ];
+    for args in cases {
+        let (code, stdout, stderr) = run(args);
+        assert_eq!(
+            code, 1,
+            "{args:?} must be refused: stdout={stdout:?} stderr={stderr:?}"
+        );
+        let flag = args.iter().find(|a| a.starts_with('-')).expect("a flag");
+        assert!(
+            stderr.contains(*flag),
+            "{args:?} must name the option it refuses: {stderr:?}"
+        );
+        assert!(
+            stdout.is_empty(),
+            "{args:?} must not print a run header before refusing: {stdout:?}"
+        );
+    }
+}
+
+/// The two compatibility flags stay accepted, because stdio is inherited and they describe it.
+#[test]
+fn run_still_accepts_tty_and_interactive() {
+    // No container needed: reaching the container lookup proves the flags were not refused.
+    let (code, _stdout, stderr) = run(&["run", "no-such-container-xyz", "-t", "-i", "--", "true"]);
+    assert_eq!(code, 1, "an unknown container still fails");
+    assert!(
+        !stderr.contains("not implemented"),
+        "-t/-i must not be refused: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("not found") || stderr.contains("no-such-container-xyz"),
+        "the failure must be the container lookup: {stderr:?}"
+    );
+}
