@@ -61,3 +61,6 @@ docs/generated/
 # Python bytecode from a local py_compile / import
 __pycache__/
 *.py[cod]
+
+# workbench: dissection + extreme-testing bench, kept out of the published repo (user request)
+workbench/
