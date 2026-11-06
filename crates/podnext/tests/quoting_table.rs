@@ -12,7 +12,8 @@
 //! shell anywhere in the path, and the guest reports what it received NUL-separated so an argument
 //! containing a newline cannot be confused with two arguments.
 //!
-//! Skips with a printed reason when no container is installed: an unrunnable check is not a pass.
+//! Skips with a printed reason when no container that can run a command is installed: an unrunnable
+//! check is not a pass, and a name in `podnext list` is not a container that works.
 
 use std::process::Command;
 
@@ -20,38 +21,54 @@ fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_podnext")
 }
 
-/// The first installed container, preferring `alpine` because it starts fastest. Parsed out of
-/// `list --format json` with a substring scan rather than by adding a JSON dependency to a test.
-fn pick_container() -> Option<String> {
-    let out = Command::new(bin())
-        .args(["list", "--format", "json"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut names = Vec::new();
-    for chunk in text.split("\"name\": \"").skip(1) {
-        if let Some(end) = chunk.find('"') {
-            names.push(chunk[..end].to_string());
+/// Pick a fixture container by capability, never by presence in `podnext list`.
+///
+/// Presence is not capability: this device has a container named `alpine` that is a stub with no
+/// `/bin/sh`, so a presence-only pick accepted it and the whole table then failed *inside the
+/// guest* - a false red that CI (which has its own store) never reproduced. So probe each candidate
+/// in a fixed order by running `/bin/true` and take the first that exits 0.
+///
+/// `None` means no candidate can run a trivial command: the test is unrunnable here, which is
+/// neither a pass nor a product failure, so a single loud named line says what was probed and what
+/// each probe returned - readable from a CI log without opening this file.
+fn pick_container(candidates: &[&str]) -> Option<String> {
+    let mut results = Vec::new();
+    for name in candidates {
+        let out = Command::new(bin())
+            .args(["run", name, "--", "/bin/true"])
+            .output()
+            .expect("failed to execute podnext");
+        let status = out.status.code();
+        if status == Some(0) {
+            eprintln!("fixture: using `{name}` - `run {name} -- /bin/true` exited 0");
+            return Some((*name).to_string());
         }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = stderr
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .last()
+            .unwrap_or("");
+        eprintln!(
+            "fixture: rejected `{name}` - `run {name} -- /bin/true` exited {status:?} ({})",
+            why.trim()
+        );
+        results.push(format!("{name}={status:?}"));
     }
-    names
-        .iter()
-        .find(|n| n.as_str() == "alpine")
-        .cloned()
-        .or_else(|| names.into_iter().next())
+    eprintln!(
+        "FIXTURE-UNAVAILABLE: no container that can run a trivial command was found, so this test \
+         is UNRUNNABLE here (not a pass, not a product failure). probed: [{}]; results: [{}]",
+        candidates.join(", "),
+        results.join(", ")
+    );
+    None
 }
 
 #[test]
 fn arguments_arrive_at_the_guest_exactly_as_written() {
-    let container = match pick_container() {
+    let container = match pick_container(&["alpine", "test-alpine"]) {
         Some(c) => c,
-        None => {
-            eprintln!(
-                "skipped: no container is installed on this host, so the guest cannot report its \
-                 argv; install one (podnext install alpine) to run this table"
-            );
-            return;
-        }
+        None => return,
     };
 
     let cases: Vec<&str> = vec![
@@ -119,12 +136,9 @@ fn arguments_arrive_at_the_guest_exactly_as_written() {
 /// the middle of the run path would show up here. Kept separate so a failure names the mechanism.
 #[test]
 fn the_host_does_not_expand_what_the_caller_wrote() {
-    let container = match pick_container() {
+    let container = match pick_container(&["alpine", "test-alpine"]) {
         Some(c) => c,
-        None => {
-            eprintln!("skipped: no container is installed on this host");
-            return;
-        }
+        None => return,
     };
     let out = Command::new(bin())
         .args(["run", &container, "--", "/bin/sh", "-c"])
