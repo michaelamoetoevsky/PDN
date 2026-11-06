@@ -333,6 +333,16 @@ pub async fn install_image_native(
 
     let container_name = container_name.to_string();
 
+    // Serialise installs of the same container name (WORKLIST A4). The lock primitive and its refusal
+    // - which names the holder's PID - already existed in `proot_distro_core::locking`, but nothing on
+    // THIS path ever took it, so two concurrent installs of one name both reported success and
+    // `~/.podnext/locks/` stayed empty through every race. Held for the whole install: `ContainerLock`
+    // releases on drop, so every error path below releases it too. The commit-time `ENOTEMPTY` arbiter
+    // in `commit_staging` stays as the second line of defence (it is what makes a loss impossible even
+    // if a lock is somehow not held), but a contender should now be refused BEFORE doing any work.
+    let mut name_lock = proot_distro_core::locking::ContainerLock::new(&container_name, true);
+    name_lock.acquire()?;
+
     println!("Installing '{}' as '{}'...", image_ref, container_name);
 
     // `_staging_lock` holds an exclusive flock on the staging tree for as long as
