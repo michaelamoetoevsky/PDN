@@ -74,7 +74,10 @@ impl ContainerManager {
             containers.insert(c.name.clone(), c.clone());
         }
         if crate::container_index::enabled() {
-            crate::container_index::store(&containers_dir, &cache_path, &loaded);
+            // A refused index write (B11's `ESTALE` identity gate included) must reach
+            // the caller rather than being swallowed: silently leaving a stale index
+            // behind is the failure this project has already paid for twice.
+            crate::container_index::store(&containers_dir, &cache_path, &loaded)?;
         }
 
         Ok(())

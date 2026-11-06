@@ -17,7 +17,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
@@ -224,24 +224,55 @@ pub enum DaemonEvent {
 /// IPC message types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DaemonMessage {
-    RegisterService { service: ManagedService },
-    UnregisterService { name: String },
-    StartService { name: String },
-    StopService { name: String, force: bool },
-    RestartService { name: String },
-    GetServiceStatus { name: String },
+    RegisterService {
+        service: ManagedService,
+    },
+    UnregisterService {
+        name: String,
+    },
+    StartService {
+        name: String,
+    },
+    StopService {
+        name: String,
+        force: bool,
+    },
+    RestartService {
+        name: String,
+    },
+    GetServiceStatus {
+        name: String,
+    },
     ListServices,
     GetDaemonStatus,
+    /// The last `lines` lines of the daemon's own log, if it keeps one.
+    GetLogs {
+        lines: usize,
+    },
     ShutdownDaemon,
     ReloadConfig,
     Ping,
 }
 
+/// The answer to one IPC request, in the same shape the CLI decodes (and the same
+/// shape `podnext-daemon` writes): a `type` tag with `ok`/`error`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DaemonResponse {
-    pub success: bool,
-    pub message: Option<String>,
-    pub data: Option<serde_json::Value>,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DaemonResponse {
+    Ok { data: Option<serde_json::Value> },
+    Error { message: String },
+}
+
+impl DaemonResponse {
+    fn ok(data: Option<serde_json::Value>) -> Self {
+        DaemonResponse::Ok { data }
+    }
+
+    fn error(message: impl Into<String>) -> Self {
+        DaemonResponse::Error {
+            message: message.into(),
+        }
+    }
 }
 
 /// Daemon runtime
@@ -251,6 +282,9 @@ pub struct DaemonRuntime {
     service_configs: Arc<RwLock<HashMap<String, ManagedService>>>,
     event_tx: broadcast::Sender<DaemonEvent>,
     command_tx: mpsc::Sender<(DaemonMessage, mpsc::Sender<DaemonResponse>)>,
+    /// The receiving half of `command_tx`. Held (not dropped) so `start` can hand it to
+    /// the dispatcher that answers IPC requests; only `start` may take it.
+    command_rx: Mutex<Option<mpsc::Receiver<(DaemonMessage, mpsc::Sender<DaemonResponse>)>>>,
     health_tasks: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     running: Arc<RwLock<bool>>,
 }
@@ -258,7 +292,7 @@ pub struct DaemonRuntime {
 impl DaemonRuntime {
     pub fn new(config: DaemonRuntimeConfig) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
-        let (command_tx, _command_rx) = mpsc::channel(1024);
+        let (command_tx, command_rx) = mpsc::channel(1024);
 
         Self {
             config,
@@ -266,6 +300,7 @@ impl DaemonRuntime {
             service_configs: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             command_tx,
+            command_rx: Mutex::new(Some(command_rx)),
             health_tasks: Arc::new(Mutex::new(HashMap::new())),
             running: Arc::new(RwLock::new(false)),
         }
@@ -279,7 +314,9 @@ impl DaemonRuntime {
         self.event_tx.subscribe()
     }
 
-    pub async fn start(&self) -> Result<()> {
+    /// Start every daemon task. Takes `self: &Arc<Self>` because the IPC listener and the
+    /// command dispatcher both outlive this call and need to keep the runtime alive.
+    pub async fn start(self: &Arc<Self>) -> Result<()> {
         *self.running.write().await = true;
 
         // Create directories
@@ -302,12 +339,32 @@ impl DaemonRuntime {
         // Start health monitor
         self.start_health_monitor().await?;
 
+        // Answer IPC requests before the listener can accept any: a connection that
+        // arrives before there is a consumer would sit unanswered forever.
+        self.start_command_dispatcher().await;
+
         // Start IPC listener
         self.start_ipc_listener().await?;
 
         let _ = self.event_tx.send(DaemonEvent::DaemonStarted);
         info!("Daemon runtime started");
         Ok(())
+    }
+
+    /// Take the command receiver and spawn the loop that turns a [`DaemonMessage`] into a
+    /// [`DaemonResponse`]. Without this the channel had no consumer and every request
+    /// would hang or fail.
+    async fn start_command_dispatcher(self: &Arc<Self>) {
+        let Some(mut rx) = self.command_rx.lock().await.take() else {
+            return;
+        };
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            while let Some((msg, reply)) = rx.recv().await {
+                let resp = this.dispatch(msg).await;
+                let _ = reply.send(resp).await;
+            }
+        });
     }
 
     async fn start_health_monitor(&self) -> Result<()> {
@@ -395,7 +452,7 @@ impl DaemonRuntime {
         let socket_path = self.config.socket_path.clone();
         let _ = tokio::fs::remove_file(&socket_path).await;
 
-        let _listener = UnixListener::bind(&socket_path).context("Failed to bind daemon socket")?;
+        let listener = UnixListener::bind(&socket_path).context("Failed to bind daemon socket")?;
 
         #[cfg(unix)]
         {
@@ -407,9 +464,123 @@ impl DaemonRuntime {
 
         info!("Daemon IPC listening on {:?}", socket_path);
 
-        // Note: In a real implementation, we'd spawn a task to handle connections
-        // For now, this is a placeholder
+        // Accept connections for the life of the daemon. The listener is moved into the
+        // task (the base bound it and dropped it, so nothing ever accepted) and each
+        // connection is served on its own task against the command channel.
+        let commands = self.command_sender();
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => {
+                        let commands = commands.clone();
+                        tokio::spawn(serve_connection(stream, commands));
+                    }
+                    Err(e) => warn!("Daemon IPC accept error: {}", e),
+                }
+            }
+        });
+
         Ok(())
+    }
+
+    /// Answer one parsed request. The daemon-side half of A18(b): every verb the CLI can
+    /// send has an answer here, including the daemon-level stop/reload/logs the base
+    /// never delivered.
+    async fn dispatch(&self, msg: DaemonMessage) -> DaemonResponse {
+        match msg {
+            DaemonMessage::Ping => DaemonResponse::ok(None),
+            DaemonMessage::ListServices => {
+                let data = services_json(&self.list_services().await);
+                DaemonResponse::ok(Some(data))
+            }
+            DaemonMessage::GetServiceStatus { name } => {
+                match self.get_service_status(&name).await {
+                    Ok(Some(state)) => DaemonResponse::ok(Some(service_json(&state))),
+                    Ok(None) => DaemonResponse::error(format!("Service not found: {name}")),
+                    Err(e) => DaemonResponse::error(e.to_string()),
+                }
+            }
+            DaemonMessage::StartService { name } => match self.start_service(&name).await {
+                Ok(()) => DaemonResponse::ok(Some(
+                    serde_json::json!({ "message": format!("Service '{name}' start initiated") }),
+                )),
+                Err(e) => DaemonResponse::error(format!("Failed to start service: {e}")),
+            },
+            DaemonMessage::StopService { name, force } => {
+                match self.stop_service(&name, force).await {
+                    Ok(()) => DaemonResponse::ok(Some(
+                        serde_json::json!({ "message": format!("Service '{name}' stopped") }),
+                    )),
+                    Err(e) => DaemonResponse::error(format!("Failed to stop service: {e}")),
+                }
+            }
+            DaemonMessage::RestartService { name } => match self.restart_service(&name).await {
+                Ok(()) => DaemonResponse::ok(Some(
+                    serde_json::json!({ "message": format!("Service '{name}' restarted") }),
+                )),
+                Err(e) => DaemonResponse::error(format!("Failed to restart service: {e}")),
+            },
+            DaemonMessage::RegisterService { service } => {
+                let name = service.name.clone();
+                match self.register_service(service).await {
+                    Ok(()) => DaemonResponse::ok(Some(
+                        serde_json::json!({ "message": format!("Service '{name}' registered") }),
+                    )),
+                    Err(e) => DaemonResponse::error(format!("Failed to register service: {e}")),
+                }
+            }
+            DaemonMessage::UnregisterService { name } => {
+                match self.unregister_service(&name).await {
+                    Ok(()) => DaemonResponse::ok(Some(
+                        serde_json::json!({ "message": format!("Service '{name}' unregistered") }),
+                    )),
+                    Err(e) => DaemonResponse::error(format!("Failed to unregister service: {e}")),
+                }
+            }
+            DaemonMessage::GetDaemonStatus => {
+                let status = self.get_daemon_status().await;
+                match serde_json::to_value(status) {
+                    Ok(data) => DaemonResponse::ok(Some(data)),
+                    Err(e) => DaemonResponse::error(format!("Failed to encode status: {e}")),
+                }
+            }
+            DaemonMessage::ReloadConfig => match self.load_state().await {
+                Ok(()) => {
+                    let _ = self.event_tx.send(DaemonEvent::ConfigReloaded);
+                    DaemonResponse::ok(Some(
+                        serde_json::json!({ "message": "configuration reloaded" }),
+                    ))
+                }
+                Err(e) => DaemonResponse::error(format!("Reload failed: {e}")),
+            },
+            DaemonMessage::GetLogs { lines } => self.daemon_logs(lines).await,
+            DaemonMessage::ShutdownDaemon => match self.shutdown().await {
+                Ok(()) => DaemonResponse::ok(Some(
+                    serde_json::json!({ "message": "daemon shutting down" }),
+                )),
+                Err(e) => DaemonResponse::error(format!("Shutdown failed: {e}")),
+            },
+        }
+    }
+
+    /// The daemon's own log, if it keeps one. This runtime records state, not a log
+    /// stream, so the honest answer when no log file exists is a refusal naming the gap
+    /// rather than an empty success.
+    async fn daemon_logs(&self, lines: usize) -> DaemonResponse {
+        let path = self.config.log_dir.join("daemon.log");
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) => {
+                let tail: Vec<&str> = text.lines().rev().take(lines).collect();
+                let body = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+                DaemonResponse::ok(Some(serde_json::json!({ "message": body })))
+            }
+            Err(_) => DaemonResponse::error(format!(
+                "no daemon log file at {}: this daemon keeps state only (under {}), not a log \
+                 stream; use `podnext log query` for service logs",
+                path.display(),
+                self.config.state_dir.display()
+            )),
+        }
     }
 
     async fn run_health_check(config: &DaemonHealthCheckConfig) -> bool {
@@ -758,6 +929,96 @@ pub struct DaemonStatus {
     pub uptime_secs: u64,
 }
 
+/// The JSON shape `podnext list`/`service list`/`daemon status` read off the daemon:
+/// `status` and `health` as the CLI's own `{:?}` names, so the daemon path and the
+/// in-process fallback render the same bytes.
+fn service_json(state: &DaemonServiceState) -> serde_json::Value {
+    serde_json::json!({
+        "name": state.name,
+        "status": format!("{:?}", state.status),
+        "health": format!("{:?}", state.health),
+        "pid": state.pid,
+        "restart_count": state.restart_count,
+    })
+}
+
+fn services_json(states: &[DaemonServiceState]) -> serde_json::Value {
+    serde_json::Value::Array(states.iter().map(service_json).collect())
+}
+
+/// Translate one wire request (`{"cmd": "...", ...}`, the same bytes the CLI writes)
+/// into a [`DaemonMessage`]. `None` for a verb this daemon does not speak, which the
+/// caller answers with a refusal naming it.
+fn message_from_wire(request: &serde_json::Value) -> Option<DaemonMessage> {
+    let cmd = request.get("cmd")?.as_str()?;
+    let name = || {
+        request
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    Some(match cmd {
+        "ping" => DaemonMessage::Ping,
+        "list" => DaemonMessage::ListServices,
+        "status" => DaemonMessage::GetServiceStatus { name: name() },
+        "start" => DaemonMessage::StartService { name: name() },
+        "stop" => DaemonMessage::StopService {
+            name: name(),
+            force: request
+                .get("force")
+                .and_then(|f| f.as_bool())
+                .unwrap_or(false),
+        },
+        "restart" => DaemonMessage::RestartService { name: name() },
+        "daemon-status" => DaemonMessage::GetDaemonStatus,
+        "daemon-stop" => DaemonMessage::ShutdownDaemon,
+        "daemon-reload" => DaemonMessage::ReloadConfig,
+        "daemon-logs" => DaemonMessage::GetLogs {
+            lines: request.get("lines").and_then(|l| l.as_u64()).unwrap_or(100) as usize,
+        },
+        _ => return None,
+    })
+}
+
+/// Serve one IPC connection: read a single request line, ask the dispatcher for the
+/// answer, write it back as one line and close. Any failure to parse or deliver is
+/// reported to the client as an error response rather than dropped.
+async fn serve_connection(
+    stream: UnixStream,
+    commands: mpsc::Sender<(DaemonMessage, mpsc::Sender<DaemonResponse>)>,
+) {
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut line = String::new();
+
+    let response = match reader.read_line(&mut line).await {
+        Ok(0) => return, // client hung up without asking anything
+        Ok(_) => match serde_json::from_str::<serde_json::Value>(line.trim()) {
+            Ok(request) => match message_from_wire(&request) {
+                Some(msg) => {
+                    let (reply_tx, mut reply_rx) = mpsc::channel(1);
+                    match commands.send((msg, reply_tx)).await {
+                        Ok(()) => reply_rx
+                            .recv()
+                            .await
+                            .unwrap_or_else(|| DaemonResponse::error("daemon dropped the request")),
+                        Err(_) => DaemonResponse::error("daemon is shutting down"),
+                    }
+                }
+                None => DaemonResponse::error(format!("unknown command: {}", line.trim())),
+            },
+            Err(e) => DaemonResponse::error(format!("invalid request: {e}")),
+        },
+        Err(_) => return,
+    };
+
+    let mut bytes = serde_json::to_vec(&response).unwrap_or_default();
+    bytes.push(b'\n');
+    let _ = write_half.write_all(&bytes).await;
+    let _ = write_half.flush().await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,5 +1070,70 @@ mod tests {
         let services = runtime.list_services().await;
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].name, "test-service");
+    }
+
+    /// A18(b): the IPC listener answers the CLI's requests. The base bound the socket
+    /// and dropped the listener, and the command channel had no consumer — every
+    /// request hung, so `daemon stop|reload|logs` could only print a success line. Each
+    /// request below is the exact JSON the CLI's `send_daemon_command` writes; the
+    /// answers are the exact bytes it decodes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ipc_answers_daemon_reload_logs_and_stop() {
+        let temp_dir = tempdir().unwrap();
+        let socket = temp_dir.path().join("daemon.sock");
+        let config = DaemonRuntimeConfig {
+            socket_path: socket.clone(),
+            state_dir: temp_dir.path().join("state"),
+            log_dir: temp_dir.path().join("logs"),
+            pid_file: temp_dir.path().join("daemon.pid"),
+            ..Default::default()
+        };
+        let runtime = Arc::new(DaemonRuntime::new(config));
+        runtime.start().await.unwrap();
+        assert!(
+            socket.exists(),
+            "the listener must bind the socket it watches"
+        );
+
+        let ask = |request: serde_json::Value| {
+            let socket = socket.clone();
+            async move {
+                let stream = UnixStream::connect(&socket).await.expect("connect");
+                let (read_half, mut write_half) = stream.into_split();
+                write_half
+                    .write_all(format!("{request}\n").as_bytes())
+                    .await
+                    .unwrap();
+                write_half.flush().await.unwrap();
+                let mut reader = BufReader::new(read_half);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                serde_json::from_str::<serde_json::Value>(line.trim()).unwrap()
+            }
+        };
+
+        let reload = ask(serde_json::json!({"cmd": "daemon-reload"})).await;
+        assert_eq!(reload["type"], "ok", "reload answer: {reload}");
+        assert_eq!(reload["data"]["message"], "configuration reloaded");
+
+        // This daemon keeps state, not a log stream, so the honest answer names the gap.
+        let logs = ask(serde_json::json!({"cmd": "daemon-logs", "lines": 50})).await;
+        assert_eq!(logs["type"], "error", "logs answer: {logs}");
+        assert!(
+            logs["message"]
+                .as_str()
+                .unwrap()
+                .contains("no daemon log file"),
+            "logs answer: {logs}"
+        );
+
+        // An unknown verb is refused, never answered as success.
+        let unknown = ask(serde_json::json!({"cmd": "make-me-a-sandwich"})).await;
+        assert_eq!(unknown["type"], "error", "unknown verb answer: {unknown}");
+
+        let stop = ask(serde_json::json!({"cmd": "daemon-stop"})).await;
+        assert_eq!(stop["type"], "ok", "stop answer: {stop}");
+        assert_eq!(stop["data"]["message"], "daemon shutting down");
+        assert!(!socket.exists(), "stop must remove the socket");
     }
 }

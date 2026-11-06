@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tabled::Tabled;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -14,8 +15,8 @@ use tokio::net::UnixStream;
 
 use super::{get_supervisor, output_json, output_table, output_yaml};
 use pn_next::{
-    DaemonRuntime, DaemonRuntimeConfig, ServiceState, ServiceSupervisor, TermuxBootConfig,
-    TermuxBootManager,
+    DaemonEvent, DaemonRuntime, DaemonRuntimeConfig, ServiceState, ServiceSupervisor,
+    TermuxBootConfig, TermuxBootManager,
 };
 
 /// The daemon socket, resolved from the environment rather than hard-coded: a home that
@@ -576,12 +577,70 @@ pub async fn execute_daemon_command(cmd: crate::DaemonCommands) -> Result<()> {
     }
 }
 
+/// The daemon runtime's configuration, resolved from the environment exactly like
+/// `daemon_socket()` so the socket it *binds* is the one every other command *probes*.
+/// The base used `DaemonRuntimeConfig::default()`, whose `/run` and `/var` paths are
+/// unwritable on Termux: `daemon start` died before printing anything (os error 30),
+/// and had it not, it would have watched a socket nobody probes.
+fn daemon_runtime_config() -> DaemonRuntimeConfig {
+    let socket = daemon_socket();
+    let run_dir = socket
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| proot_distro_core::paths::host::runtime_dir());
+    let state_dir = proot_distro_core::paths::host::state_dir()
+        .unwrap_or_else(|| run_dir.clone())
+        .join("pn-next/daemon");
+    DaemonRuntimeConfig {
+        socket_path: socket,
+        pid_file: run_dir.join("daemon.pid"),
+        log_dir: state_dir.join("logs"),
+        state_dir,
+        ..DaemonRuntimeConfig::default()
+    }
+}
+
+/// Send one daemon-level request and return the message the daemon reported. A refusal
+/// from the daemon (an unknown verb, a real failure) becomes an error here, so a
+/// command never prints a success line over an answer the daemon did not give.
+async fn daemon_request(cmd: serde_json::Value) -> Result<String> {
+    let resp = send_daemon_command(cmd).await?;
+    if resp.get("type").and_then(|t| t.as_str()) == Some("error") {
+        bail!(
+            "daemon refused: {}",
+            resp.get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error")
+        );
+    }
+    Ok(resp
+        .get("data")
+        .and_then(|d| d.get("message"))
+        .and_then(|m| m.as_str())
+        .unwrap_or("ok")
+        .to_string())
+}
+
 pub async fn cmd_daemon_start() -> Result<()> {
     eprintln!("Starting PDN daemon...");
-    let config = DaemonRuntimeConfig::default();
-    let runtime = DaemonRuntime::new(config);
+    let config = daemon_runtime_config();
+    // Resolved, not hard-coded: printed so the operator can see which socket this
+    // daemon will answer on — the one every `service`/`daemon` command probes.
+    eprintln!("Daemon socket: {}", config.socket_path.display());
+    let runtime = Arc::new(DaemonRuntime::new(config));
     runtime.start().await?;
     println!("PDN daemon started");
+
+    // Stay up until something asks the daemon to stop (`daemon stop`) or it is
+    // signalled. Returning here exited the process the instant it started, so no
+    // daemon was ever left running to answer anything.
+    let mut events = runtime.subscribe_events();
+    while let Ok(event) = events.recv().await {
+        if matches!(event, DaemonEvent::DaemonStopped) {
+            break;
+        }
+    }
+    println!("PDN daemon stopped");
     Ok(())
 }
 
@@ -595,7 +654,8 @@ pub async fn cmd_daemon_stop() -> Result<()> {
         );
     }
     eprintln!("Stopping PDN daemon...");
-    println!("PDN daemon stopped");
+    let answer = daemon_request(serde_json::json!({ "cmd": "daemon-stop" })).await?;
+    println!("PDN daemon stopped: {answer}");
     Ok(())
 }
 
@@ -668,19 +728,23 @@ pub async fn cmd_daemon_reload() -> Result<()> {
             daemon_socket().display()
         );
     }
-    println!("Reloading daemon configuration...");
+    let answer = daemon_request(serde_json::json!({ "cmd": "daemon-reload" })).await?;
+    println!("Daemon reloaded: {answer}");
     Ok(())
 }
 
 pub async fn cmd_daemon_logs(_follow: bool, lines: usize) -> Result<()> {
     // There is no log stream without a daemon; the empty header this used to print
-    // was a success line over nothing. Refuse instead.
+    // was a success line over nothing. Refuse instead, then report what the daemon
+    // actually answers (its own log, or an honest refusal when it keeps none).
     if !is_daemon_running().await {
         bail!(
             "daemon is not running: nothing is listening on {}",
             daemon_socket().display()
         );
     }
-    println!("Daemon logs (last {} lines):", lines);
+    let answer =
+        daemon_request(serde_json::json!({ "cmd": "daemon-logs", "lines": lines })).await?;
+    println!("{answer}");
     Ok(())
 }

@@ -18,6 +18,7 @@
 //! containers).
 
 use crate::container::{Container, ContainerConfig, ContainerInfo};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
@@ -121,25 +122,31 @@ pub fn load_if_fresh(dir: &Path, cache: &Path) -> Option<Vec<Container>> {
     Some(index.entries.into_iter().map(container_from).collect())
 }
 
-/// Persist `entries` for `dir`. Best-effort: a cache that cannot be written is not
-/// an error, it only means the next query pays for the full scan again.
-pub fn store(dir: &Path, cache: &Path, entries: &[Container]) {
+/// Persist `entries` for `dir`.
+///
+/// Returns an error when the index could not be written. A cache write is not
+/// best-effort any more: the identity gate in [`crate::storage::atomic_write`]
+/// refuses (`ESTALE`) a write whose temp file was replaced, and dropping that
+/// result left a *stale* index the next query served as current — the silent
+/// failure shape this project has already paid for twice. The caller decides.
+pub fn store(dir: &Path, cache: &Path, entries: &[Container]) -> Result<()> {
     let index = Index {
         version: INDEX_VERSION,
         stamps: stamps(dir),
         entries: entries.iter().map(Container::info).collect(),
     };
-    let Ok(bytes) = serde_json::to_vec(&index) else {
-        return;
-    };
+    let bytes = serde_json::to_vec(&index).context("serialise the container index")?;
     if let Some(parent) = cache.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create the index cache directory {}", parent.display()))?;
     }
     // Write to a temporary sibling and rename, so a reader never sees a partial
     // file. The rename is identity-checked (B11): if the temp path was replaced
     // or removed between the write and the rename, it is refused as ESTALE
-    // rather than installing somebody else's bytes.
-    let _ = crate::storage::atomic_write(cache, &bytes);
+    // rather than installing somebody else's bytes — and that refusal is
+    // returned from here, not dropped.
+    crate::storage::atomic_write(cache, &bytes)
+        .with_context(|| format!("write the container index {}", cache.display()))
 }
 
 #[cfg(test)]
@@ -174,7 +181,7 @@ mod tests {
 
         // Nothing cached yet.
         assert!(load_if_fresh(&dir, &cache).is_none());
-        store(&dir, &cache, &[]);
+        store(&dir, &cache, &[]).unwrap();
 
         // A cache whose stamps match the store is served.
         let entries = load_if_fresh(&dir, &cache).expect("fresh cache must be served");
@@ -216,7 +223,7 @@ mod tests {
             rootfs_path: dir.join("demo/rootfs"),
             corrupt: None,
         };
-        store(&dir, &cache, std::slice::from_ref(&scanned));
+        store(&dir, &cache, std::slice::from_ref(&scanned)).unwrap();
 
         let served = load_if_fresh(&dir, &cache).expect("fresh cache");
         assert_eq!(served.len(), 1);
@@ -238,8 +245,47 @@ mod tests {
         // Only the real container contributes a stamp, so adding a bare directory
         // changes nothing.
         let cache = tmp.path().join("c.json");
-        store(&dir, &cache, &[]);
+        store(&dir, &cache, &[]).unwrap();
         let entries = load_if_fresh(&dir, &cache).expect("bare directory must not matter");
         assert_eq!(entries.len(), 0);
+    }
+
+    /// A17: a refused index write is visible to the caller, not swallowed. The base
+    /// dropped `atomic_write`'s result with `let _ =`, so a refusal left a stale index
+    /// that the next query served as current. B11's `ESTALE` gate itself is proven at
+    /// the `atomic_write` layer in `tests/atomic_identity.rs`; this test proves the
+    /// *channel* — `store` reports a refusal instead of returning silently — and that
+    /// the read paths still work afterwards.
+    #[test]
+    fn a_refused_index_write_is_reported_not_swallowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("containers");
+        std::fs::create_dir_all(&dir).unwrap();
+        store_with_one(&dir);
+
+        // The destination is occupied by a directory: the temp write succeeds, but the
+        // final rename refuses rather than clobbering it. Deterministic, no race.
+        let cache = tmp.path().join("container_index.json");
+        std::fs::create_dir_all(&cache).unwrap();
+
+        let refused = store(&dir, &cache, &[]);
+        assert!(
+            refused.is_err(),
+            "a refused index write must be reported, not dropped"
+        );
+        let err = refused.unwrap_err();
+        eprintln!("refused index write surfaced as: {err:#}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("container index"),
+            "the refusal must name what failed: {msg}"
+        );
+
+        // ...and the refusal did not break every query: a cache that *can* be written
+        // is still stored and served, so the read paths keep working.
+        let good = tmp.path().join("cache/container_index.json");
+        store(&dir, &good, &[]).expect("a writable cache must still store");
+        let served = load_if_fresh(&dir, &good).expect("read paths keep working");
+        assert_eq!(served.len(), 0);
     }
 }
