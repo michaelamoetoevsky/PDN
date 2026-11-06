@@ -211,6 +211,100 @@ be; the claim is recorded as refuted rather than folded into this document's fin
 the parent checked held at the cited line, which is the only reason the rest are quoted as findings rather
 than as a summary of a summary.
 
+### Round-2 additions from the daemon dissections: dockerd, containerd, runc (R), parent-verified
+
+Ten claims were re-checked at the lines they cite; nine held, and the one that did not is recorded in
+section 7.
+
+**The boundary that makes the rest make sense**
+
+- **`dockerd` owns no container process.** It holds metadata, policy and the API; containerd owns the task,
+  the shim, the snapshot and the content. The seam is a **three-method interface** - `Version`,
+  `LoadContainer`, `NewContainer` (`daemon/internal/libcontainerd/types/types.go:56-63`) - **verified** at
+  those lines - and container events travel *backwards* into the daemon (`types.go:39-42` →
+  `daemon/monitor.go:184`). A daemon that delegates everything it can delegate is the shape PDN's
+  `podnext-daemon` is closest to.
+- **Restart policy is 132 syscall-free lines.** `daemon/internal/restartmanager/restartmanager.go` is
+  **132 lines with zero `syscall`/`unix`/`exec` calls** - **verified** by counting both - driven by an exit
+  pipeline in `daemon/monitor.go:35-181` that carries two guards worth copying: a network-start-failure
+  guard (`:48-51`) and a duplicate-exit guard (`:53-58`). This is the cheapest item in this document: a
+  restart policy that decides, and nothing else.
+- **`dockerd` cannot run under proot at all**, and the source says why: startup returns
+  `errors.New("Devices cgroup isn't mounted")` when the Devices cgroup is absent **and** the process is not
+  in a user namespace (`daemon/daemon.go:1130-1132`, **verified** at those lines). Add the OCI spec asking
+  for namespaces, capabilities and seccomp, userns remapping, cgroup limits, and overlay2/btrfs/zfs mounting
+  their own storage, and the honest statement is: PDN's `docker`/`compose` subcommands can never be a
+  dockerd, and `known-limitations.md` should say so in one line rather than leaving the stubs to imply
+  otherwise.
+
+**The shim, which is PDN's detach design seen from the other side**
+
+- **A shim exists so the daemon may restart, and that is a process-group property, not a trick.** containerd
+  launches the shim with `syscall.SysProcAttr{Setpgid: true}` and **no death signal**
+  (`core/runtime/v2/command_unix.go:23-26`), and the only `Pdeathsig` anywhere in `core/` is in a mount
+  helper (`core/mount/mount_idmapped_utils_linux.go:46`) - both **verified** (the attribute block, and a
+  grep that returns exactly one hit). Killing containerd therefore does not signal the shim.
+- **Bootstrap crosses on stdin/stdout, and the answer is persisted.** Parameters are marshalled to
+  `cmd.Stdin`, the shim answers on stdout, the result is cached at `bundle/bootstrap.json`, and after a
+  restart the shim is found again **by scanning the state directory** (`core/runtime/v2/shim_load.go:39-126`)
+  rather than by remembering an address. "Reconnect by discovery" is the rule PDN's `attach` should adopt.
+- **stdio crosses as FIFO paths, not descriptors**: `Stdin`, `Stdout` and `Stderr` are `string` fields in
+  `CreateTaskRequest` (`api/runtime/task/v3/shim.pb.go:50-55`, **verified**), and the shim's log is a FIFO.
+  Whether descriptors also travel over ttrpc is **UNVERIFIED** - the ttrpc library is not in the extracted
+  tree (confirmed: no `vendor/github.com/containerd/ttrpc`), and the 1,168 `ttrpc` occurrences are imports
+  and generated stubs rather than the library body. See section 7.
+
+**The image store, which is the design PDN's `push`/`export` is missing (#37, #39)**
+
+- **Ingest is two-phase and a blob is invisible until it commits.** `Store = Manager + Provider +
+  IngestManager + Ingester` (`core/content/content.go:41-46`); `Commit` enforces the declared size and the
+  expected digest, then swaps the ingest lease for a content lease
+  (`core/metadata/content.go:604-623`, `:670-694`). Verify-then-rename, with the verification part done by
+  the store rather than by its callers.
+- **A snapshot is not a layer.** A snapshotter hands out parented filesystem states
+  (`core/snapshots/snapshotter.go:169-182`), bound to the layers they came from by labels
+  (`containerd.io/snapshot.ref`, `containerd.io/diff-id`, `:37-46`). PDN conflates the two today: its store
+  keeps a rootfs and no blobs, which is exactly why a layer cannot be re-exported.
+- **Garbage collection is label-rooted mark-and-sweep over leases.** The vocabulary is
+  `containerd.io/gc.root`, `.ref.`, `.bref.`, `.expire`, `.flat` (`core/metadata/gc.go:66-119`);
+  `scanRoots` turns every lease - and any non-flat root - into a mark (`:495-657`), and removal emits an
+  event (`:1034-1107`). Leases are the thing PDN's cache eviction (item 11) is missing: a reference that a
+  client owns and that keeps content alive across processes.
+- **Events are typed envelopes addressed by topic string** (`core/events/events.go:26-32`,
+  `core/runtime/events.go:24-47`), and the daemon publishes only exit/delete for shims it orphaned
+  (`core/runtime/v2/shim.go:182-195`). A topic-addressed bus is a smaller thing to build than PDN's current
+  per-command state files, and it is what makes `ps`/`events` subscriptions possible.
+
+**runc: the contracts, and one hole PDN should check itself for**
+
+- **Start coordination is a FIFO gate, not a timeout.** The parent re-executes its own binary with
+  `argv[1] == "init"` (`libcontainer/container_linux.go:530`, **verified**: `cmd := exec.Command(exePath,
+  "init")`), and the child writes **one byte** to a write-only FIFO only after its setup is complete
+  (`libcontainer/standard_init_linux.go`, `fifoFile.Write([]byte("0"))`, **verified**) - while `start` is the
+  only process that opens the read end. No sleep, no polling, no race.
+- **State is persisted *inside* the readiness handshake** (`libcontainer/process_linux.go:984-1016`), and
+  the tree documents the failure mode that argues for it: *a `create` killed at the wrong moment leaves a
+  leaky `init` and no `state.json`*. **PDN should test its own create path for exactly that hole** - kill the
+  process mid-create and see whether an orphan or a half-written state survives. This is the highest-value
+  item in this section because it is a test, not a rewrite.
+- **Abandonment detection is `(pid, start-time, not zombie)`.** `hasInit()`
+  (`libcontainer/container_linux.go:894-905`, **verified** verbatim) compares the recorded start time with
+  the process's own and treats `Zombie` and `Dead` as gone. A PID can be reused; a PID plus a start time
+  cannot be. PDN records a PID.
+- **cgroup v2 has an order and an inference.** `Set()` writes `pids` → `memory` → `io` → `cpu` → … in that
+  order (`vendor/github.com/opencontainers/cgroups/fs2/fs2.go:213+`, **verified**), the manager is selected
+  in `cgroups/manager/new.go:37-47`, and delegation is *inferred from whether a write succeeds* rather than
+  declared, with `ErrRootless` only for the rootless case that has neither a path nor controllers. Note the
+  detail a reader will otherwise trip over: runc 1.5.2 no longer carries the cgroup code in `libcontainer/`
+  - it moved to the vendored `opencontainers/cgroups` module.
+- **Setup order is the correctness.** `no_new_privs` is set early (`standard_init_linux.go:152-156`,
+  **verified**), seccomp goes before the capability drop when the container is privileged and as late as
+  possible under `no_new_privs`, then the bounding set, `KEEP_CAPS`, uid/gid, working-directory verification,
+  and the final `capset`.
+- **The exit status is a triple**: `128 + signal` for a signal death, the child's own status passed through,
+  and `255` for a runtime failure. PDN already propagates a guest exit code and has one test for it; the
+  triple is the contract to compare against.
+
 ## 5. The round-1 adoption list, with its acceptance tests (condensed)
 
 Full table with each test in `research/PROOT_AND_PROOTDISTRO_SOURCE_DISSECTION.md` section 3. Status is
@@ -255,9 +349,20 @@ are folded into sections 4-5 and the backlog in section 8 as they land.
 |---|---|---|---|
 | proot, deep | `src/syscall` (25 files, `enter.c` 3,069 lines), `src/tracee` (13 files), the extension enable logic, `src/execve`, `src/loader` | `research/DISSECTION_PROOT_DEEP.md` | **landed, parent-verified** (6 claims checked at their cited lines) |
 | proot-distro, deep | the argv parser, message/progress layer, state-dir and atomic/compress/shm helpers, and the commands `copy`, `sync`, `remove`, `kill`, `list`, `run`, `build`, `help` + completions | `research/DISSECTION_PROOTDISTRO_DEEP.md` | **landed, parent-verified** (one claim refuted; see section 4) |
-| dockerd | `daemon/`, `cmd/dockerd/`, `libcontainerd/`, `api/types/`, `pkg/plugins/` | `research/DISSECTION_DOCKERD.md` | running |
-| containerd | the supervisor/shim split, shim v2 (ttrpc, fds, stdio, exit status), content store + snapshotters with GC and leases, events and task lifecycle | `research/DISSECTION_CONTAINERD.md` | landed, verification pending |
-| runc | the `runc init` re-exec, `state.json`, cgroup v2 layout, the namespace/mount/seccomp/capability order, exit-status propagation | `research/DISSECTION_RUNC.md` | running |
+| dockerd | `daemon/`, `cmd/dockerd/`, `libcontainerd/`, `api/types/`, `pkg/plugins/` | `research/DISSECTION_DOCKERD.md` | **landed, parent-verified** (4 claims checked) |
+| containerd | the supervisor/shim split, shim v2 (ttrpc, fds, stdio, exit status), content store + snapshotters with GC and leases, events and task lifecycle | `research/DISSECTION_CONTAINERD.md` | **landed, parent-verified** (one evidence claim corrected) |
+| runc | the `runc init` re-exec, `state.json`, cgroup v2 layout, the namespace/mount/seccomp/capability order, exit-status propagation | `research/DISSECTION_RUNC.md` | **landed, parent-verified** (4 claims checked verbatim) |
+
+**Corrections that came out of verifying this unit's reports.** Two of *my own briefs* were wrong and the
+children were right, which is worth recording because a brief is a parent's claim: `libcontainerd/` and
+`runconfig/` live under `daemon/internal/`, not at the top of the moby tree, and `cmd/dockerd/main.go` is a
+39-line stub - the real CLI is `daemon/command/` (3,833 lines). One child claim was wrong in its **evidence**
+while right in its **conclusion**: the containerd report said `ttrpc` has "zero source hits" in the extract;
+there are 1,168 occurrences, but they are imports and generated `.pb.go` stubs, no vendored library - so
+"fd-passing is UNVERIFIED" stands and the stated reason for it did not. runc's citations drop the
+`libcontainer/` prefix and cite cgroup code that has since moved into a vendored module; both are fine for a
+human reader and both were resolved by filename when checking, which is the reason the checking script
+indexes by basename rather than joining the citation onto a root.
 
 ## 8. The consolidated next-dev list
 
@@ -307,6 +412,28 @@ Ordered by what unblocks the most, with the test that settles each. Round-1 item
 14. **Session liveness from an inherited descriptor rather than a PID** (§4.11): the reference's session is
     live exactly while some process holds the descriptor it registered, and survivors are found by scanning
     `/proc/*/fd` for the inode. A PID can be reused; a held descriptor cannot.
+15. **A content store with two-phase ingest, leases and label-rooted GC** (§4, dockerd/containerd section) -
+    this is item 7 made concrete: verify-then-rename at commit time, snapshots kept distinct from blobs, and
+    eviction driven by leases that a client owns rather than by a scan for unreferenced files.
+16. **Reconnect by discovery**: find a live session by scanning the state directory instead of remembering an
+    address (`core/runtime/v2/shim_load.go`), the rule that makes `attach` survive a daemon restart.
+17. **A FIFO gate for start coordination** instead of sleeps or polling (`libcontainer/container_linux.go`):
+    the child writes one byte when it is ready and the opener is the only reader.
+
+**Added by round 2 (small, and two of them are tests rather than code)**
+
+- **R6 - kill a create mid-flight and look for the hole runc documents.** The tree says a `create` killed at
+  the wrong moment leaves a leaky `init` and no `state.json`, which is why it persists state *inside* the
+  readiness handshake. Acceptance: `podnext` killed during install/create leaves no orphan process and no
+  half-written state file, proved by counting both before and after.
+- **R7 - liveness from `(pid, start-time)`, not a PID** (`hasInit()`). Acceptance: a recycled PID is not
+  mistaken for a live session, and a zombie is not reported as running.
+- **R8 - the restart policy as a pure module** with the exit pipeline's network-start-failure and
+  duplicate-exit guards. Acceptance: a unit test drives the policy over exit codes, manual stops and
+  durations with no subprocess involved.
+- **R9 - one line in `known-limitations.md` saying a dockerd cannot start under proot**, with the source
+  reason (the Devices-cgroup gate at `daemon/daemon.go:1130-1132`). Acceptance: the stub `docker`/`compose`
+  commands point at that line instead of implying the capability exists.
 
 **Explicitly not taken**
 
