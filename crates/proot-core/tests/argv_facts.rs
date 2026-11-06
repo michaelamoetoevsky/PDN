@@ -123,10 +123,13 @@ async fn the_built_argv_carries_link2symlink_and_never_proot_no_mountinfo() {
     );
 }
 
-/// B6: the `/dev/null` -> `/etc/ld.so.preload` bind is proot's own default
-/// (`cli/proot.c:142`), inherited by PDN rather than built by it, so PDN's argv
-/// must not spend a token on it. The positive control below pins that this
-/// absence is about ld.so.preload, not about bind handling being broken.
+/// B6: PDN must not spend an argv token on the `/dev/null` -> `/etc/ld.so.preload`
+/// bind. The earlier wording here called that bind "proot's own default,
+/// inherited by PDN" - it is not a default: the only site that builds it is
+/// `cli/proot.c:142`, inside the `-q/--qemu` handler (`cli/proot.c:73`), and PDN
+/// refuses `--qemu` outright (`direct.rs:331`, no qemu field in `ProotConfig`),
+/// so no PDN session takes that branch. The assertion is unchanged and still
+/// guards the same thing; only the reason a reader is given is now measured.
 #[tokio::test]
 async fn the_ld_so_preload_bind_is_proots_default_not_pdns() {
     let cap = capture("b6").await;
