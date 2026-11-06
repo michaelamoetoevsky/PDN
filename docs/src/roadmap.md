@@ -462,7 +462,7 @@ of opinion. Measured against the reference implementation installed on this devi
 | Install from a registry reference | yes, with alias derivation | partial: `install <image>` with a name, no alias derivation | `podnext install alpine:3.20` creates a container named by the derived alias, no extra flags |
 | Install from a local rootfs tarball | yes | no | `podnext install ./rootfs.tar.gz` works offline |
 | Install from a local OCI image-layout archive | yes (marker-detected, blobs verified against the declared digests) | no | `podnext install ./image.oci.tar` verifies digests and refuses a mismatch |
-| Install from a URL, with checksum | yes | no | `podnext install https://…/rootfs.tar.xz --checksum sha256:…` |
+| Install from a URL | yes, but **no checksum** — it verifies the declared body length only (`grep -rn 'checksum' commands/install.py commands/install_local.py helpers/download.py` → 0 matches; `helpers/download.py:133 declared_length`, `:149 require_complete_body`) | no | `podnext install https://…/rootfs.tar.xz` works; a `--checksum sha256:…` option is a row where **PDN can beat the reference**, which cannot verify one |
 | Multi-arch | `--architecture` plus emulator | `--qemu` only in a legacy pre-pass | an x86_64 rootfs runs on this aarch64 device through the emulator, documented |
 
 ### 10.2 Gap: living inside it
@@ -489,8 +489,8 @@ is no longer part of the accepted surface. The reference polygon is far wider, a
 
 | Capability | Reference | podnext today | Acceptance test |
 |---|---|---|---|
-| Portable export | OCI layout archive | no | `podnext export <c> ./c.oci.tar`, then `install` it on another device |
-| Import (above) | yes | no | round-trip on the same device first, then across |
+| Portable export | no `export` subcommand; the reference exports by building an OCI image-layout tarball with `build -o FILE` (`parser.py:367-370` `-o/--output`; `helpers/oci_writer.py:155 write_oci_archive`) | no | `podnext export <c> ./c.oci.tar`, then `install` it on another device |
+| Import an archive | `install <archive>`, not an `import` command (`commands/help/pages.py:1061 TOP_COMMANDS` lists 18 commands, none named `export` or `import`) | no | round-trip on the same device first, then across |
 | Registry push/pull of built images | yes (section 4.4) | impossible: no layers retained (#39) | `build local` → `push` → `pull` on a second machine |
 | Backup/restore | yes, with compression | yes | already passing; keep it |
 

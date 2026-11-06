@@ -171,18 +171,30 @@ to stderr and nothing to stdout.
   field. The flag would be accepted and never enforced, so it refuses with that measurement
   (issue #63).
 
-- **`/etc/ld.so.preload` is empty in every guest, and that is proot's default, not a PDN bind.**
-  proot opens each tracee by binding `/dev/null` over `/etc/ld.so.preload`
-  (`cli/proot.c:142`, `new_binding(tracee, "/dev/null", "/etc/ld.so.preload", false)`, quoted in
-  `research/PROOT_AND_PROOTDISTRO_SOURCE_DISSECTION.md:113`), which is why that file is empty
-  inside a guest and why a host carrying an `ld.so.preload` cannot inject a library into one. PDN
-  inherits the bind rather than passing it: the only binds `proot-core` builds are the fixed
-  `/dev`, `/proc`, `/sys` (`crates/proot-core/src/lib.rs:256-258`, `:395-397`), the Android system
-  binds (`crates/proot-core/src/lib.rs:187-197`) and the caller's own `--bind`
+- **`/etc/ld.so.preload` in a guest is the image's own file; proot's `/dev/null` bind over it is
+  `-q/--qemu` only, a branch PDN never takes.** An earlier version of this entry called the bind a
+  proot default that every guest inherited. It is not. proot creates it with
+  `new_binding(tracee, "/dev/null", "/etc/ld.so.preload", false)` inside `handle_option_q`
+  (`src/cli/proot.c:73`, binding at `:142`; `grep -rn 'ld\.so\.preload' src/` returns exactly that
+  one line), so it fires **only when `-q/--qemu` is passed**, never on a plain `login`/`run`. No PDN
+  session takes that branch: nothing under `crates/proot-core/src/` emits a `-q` token
+  (`grep -rn '"-q"' crates/proot-core/src/` → 0 matches), and `crates/podnext/src/direct.rs:331-334`
+  refuses `--qemu` because `ProotConfig` has no qemu field. A PDN guest therefore sees the rootfs's
+  own `/etc/ld.so.preload` (absent or empty in a stock image) — **not** `/dev/null` — and a host
+  carrying an `ld.so.preload` cannot inject a library into a guest because a guest path resolves
+  inside the container rootfs rather than at the host's `/etc`, not because of that bind. The
+  observation that the file *looks* empty inside a guest still holds for an image that does not
+  ship it, but it is not caused by a proot default, so the earlier explanation is wrong (refuted in
+  `research/R2-REFERENCE.md` §0 item 3 and §A3). PDN does not build such a bind itself: the only
+  binds `proot-core` builds are the fixed `/dev`, `/proc`, `/sys`
+  (`crates/proot-core/src/lib.rs:256-258`, `:395-397`), the Android system binds
+  (`crates/proot-core/src/lib.rs:187-197`) and the caller's own `--bind`
   (`crates/proot-core/src/lib.rs:288-290`) — none of them is `ld.so.preload`.
   `crates/proot-core/tests/argv_facts.rs` asserts PDN's built argv carries **no**
   `ld.so.preload` bind, with `--bind=/dev` as the positive control that bind building works at
-  all, so the assertion fails if such a bind is ever added.
+  all, so the assertion fails if such a bind is ever added. (That test's own doc comment still
+  repeats the old "proot's default, inherited by PDN" wording at `:126` of the file; the assertion
+  it guards is unaffected.)
 - **What the built `proot` argv does and does not contain.** Three facts, each asserted against
   the argv `execute()` actually builds in `crates/proot-core/tests/argv_facts.rs`. First,
   `--link2symlink` is always present: the `ProotConfig` default is `true`
