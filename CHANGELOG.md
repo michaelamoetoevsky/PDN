@@ -30,6 +30,13 @@ that carries it, so it can be re-derived with `git show <sha>`.
   go to `release-notes.md` and the release reads that file, the step no longer overwrites the repository's
   `CHANGELOG.md`, and two guards refuse a flattened or escaped body before the release is created
   (`03b7ddb`; #75). The already-published body was repaired in place and re-read to confirm it.
+- The release notes for **v0.1.5** and **v0.1.8** were the same defect - one line, 3,854 and 4,021 bytes
+  with 49 literal backslash-n tokens each - and now describe what those tags are instead of listing commit
+  subjects on a single line. **v0.1.7 has been withdrawn**: its 285-byte body claimed a completed roadmap
+  while its tag (`a86aee2`) is a CI repair commit, *Fix release workflow: revert to nttld/setup-ndk@v1*; the
+  tag is kept and only the release object is gone. Before-and-after byte counts, the two publishers that
+  produced the difference (a `body: |` literal block in `ci.yml` versus the escaped Actions output in
+  `release.yml`), and the four items deliberately left alone are in `research/RELEASE_NOTES_REPAIR.md`.
 
 ### Changed
 
