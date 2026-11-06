@@ -229,6 +229,29 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
     // Check existence first (Finding 04-4)
     container_mgr.get(&name).await?;
 
+    // A5: a live session owns the container's directory, and that directory cannot
+    // be deleted from under it (measured: `rm -rf` of a running container's store
+    // directory fails with EACCES). Refuse BEFORE touching the index, naming the
+    // session, so the state can never be "the index lost the record while the
+    // directory - and the guest - stayed". Deciding to stop the session belongs to
+    // the operator (or an explicit `podnext kill`), not to a silent `remove`.
+    let live: Vec<u32> = proot_distro_core::session::active_sessions()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s.container_name == name)
+        .map(|s| s.pid)
+        .collect();
+    if !live.is_empty() {
+        let ids: Vec<String> = live.iter().map(|pid| format!("pid {pid}")).collect();
+        bail!(
+            "Container '{}' has a live session ({}); refusing to remove it. Stop the session \
+             first (e.g. `podnext kill {}`), then remove it.",
+            name,
+            ids.join(", "),
+            name
+        );
+    }
+
     if !force {
         use std::io::IsTerminal;
         if !io::stdin().is_terminal() {
@@ -248,22 +271,20 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
         }
     }
 
-    if in_mgr {
-        let _ = container_mgr.remove(&name).await;
-    }
-
-    // Delete the on-disk container directory (including orphan directories without metadata)
+    // A5: delete the directory FIRST and drop the index record only once that
+    // succeeded, so the index and the directory move together or not at all. The
+    // old order dropped the record first, so a failed delete (EACCES because a
+    // process still held the directory) left the record gone and the directory
+    // behind - the half-applied state.
     if let Some(dir) = container_dir {
         if dir.exists() {
-            fs::remove_dir_all(&dir).map_err(|e| {
-                anyhow::anyhow!(
-                    "removed '{}' from the index but failed to delete {}: {}",
-                    name,
-                    dir.display(),
-                    e
-                )
-            })?;
+            fs::remove_dir_all(&dir)
+                .map_err(|e| anyhow::anyhow!("failed to delete {}: {}", dir.display(), e))?;
         }
+    }
+
+    if in_mgr {
+        let _ = container_mgr.remove(&name).await;
     }
 
     // A removed container must not leave its session's rendezvous socket or
