@@ -14,10 +14,10 @@ do not say.
 | install from tarball / OCI layout | yes (layout marker-detected, blobs verified) | no | roadmap 10.1, confirmed by round 2 |
 | install from a URL | yes, **length-checked only - there is no `--checksum`** | no | `grep checksum` across `install*`/`download` -> 0 hits |
 | portable export | `build -o FILE` (`oci_writer.py:155`) | no | round 2; there is no `export` subcommand in either tool |
-| command surface | 18 commands (`pages.py:1061`) | 123 help screens, pinned as a fixture (`ebdd50e2d8aa629f`) | both counted on this device |
-| install wall time | MEASURE: `time pd install alpine` | median **12,474 ms** over the campaign's installs | campaign METRICS.md, 606 records |
-| `list` latency | MEASURE: same command on the reference | **33-88 ms**, five runs, metadata-only store | `workbench/R2-PDN-BASELINE.md` |
-| store footprint | MEASURE: `du -sh` of its containers dir | **853 MB** across 10 containers, with two near-duplicate Debian trees (427 MB + 173 MB) - no layer dedup | `workbench/R2-PDN-BASELINE.md` |
+| command surface | 18 commands (`pages.py:1061`); note that `--help` is NOT the way to enumerate them - `pd --help` prints nothing and `pd --version` answers `Error: unknown command '--version'` | 123 help screens, pinned as a fixture (`ebdd50e2d8aa629f`) | source count for the reference, fixture for PDN |
+| install wall time | MEASURE: `time pd install alpine` (an install needs the network, and this device's link is intermittent - A15) | median **12,474 ms** over the campaign's installs | campaign METRICS.md, 606 records |
+| `list` latency | **957-4,038 ms**, five runs of `pd list` (2,989 / 4,038 / 1,966 / 1,501 / 957), rc=0, 7 lines each | **33-88 ms**, five runs, metadata-only store | both measured on THIS device today; see the caveat below |
+| store footprint | **289 MB** in 4 entries (`$PREFIX/var/lib/proot-distro`) | **853 MB** across 10 containers (`~/.podnext`), including two near-duplicate Debian trees (427 MB + 173 MB) - no layer dedup | `du -sh` on both, this device |
 | code size, for context | **29,015 lines of Python** | **61,713 lines of Rust** in 157 files (pn-next 22,831, podnext 12,677, proot-distro-core 9,994, proot-core 3,598) | counted on this device |
 
 Verdict: mobility is where PDN is behind, and it is also where round 2 found **23 mechanisms** the comparison
@@ -74,3 +74,18 @@ and the documents say so.
 Every MEASURE row is a gap in evidence, not a claim. `install` and `list` timings for the *reference* on this device
 were not taken; the PDN numbers come from the campaign's 606 records and from a read-only baseline run. The comparison
 of code size is context, not a verdict - fewer lines with fewer features is not a win.
+
+
+## Added after measuring the reference on this device (same night)
+
+`pd list` takes **957-4,038 ms** here against PDN's **33-88 ms** for the same intent - "show me my containers". The
+caveat is load-bearing and I will not hide it: the reference is a Python program whose shebang is
+`$PREFIX/usr/bin/python3.14`, so an unknown share of that time is interpreter start and module import rather than
+container work. Splitting the two is a MEASURE row that needs a profile of `pd list`, not a stopwatch. What can be
+said without profiling: on this device, invoking the reference to list containers costs seconds, and invoking PDN
+costs tens of milliseconds, and that difference is what a user feels.
+
+The store comparison also comes out closer than the raw numbers suggest: 289 MB over 4 entries is about 72 MB per
+container, against PDN's 853 MB over 10, or 85 MB each - and PDN's figure carries two near-duplicate Debian trees
+that layer deduplication would collapse. The OCI store (C1) is therefore a *size* argument as well as an
+import/export argument.
