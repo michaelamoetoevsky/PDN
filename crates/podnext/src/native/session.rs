@@ -43,7 +43,12 @@ pub async fn login_container_native(
     // is no user value to set here and none is accepted (#66).
 
     pn_trace!("[DEBUG native] Calling login");
-    distro_core.login(options).await?;
+    become_subreaper();
+    let result = distro_core.login(options).await;
+    // A guest that died leaving tracees behind: they were reparented to us, so
+    // the session does not end until they are gone (#A22).
+    reap_orphaned_descendants();
+    result?;
     pn_trace!("[DEBUG native] Login completed");
     Ok(())
 }
@@ -97,6 +102,104 @@ pub(crate) fn forward_to_guest(sig: i32) {
     }
 }
 
+/// Become the reaper for the descendants of a dead guest.
+///
+/// PRoot does not set `PTRACE_O_EXITKILL`: when it dies its tracees are
+/// reparented, and with no subreaper anywhere they go to PID 1 and outlive the
+/// session (measured: two orphans of a finished session alive for 2.730 s and
+/// 3.046 s with PPID 1, exiting only on SIGTERM). A child subreaper makes the
+/// kernel hand those tracees to *this* process instead, so
+/// `reap_orphaned_descendants` can end them.
+///
+/// Best effort: `PR_SET_CHILD_SUBREAPER` exists since Linux 3.4 and is present
+/// on every kernel this ships to, but a refusal must not turn a working run into
+/// a failed one - the run keeps the old reparent-to-PID-1 behaviour instead.
+fn become_subreaper() {
+    let rc = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) };
+    if rc != 0 {
+        pn_trace!(
+            "[DEBUG native] prctl(PR_SET_CHILD_SUBREAPER) failed: {}",
+            io::Error::last_os_error()
+        );
+    }
+}
+
+/// Pids of every process currently parented to this one.
+fn child_pids() -> Vec<i32> {
+    let me = std::process::id() as i32;
+    let mut pids = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return pids;
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+            continue;
+        };
+        // `comm` (field 2) is parenthesised and may contain spaces/parens, so
+        // the remaining fields only start reliably after the last ')'.
+        let Some(rest) = stat.rfind(')').map(|i| &stat[i + 1..]) else {
+            continue;
+        };
+        let mut fields = rest.split_whitespace();
+        let _state = fields.next();
+        if fields.next().and_then(|s| s.parse::<i32>().ok()) == Some(me) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+/// Collect children that have already finished, so a zombie is not mistaken for
+/// a survivor. `WNOHANG` never blocks.
+fn reap_finished_children() {
+    loop {
+        let mut status: libc::c_int = 0;
+        let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+        if pid <= 0 {
+            return;
+        }
+    }
+}
+
+/// End the descendants a dead guest left reparented to this process.
+///
+/// A guest that cleans up after itself leaves no child here and this returns on
+/// the first pass, so a normal run (and the detach supervisor's normal teardown)
+/// pays nothing. A guest that leaves orphans gets them signalled and collected:
+/// each round signals the processes that are our children *now* and waits
+/// briefly, so a grandchild whose own parent was killed this round is adopted
+/// and ended on the next. Bounded, and every wait is non-blocking, so a
+/// descendant that ignores SIGTERM cannot hold the session open.
+fn reap_orphaned_descendants() {
+    for round in 0..40 {
+        reap_finished_children();
+        let children = child_pids();
+        if children.is_empty() {
+            return;
+        }
+        // Ask once, then insist.
+        let sig = if round == 0 {
+            libc::SIGTERM
+        } else {
+            libc::SIGKILL
+        };
+        for pid in &children {
+            unsafe {
+                libc::kill(*pid, sig);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    reap_finished_children();
+}
+
 pub async fn run_container_native(
     container_name: &str,
     command: Vec<String>,
@@ -116,6 +219,10 @@ pub async fn run_container_native(
         container.config.isolated = true;
     }
     let backend = container_mgr.get_backend(&container);
+
+    // Anything this guest or its children fork is ours to reap (#A22); set the
+    // flag before the runtime spawns the tracee.
+    become_subreaper();
 
     // A foreground run must survive a SIGTERM/SIGINT long enough to kill the
     // guest. Without these handlers the default action terminated podnext
@@ -143,6 +250,10 @@ pub async fn run_container_native(
             }
         }
     };
+
+    // A guest that died by any path - exit, signal, error - can leave tracees
+    // reparented to us; end them before this run reports a status (#A22).
+    reap_orphaned_descendants();
 
     // The runtime registered a session record for this pid and it is now spent;
     // remove it so `podnext ps`/sessions do not accumulate a stale entry. Runs
