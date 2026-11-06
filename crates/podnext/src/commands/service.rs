@@ -543,8 +543,26 @@ pub async fn cmd_service_create(name: String, config: PathBuf) -> Result<()> {
         name,
         config.display()
     );
-    let _service_config = ServiceSupervisor::load_service_from_file(&config).await?;
-    println!("Service '{}' created from config", name);
+
+    // Validate the file first, then refuse if it names a different service than the
+    // one on the command line: otherwise the persisted service is not the one the
+    // caller asked for, and every later `service status <name>` says "not found".
+    let service_config = ServiceSupervisor::load_service_from_file(&config).await?;
+    if service_config.meta.name != name {
+        bail!(
+            "config {} declares service name '{}', which does not match '{}'",
+            config.display(),
+            service_config.meta.name,
+            name
+        );
+    }
+
+    // Persist through the supervisor so the file lands in the same services directory
+    // that `service list`, `status`, `start` and `logs` all read back from. Creating
+    // without persisting was the defect: the command exited 0 and stored nothing.
+    let supervisor = get_supervisor().await?;
+    supervisor.create_service(service_config).await?;
+    println!("Service '{}' created from {}", name, config.display());
     Ok(())
 }
 
@@ -583,21 +601,52 @@ pub async fn cmd_daemon_status(format: crate::OutputFormat) -> Result<()> {
         #[tabled(rename = "RUNNING SERVICES")]
         running_services: usize,
         #[tabled(rename = "UPTIME")]
-        uptime_secs: u64,
+        uptime_secs: String,
     }
 
+    // The one fact that can be measured is whether something answers on the daemon
+    // socket — the same handshake every `service` command uses to decide if a daemon
+    // exists. Without it there is no daemon: reporting `running: true` was the defect.
+    let (running, total_services, running_services) = if is_daemon_running().await {
+        // A reachable daemon answers `list`, so the counts are read from it rather
+        // than guessed. No daemon anywhere records a start time, so the uptime is
+        // reported as unknown (null) instead of a fabricated zero.
+        let resp = send_daemon_command(serde_json::json!({ "cmd": "list" })).await?;
+        let services = resp
+            .get("data")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let running_count = services
+            .iter()
+            .filter(|s| s.get("status").and_then(|v| v.as_str()) == Some("Running"))
+            .count();
+        (true, services.len(), running_count)
+    } else {
+        (false, 0, 0)
+    };
+
     let status = DaemonStatusRow {
-        running: true,
-        total_services: 0,
-        running_services: 0,
-        uptime_secs: 0,
+        running,
+        total_services,
+        running_services,
+        // No daemon in this tree records a start time, so an uptime cannot be measured;
+        // "unknown" is the honest value, not a fabricated zero.
+        uptime_secs: "unknown".to_string(),
     };
 
     match format {
         crate::OutputFormat::Table => output_table(&[status]),
         crate::OutputFormat::Json => output_json(&status)?,
         crate::OutputFormat::Yaml => output_yaml(&status)?,
-        crate::OutputFormat::Text => println!("Daemon running: true"),
+        crate::OutputFormat::Text => println!("Daemon running: {}", running),
+    }
+
+    if !running {
+        bail!(
+            "daemon is not running: nothing is listening on {}",
+            daemon_socket().display()
+        );
     }
     Ok(())
 }
