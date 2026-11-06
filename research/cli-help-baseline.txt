@@ -2366,6 +2366,7 @@ Arguments:
   <CONTAINER>  Container name
 
 Options:
+  -s, --signal <SIGNAL>              Signal to deliver: a name (STOP, TERM, QUIT, KILL, ...) or a number. Naming one delivers exactly it, once, and never escalates
   -r, --rootfs <ROOTFS>              Use PATH as guest root filesystem
   -b, --bind <HOST_PATH:GUEST_PATH>  Bind mount host path into guest (repeatable)
   -w, --pwd <PWD>                    Set initial working directory
