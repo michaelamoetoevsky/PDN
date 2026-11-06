@@ -26,3 +26,7 @@ tempfile = "3.0"
 # `tests/argv_facts.rs` drives the real async `execute()` path to capture the
 # argv. Integration tests only see dev-dependencies, so tokio is repeated here.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# `tests/seccomp_filter.rs` installs the filter in a forked child and probes raw
+# syscalls, so it needs `libc` directly (a normal dependency is not visible to
+# integration tests).
+libc = "0.2"

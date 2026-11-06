@@ -101,10 +101,11 @@ pub use structured_logging::{
     StructuredLoggingConfig,
 };
 pub use supervisor::{
-    CircuitBreaker, HealthCheckConfig as SupervisorHealthCheckConfig, HealthStatus,
-    LogRotationConfig, ProcessConfig, ResourceLimits, RestartCondition, RestartPolicy,
-    ServiceConfig, ServiceMeta, ServiceState, ServiceStatus, ServiceSupervisor, ServiceType,
-    StdioConfig, SupervisorBuilder, SupervisorConfig, SupervisorEvent, SupervisorState,
+    writable_cgroupfs, CircuitBreaker, HealthCheckConfig as SupervisorHealthCheckConfig,
+    HealthStatus, LogRotationConfig, ProcessConfig, ResourceLimits, RestartCondition,
+    RestartPolicy, ServiceConfig, ServiceMeta, ServiceState, ServiceStatus, ServiceSupervisor,
+    ServiceType, StdioConfig, SupervisorBuilder, SupervisorConfig, SupervisorEvent,
+    SupervisorState,
 };
 pub use termux_boot::{TermuxBootConfig, TermuxBootManager};
 pub use wake_lock::{WakeLockConfig, WakeLockManager, WakeLockState, WakeLockType};

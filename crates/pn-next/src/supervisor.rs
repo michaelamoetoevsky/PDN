@@ -758,6 +758,49 @@ pub enum SupervisorEvent {
     ShutdownRequested,
 }
 
+/// Find a cgroup v2 mount this process can actually write to, if any.
+///
+/// A cgroupfs that exists but is not writable is not a mechanism: on
+/// Android/Termux `/sys/fs/cgroup` is a cgroup2 mount the app cannot write, so a
+/// `cpu.max` written under it would silently enforce nothing. This reads the
+/// mount table and then *proves* writability by creating and removing a probe
+/// directory, rather than assuming that a mount point is usable.
+pub fn writable_cgroupfs() -> Option<PathBuf> {
+    let mountinfo = fs::read_to_string("/proc/self/mountinfo").ok()?;
+    for line in mountinfo.lines() {
+        // "<id> <parent> <maj:min> <root> <mountpoint> <opts> ... - <fstype> <src> <superopts>"
+        let Some((pre, post)) = line.split_once(" - ") else {
+            continue;
+        };
+        if post.split_whitespace().next() != Some("cgroup2") {
+            continue;
+        }
+        let Some(mount_point) = pre.split_whitespace().nth(4) else {
+            continue;
+        };
+        let mount_point = PathBuf::from(mount_point.replace("\\040", " "));
+        let probe = mount_point.join(format!("pdn-writable-probe-{}", std::process::id()));
+        if fs::create_dir(&probe).is_ok() {
+            let _ = fs::remove_dir(&probe);
+            return Some(mount_point);
+        }
+    }
+    None
+}
+
+/// The named reason a service's resource limits cannot be applied here.
+///
+/// Names the operations (`cpu.max`/`memory.max`/`pids.max`) so a caller is never
+/// left believing an unenforceable limit was set (WORKLIST A20).
+fn cgroup_unavailable(name: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "cgroup limits UNAVAILABLE for service '{name}': no writable cgroup v2 mount was found \
+         (probed /proc/self/mountinfo and could not create a directory under any cgroup2 mount), \
+         so cpu.max / memory.max / pids.max cannot be applied; refusing to report a limit as \
+         enforced"
+    )
+}
+
 impl ServiceSupervisor {
     /// Create a new service supervisor
     pub fn new(config: SupervisorConfig) -> Result<Self> {
@@ -1555,6 +1598,17 @@ impl ServiceSupervisor {
             }
         }
 
+        // A cgroup limit this host cannot bind is refused by name *before*
+        // anything is spawned: writing cpu.max/memory.max into a plain directory
+        // under runtime_dir succeeds as an ordinary file write and enforces
+        // nothing (WORKLIST A20). Probe for a real cgroup v2 mount once and reuse
+        // it, so a refused start leaves no process and no directory behind.
+        let cgroup_root = if self.config.enable_cgroups {
+            Some(writable_cgroupfs().ok_or_else(|| cgroup_unavailable(name))?)
+        } else {
+            None
+        };
+
         // Execute pre-start script
         if let Some(pre_start) = &config.process.pre_start {
             info!("Running pre-start for {}", name);
@@ -1670,9 +1724,9 @@ impl ServiceSupervisor {
             }
         }
 
-        // Setup cgroup if enabled
-        if self.config.enable_cgroups {
-            self.setup_cgroup(name, pid).await?;
+        // Bind the service to the real cgroup probed above, if cgroups are on.
+        if let Some(root) = &cgroup_root {
+            self.setup_cgroup(root, name, pid).await?;
         }
 
         // Start health check task
@@ -1690,9 +1744,14 @@ impl ServiceSupervisor {
         Ok(())
     }
 
-    /// Setup cgroup for service
-    async fn setup_cgroup(&self, name: &str, pid: u32) -> Result<()> {
-        let cgroup_path = self.config.runtime_dir.join("cgroups").join(name);
+    /// Setup cgroup for service under a real cgroupfs `root`.
+    ///
+    /// `root` is a probed, writable cgroup v2 mount (see [`writable_cgroupfs`]);
+    /// it is never `runtime_dir`. A plain directory accepts `cpu.max`/`memory.max`
+    /// as ordinary files — the write succeeds and enforces nothing, which is
+    /// precisely the limit that must not be reported as applied (WORKLIST A20).
+    async fn setup_cgroup(&self, root: &Path, name: &str, pid: u32) -> Result<()> {
+        let cgroup_path = root.join("pn-next").join(name);
         fs::create_dir_all(&cgroup_path)?;
 
         // Add PID to cgroup
