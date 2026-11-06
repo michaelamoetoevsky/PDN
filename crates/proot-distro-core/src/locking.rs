@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::fs;
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Lock manager for containers
@@ -112,7 +112,44 @@ impl Drop for FileLock {
     }
 }
 
-/// Container lock for exclusive access
+/// Where the exclusive lock for a container `name` lives.
+///
+/// Under the store's own `.podnext` root, next to `containers/`, so every process
+/// that shares the store also shares the lock directory. It used to be `.pn-next`,
+/// a directory nothing else in the store used, while the install path took no lock
+/// at all: `~/.podnext/locks/` stayed empty through every race (WORKLIST A4).
+pub fn lock_path(name: &str) -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/home/user"))
+        .join(".podnext")
+        .join("locks")
+        .join(format!("{}.lock", name))
+}
+
+/// The PID recorded in a lock file, if the holder wrote one. `None` for a lock
+/// held by an older build, or one taken but not yet stamped.
+///
+/// Counting is not the same as ownership: the PID is only a hint for the refusal
+/// message and is re-read from the file each time, never trusted to decide
+/// anything on its own.
+fn holder_pid(path: &Path) -> Option<u32> {
+    fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+/// `" (holder PID 123)"`, or empty when the holder did not record one.
+fn holder_suffix(path: &Path) -> String {
+    match holder_pid(path) {
+        Some(pid) => format!(" (holder PID {pid})"),
+        None => String::new(),
+    }
+}
+
+/// Container lock for exclusive access.
+///
+/// flock is advisory and descriptor-scoped: the lock is held while the
+/// [`std::fs::File`] returned by `open` is alive, so the descriptor is kept for
+/// the guard's lifetime. The holder writes its PID into the lock file so a
+/// refused contender can name it (WORKLIST B4).
 pub struct ContainerLock {
     lock_file: PathBuf,
     file: Option<fs::File>,
@@ -120,15 +157,16 @@ pub struct ContainerLock {
 }
 
 impl ContainerLock {
+    /// The lock for `name` at its default location ([`lock_path`]).
     pub fn new(name: &str, exclusive: bool) -> Self {
-        let lock_file = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/home/user"))
-            .join(".pn-next")
-            .join("locks")
-            .join(format!("{}.lock", name));
+        Self::at(&lock_path(name), exclusive)
+    }
 
+    /// A lock on an explicit path, for callers working outside the default store
+    /// (tests, an alternate `$HOME`).
+    pub fn at(lock_file: &Path, exclusive: bool) -> Self {
         Self {
-            lock_file,
+            lock_file: lock_file.to_path_buf(),
             file: None,
             exclusive,
         }
@@ -137,7 +175,9 @@ impl ContainerLock {
     pub fn acquire(&mut self) -> Result<()> {
         use std::fs::OpenOptions;
 
-        fs::create_dir_all(self.lock_file.parent().unwrap())?;
+        if let Some(parent) = self.lock_file.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         let file = OpenOptions::new()
             .create(true)
@@ -161,10 +201,16 @@ impl ContainerLock {
 
         if result != 0 {
             return Err(anyhow::anyhow!(
-                "Failed to acquire lock: {} is held by another process",
-                self.lock_file.display()
+                "Failed to acquire lock: {} is held by another process{}",
+                self.lock_file.display(),
+                holder_suffix(&self.lock_file)
             ));
         }
+
+        // Record the holder, so a contender refused on the next line can say who
+        // it was refused by. Best-effort: a lock that could not be stamped still
+        // excludes, it just names no one.
+        let _ = fs::write(&self.lock_file, format!("{}", std::process::id()));
 
         self.file = Some(file);
         Ok(())

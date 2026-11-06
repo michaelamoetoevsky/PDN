@@ -105,6 +105,7 @@ fn container_from(info: ContainerInfo) -> Container {
         status: info.status,
         pid: None,
         rootfs_path: info.rootfs_path,
+        corrupt: info.corrupt,
     }
 }
 
@@ -213,6 +214,7 @@ mod tests {
             status: crate::container::ContainerStatus::Stopped,
             pid: None,
             rootfs_path: dir.join("demo/rootfs"),
+            corrupt: None,
         };
         store(&dir, &cache, std::slice::from_ref(&scanned));
 

@@ -69,7 +69,7 @@ impl ContainerManager {
             }
         }
 
-        let loaded = scan_containers(&containers_dir)?;
+        let loaded = scan_store(&containers_dir)?;
         for c in &loaded {
             containers.insert(c.name.clone(), c.clone());
         }
@@ -480,6 +480,10 @@ pub struct Container {
     pub status: ContainerStatus,
     pub pid: Option<u32>,
     pub rootfs_path: PathBuf,
+    /// Set when the directory is present but its `metadata.json` is not a regular
+    /// file that can be read; the value names the offending file type (WORKLIST A1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrupt: Option<String>,
 }
 
 impl Container {
@@ -499,6 +503,7 @@ impl Container {
             status: ContainerStatus::Stopped,
             pid: None,
             rootfs_path,
+            corrupt: None,
         })
     }
 }
@@ -512,6 +517,7 @@ impl Default for Container {
             status: ContainerStatus::Stopped,
             pid: None,
             rootfs_path: PathBuf::new(),
+            corrupt: None,
         }
     }
 }
@@ -526,6 +532,7 @@ impl Container {
             status: self.status,
             created_at: self.created_at,
             rootfs_path: self.rootfs_path.clone(),
+            corrupt: self.corrupt.clone(),
         }
     }
 }
@@ -540,6 +547,9 @@ pub struct ContainerInfo {
     pub status: ContainerStatus,
     pub created_at: DateTime<Utc>,
     pub rootfs_path: PathBuf,
+    /// See [`Container::corrupt`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrupt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -792,7 +802,7 @@ mod tests {
 /// Extracted from `ContainerManager::load_containers` so the index cache can wrap
 /// it: this is the uncached algorithm, and the cache must return exactly what this
 /// returns.
-fn scan_containers(containers_dir: &Path) -> Result<Vec<Container>> {
+pub fn scan_store(containers_dir: &Path) -> Result<Vec<Container>> {
     let mut out = Vec::new();
 
     for entry in std::fs::read_dir(containers_dir)? {
@@ -811,29 +821,47 @@ fn scan_containers(containers_dir: &Path) -> Result<Vec<Container>> {
             continue;
         }
 
-        let metadata_path = entry.path().join("metadata.json");
         let mut meta_distro = None;
         let mut meta_version = None;
         let mut created_at = None;
+        let mut corrupt = None;
 
-        if metadata_path.exists() {
-            if let Ok(metadata_str) = std::fs::read_to_string(&metadata_path) {
-                if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
-                    meta_distro = metadata
-                        .get("image")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    meta_version = metadata
-                        .get("tag")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    if let Some(ts_str) = metadata.get("created_at").and_then(|v| v.as_str()) {
-                        if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
-                            created_at = Some(dt.with_timezone(&Utc));
+        // Classify before reading: a `metadata.json` that is not a regular file
+        // is reported, never opened, so it can never block this scan (WORKLIST A1).
+        let (mut metadata_file, kind) = open_metadata(&entry.path());
+        match kind {
+            MetadataKind::Regular => {
+                let mut metadata_str = String::new();
+                if let Some(file) = metadata_file.as_mut() {
+                    if std::io::Read::read_to_string(file, &mut metadata_str).is_ok() {
+                        if let Ok(metadata) =
+                            serde_json::from_str::<serde_json::Value>(&metadata_str)
+                        {
+                            meta_distro = metadata
+                                .get("image")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            meta_version = metadata
+                                .get("tag")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            if let Some(ts_str) =
+                                metadata.get("created_at").and_then(|v| v.as_str())
+                            {
+                                if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
+                                    created_at = Some(dt.with_timezone(&Utc));
+                                }
+                            }
                         }
                     }
                 }
             }
+            MetadataKind::Hostile(kind) => {
+                corrupt = Some(format!(
+                    "metadata.json is not a regular file (found: {kind})"
+                ));
+            }
+            MetadataKind::Absent => {}
         }
 
         // Inspect /etc/os-release in rootfs so DISTRO matches the real Linux distribution
@@ -864,11 +892,92 @@ fn scan_containers(containers_dir: &Path) -> Result<Vec<Container>> {
                     container.created_at = DateTime::<Utc>::from(ctime);
                 }
             }
+            // A corrupt entry is still a container in the store: it is listed
+            // (so `remove` can find and clear it) but flagged, never hidden.
+            if corrupt.is_some() {
+                container.status = ContainerStatus::Error;
+            }
+            container.corrupt = corrupt;
             out.push(container);
         }
     }
 
     Ok(out)
+}
+
+/// The prefix the install path gives a staging directory
+/// (`native/image.rs`: `format!(".tmp-install-{name}-{uuid}")`). A staging
+/// directory is a container being assembled, not a container: it must never be
+/// listed or `remove`d as one (WORKLIST A3a).
+pub const STAGING_PREFIX: &str = ".tmp-install-";
+
+/// The kind of thing sitting at a container's `metadata.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataKind {
+    /// A regular file: safe to open and read.
+    Regular,
+    /// Not a regular file; the payload names the offending type (`"fifo"`,
+    /// `"symlink"`, `"directory"`, ...). Never opened for reading, so it cannot
+    /// block the caller (WORKLIST A1).
+    Hostile(&'static str),
+    /// Nothing there: a legacy container, which is allowed.
+    Absent,
+}
+
+/// Classify `<dir>/metadata.json` without ever blocking on it.
+///
+/// A FIFO `metadata.json` used to stall `list`/`remove` forever: `read_to_string`
+/// blocks in `openat` waiting for a writer, and that wait outlived its caller
+/// (two `podnext list` orphans were still alive at PPID 1 after >2700 s). The
+/// file is opened with `O_NONBLOCK | O_NOFOLLOW` and the descriptor is then
+/// `fstat`ed, so any non-regular file is named and skipped without a read.
+pub fn metadata_kind(dir: &Path) -> MetadataKind {
+    open_metadata(dir).1
+}
+
+/// Open `<dir>/metadata.json` if — and only if — it is a regular file, returning
+/// the open descriptor and its classified kind.
+fn open_metadata(dir: &Path) -> (Option<std::fs::File>, MetadataKind) {
+    use std::os::unix::ffi::OsStrExt;
+    let path = dir.join("metadata.json");
+    let Ok(cpath) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return (None, MetadataKind::Absent);
+    };
+    let fd = unsafe {
+        libc::open(
+            cpath.as_ptr(),
+            libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::ENOENT) | Some(libc::ENOTDIR) => (None, MetadataKind::Absent),
+            // `O_NOFOLLOW` rejects a symlink on the final component with ELOOP.
+            Some(libc::ELOOP) => (None, MetadataKind::Hostile("symlink")),
+            _ => (None, MetadataKind::Hostile("unreadable")),
+        };
+    }
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd, &mut st) } != 0 {
+        unsafe { libc::close(fd) };
+        return (None, MetadataKind::Hostile("unreadable"));
+    }
+    let kind = match st.st_mode & libc::S_IFMT {
+        libc::S_IFREG => MetadataKind::Regular,
+        libc::S_IFIFO => MetadataKind::Hostile("fifo"),
+        libc::S_IFDIR => MetadataKind::Hostile("directory"),
+        libc::S_IFSOCK => MetadataKind::Hostile("socket"),
+        libc::S_IFCHR => MetadataKind::Hostile("character device"),
+        libc::S_IFBLK => MetadataKind::Hostile("block device"),
+        libc::S_IFLNK => MetadataKind::Hostile("symlink"),
+        _ => MetadataKind::Hostile("special file"),
+    };
+    if kind != MetadataKind::Regular {
+        unsafe { libc::close(fd) };
+        return (None, kind);
+    }
+    use std::os::unix::io::FromRawFd;
+    (Some(unsafe { std::fs::File::from_raw_fd(fd) }), kind)
 }
 
 /// Whether a directory in the container store describes a container.
@@ -884,13 +993,25 @@ fn scan_containers(containers_dir: &Path) -> Result<Vec<Container>> {
 /// A successful build records `metadata.json`, so that file is the marker. The
 /// old probe is kept as a fallback for containers that predate it or were placed
 /// there by other means.
+///
+/// Two exclusions: a staging directory ([`STAGING_PREFIX`]) is never a container,
+/// and a `metadata.json` that exists but is not a regular file still marks the
+/// directory — as a corrupt container to be reported and cleared, not read.
 pub fn is_container_dir(dir: &std::path::Path) -> bool {
+    if dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with(STAGING_PREFIX))
+    {
+        return false;
+    }
     let rootfs = dir.join("rootfs");
     if !rootfs.is_dir() {
         return false;
     }
-    if dir.join("metadata.json").is_file() {
-        return true;
+    match metadata_kind(dir) {
+        MetadataKind::Regular | MetadataKind::Hostile(_) => return true,
+        MetadataKind::Absent => {}
     }
     rootfs.join("etc").exists() || rootfs.join("bin").exists() || rootfs.join("usr").exists()
 }
