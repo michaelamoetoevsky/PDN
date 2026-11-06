@@ -1,46 +1,69 @@
 //! Install/remove lifecycle (WORKLIST A3b, A4b, B12).
 //!
-//! Four measured properties of the install path:
+//! Five measured properties of the install path:
 //!
-//! (a) an install killed with `SIGKILL` leaves a staging directory that the next
-//!     install of the same name reclaims, so no `.tmp-install-*` residue survives;
+//! (a) staging residue that no process owns is reclaimed by the next install of
+//!     the same name, which then commits a whole container;
 //! (b) `remove --force` clears staging residue too, not only the committed
-//!     container;
-//! (c) a killed install leaves no orphan `podnext` process and no half-written
-//!     state - counted before and after, with the process census taken by program
-//!     identity (`ps -eo comm=`), never a command-line grep;
+//!     container - including for a name that was never installed;
+//! (c) an install that was interrupted leaves no orphan `podnext` process, no
+//!     torn `metadata.json` and no residue the next install cannot clear; the
+//!     census is by program identity (`ps -eo comm=`), never a command-line grep;
 //! (d) a concurrent same-name install can never destroy a committed container:
-//!     exactly one install wins and the survivor is a whole rootfs.
+//!     exactly one install wins and the survivor is a whole rootfs;
+//! (e) a staging tree whose sidecar lock another process holds is live and
+//!     survives a reaper running in a third process; once the lock is released the
+//!     same tree is residue and is reaped.
+//!
+//! Residue is PLANTED, never raced. The old fixture slept a fixed `KILL_AFTER`,
+//! killed the install and then asserted that the kill had left a staging
+//! directory to reclaim. That window is narrow in BOTH directions: measured on
+//! this device, a kill 3 s in leaves ZERO residue (the staging tree does not exist
+//! yet - the first seconds go to the manifest), and on a CI runner the whole
+//! install finishes before the kill (runs 42187850363 and ac62ada: `the killed
+//! --force reinstall must leave a staging residue to reclaim: []` with
+//! `status=ExitStatus(unix_wait_status(0))`, then `this host completed it faster
+//! than the fixture's window`).
+//!
+//! So the tests now assert the reaper's own contract instead of a race
+//! (`crates/podnext/src/native/image.rs:170-256`): a `.tmp-install-*` directory is
+//! residue when its sidecar `<staging>.lock` is absent or can be `flock`ed by the
+//! observer, and live when another process holds that lock. The fixture creates
+//! that state directly, so every assertion is the same on every host.
+//!
+//! The one remaining SIGKILL test (c) is driven by an observed event - the staging
+//! tree appearing - never a clock, PRINTS which branch it took, and asserts only
+//! the post-condition that holds whether or not the kill landed mid-flight. No
+//! test requires the kill to have produced residue.
 //!
 //! Every test runs against a private store (`HOME`/`PN_TEST_ROOT` point at a
 //! scratch directory), so the operator's real `~/.podnext` is never touched; that
 //! the real store is unchanged is asserted at the end of each test.
 //!
-//! All four share one process, so a global lock serialises them: the process
+//! All five share one process, so a global lock serialises them: the process
 //! census in (c) and the store scan in (d) are meaningless if another test in
 //! this file is mid-install.
 
 use std::fs;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
-/// A small, reliably published image ... with a window wide enough to interrupt.
-///
-/// This was `alpine:latest` (~3 MB) and the tests raced a 3-second kill against it. On a CI runner the
-/// install finished BEFORE the kill, so the interruption never happened and five tests failed on their own
-/// precondition - `the killed --force reinstall must leave a staging residue to reclaim: []`, with the child
-/// having exited 0 (run 42187850363). The window has to be part of the fixture, not an accident of how slow
-/// the host is: ~30 MB of layers keeps the staging tree observable on both a phone and a runner, and the
-/// residue the tests reclaim is then genuinely produced by an interrupted install.
+/// The image every real install in this file fetches.
 const IMAGE: &str = "debian:stable-slim";
 
-/// Long enough that the staging tree exists and layers are still downloading
-/// (the measured evidence kills at 2-5 s and always finds the residue).
-const KILL_AFTER: Duration = Duration::from_secs(3);
+/// How long the interruption fixture in (c) waits for a staging tree to appear
+/// before it concludes the host is too fast to interrupt.
+///
+/// This is NOT a kill delay: the kill fires on the observed event (the staging
+/// directory appearing). The window is only the fallback for a host that commits
+/// the whole install before the tree is ever seen.
+const STAGING_WINDOW: Duration = Duration::from_secs(3);
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
@@ -116,41 +139,120 @@ fn spawn_install(sb: &Sandbox, name: &str, capture: bool) -> Child {
     c.spawn().expect("spawn podnext install")
 }
 
-/// A `--force` reinstall, which is the only install that stages while a
-/// committed container of the same name is on disk.
-fn spawn_force_install(sb: &Sandbox, name: &str) -> Child {
-    let mut c = sb.cmd();
-    c.arg("install")
-        .arg(IMAGE)
-        .arg("--name")
-        .arg(name)
-        .arg("--force")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    c.spawn().expect("spawn podnext install --force")
-}
-
 fn force_remove(sb: &Sandbox, name: &str) -> Output {
     let mut c = sb.cmd();
     c.arg("remove").arg(name).arg("--force");
     c.output().expect("podnext remove")
 }
 
-/// `Child::kill` is `SIGKILL` on Unix: exactly the interruption the WORKLIST
-/// measured (exit 137), not a graceful shutdown.
-fn kill_after(mut child: Child, after: Duration) -> std::process::ExitStatus {
-    std::thread::sleep(after);
-    // A host fast enough to finish the install inside the window leaves nothing to interrupt, and the next
-    // assertion ("must leave a staging residue to reclaim") then reports a phantom. Diagnose it here instead:
-    // the fixture is wrong for that host, the product is not.
-    if let Ok(Some(status)) = child.try_wait() {
-        panic!(
-            "the install exited ({status}) before the {after:?} kill: this host completed it faster than the \
-             fixture's window. Widen the fixture (IMAGE in this file) - do not read the next assertion as a defect"
-        );
+/// The sidecar lock path for a staging directory: `<staging dir>.lock`, exactly as
+/// `native::image::staging_lock_path` builds it.
+fn staging_lock_path(dir: &Path) -> PathBuf {
+    let mut name = dir.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+/// A unique-enough `<uuid>` for a planted staging directory, without pulling in a
+/// dependency the test does not already have.
+fn unique_suffix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{nanos}", std::process::id())
+}
+
+/// Plant the residue state the reaper's contract describes
+/// (`native::image::reap_stale_staging`): a `.tmp-install-<name>-<uuid>` directory
+/// whose sidecar `.lock` file exists but is held by NO process, so a reaper that
+/// takes the lock finds it free.
+///
+/// Racing a SIGKILL cannot produce this reliably - measured on this device a 3 s
+/// kill leaves zero residue, and a fast runner finishes the install first - so the
+/// fixture plants it and the assertion becomes host-independent.
+fn plant_residue(containers: &Path, name: &str) -> PathBuf {
+    fs::create_dir_all(containers).expect("containers dir");
+    let dir = containers.join(format!(".tmp-install-{}-{}", name, unique_suffix()));
+    let rootfs = dir.join("rootfs");
+    fs::create_dir_all(&rootfs).expect("planted rootfs");
+    fs::write(rootfs.join("half-written"), b"partial").expect("planted half-written file");
+    fs::write(staging_lock_path(&dir), b"").expect("planted sidecar lock");
+    dir
+}
+
+/// Which branch the interruption fixture in (c) took.
+///
+/// Printed so a CI log names the case that ran, and matched on so the test never
+/// silently converts "could not interrupt" into a pass.
+#[derive(Debug, Clone, Copy)]
+enum Interrupt {
+    /// The staging tree was observed and the install was `SIGKILL`ed mid-flight.
+    Killed(std::process::ExitStatus),
+    /// The install exited before its staging tree could be observed, so there was
+    /// nothing to interrupt.
+    NotInterrupted(std::process::ExitStatus),
+}
+
+impl Interrupt {
+    fn status(&self) -> std::process::ExitStatus {
+        match self {
+            Interrupt::Killed(s) | Interrupt::NotInterrupted(s) => s.clone(),
+        }
     }
-    let _ = child.kill();
-    child.wait().expect("wait for killed install")
+
+    /// True when the `SIGKILL` really landed mid-install.
+    fn was_killed(&self) -> bool {
+        matches!(self, Interrupt::Killed(_))
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Interrupt::Killed(_) => "INTERRUPTED (SIGKILL landed mid-install)",
+            Interrupt::NotInterrupted(_) => {
+                "NOT INTERRUPTED (staging tree never observed in the fixture window; \
+                 the host committed the install first)"
+            }
+        }
+    }
+}
+
+/// Interrupt an install on the observed event - its staging tree appearing - and
+/// never on a clock, so the kill cannot land before the tree exists (measured: a
+/// fixed 3 s delay does exactly that on this device) nor after the install has
+/// finished (a fast runner).
+///
+/// A host too fast to ever show the tree has nothing to interrupt; that is
+/// reported as [`Interrupt::NotInterrupted`], not as a failure.
+fn interrupt_on_staging(child: Child, containers: &Path, window: Duration) -> Interrupt {
+    let mut child = child;
+    let deadline = Instant::now() + window;
+    loop {
+        // The install committed and exited before its tree was ever observed.
+        if let Ok(Some(status)) = child.try_wait() {
+            return Interrupt::NotInterrupted(status);
+        }
+        if !staging_dirs(containers).is_empty() {
+            let _ = child.kill();
+            let status = child.wait().expect("wait for killed install");
+            // `kill` can lose a race it did not run: if the process exited on its
+            // own in the microseconds after `try_wait`, no `SIGKILL` landed (the
+            // status carries no signal) and there was nothing to interrupt.
+            return match status.signal() {
+                Some(_) => Interrupt::Killed(status),
+                None => Interrupt::NotInterrupted(status),
+            };
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            // No tree seen within the window: let the install finish and report the
+            // branch instead of failing on a host-dependent precondition.
+            return Interrupt::NotInterrupted(
+                child.wait().expect("wait for un-interrupted install"),
+            );
+        }
+        std::thread::sleep((deadline - now).min(Duration::from_millis(5)));
+    }
 }
 
 /// Staging directories (the racing object) this path leaves under the store.
@@ -167,7 +269,8 @@ fn staging_dirs(containers: &Path) -> Vec<String> {
     v
 }
 
-/// Sidecar lock files whose staging tree is gone: the other half of the residue.
+/// Sidecar staging lock files (`<staging dir>.lock`) still on disk: the other half
+/// of the residue, and the signal the reaper reads for liveness.
 fn stray_staging_locks(containers: &Path) -> Vec<String> {
     let mut v: Vec<String> = fs::read_dir(containers)
         .into_iter()
@@ -228,20 +331,6 @@ fn assert_no_torn_metadata(containers: &Path) {
     }
 }
 
-/// Poll until `f` is true or `deadline` passes.
-fn wait_until(deadline: Duration, mut f: impl FnMut() -> bool) -> bool {
-    let end = std::time::Instant::now() + deadline;
-    loop {
-        if f() {
-            return true;
-        }
-        if std::time::Instant::now() >= end {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-}
-
 /// The operator's real store must be byte-for-byte the set it started with.
 fn assert_real_store_intact() {
     let home = std::env::var("HOME").expect("HOME for the real store");
@@ -273,89 +362,115 @@ fn assert_real_store_intact() {
     );
 }
 
-/// (a) SIGKILL then a fresh install of the same name: residue count before and
-/// after, and it must reach zero.
+/// (a) The reaper reclaims a staging residue that no process owns: the next
+/// install of the same name deletes the `.tmp-install-*` tree AND its sidecar
+/// `.lock`, then commits a whole container.
 #[test]
-fn killed_install_residue_is_reclaimed_by_the_next_install() {
+fn staging_residue_is_reclaimed_by_the_next_install() {
     let _guard = serial();
     let sb = Sandbox::new();
     let containers = sb.containers();
 
-    let killed = kill_after(spawn_install(&sb, "reapme", false), KILL_AFTER);
-    let before = staging_dirs(&containers);
+    let planted = plant_residue(&containers, "reapme");
     println!(
-        "(a) killed install status={killed:?}; staging dirs after the kill: {} {before:?}",
-        before.len()
+        "(a) planted residue: {} (sidecar lock present, held by nobody)",
+        planted.file_name().unwrap().to_string_lossy()
     );
-    assert_eq!(
-        before.len(),
-        1,
-        "a SIGKILLed install must leave exactly one staging directory: {before:?}"
+    assert!(
+        planted.is_dir(),
+        "the fixture must plant a residue directory"
     );
+    assert_eq!(staging_dirs(&containers).len(), 1);
 
     let out = install(&sb, "reapme", &[]);
     let after = staging_dirs(&containers);
     println!(
-        "(a) fresh install rc={:?}; staging dirs after it: {} {after:?}",
+        "(a) install rc={:?}; staging dirs after it: {} {after:?}; sidecars left: {}",
         out.status.code(),
-        after.len()
+        after.len(),
+        stray_staging_locks(&containers).len()
     );
     assert!(
         out.status.success(),
-        "the fresh install must succeed: {}",
+        "the install must succeed: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !planted.exists(),
+        "the reaper must delete the planted residue directory"
+    );
+    assert!(
+        !staging_lock_path(&planted).exists(),
+        "the reaper must delete the residue's sidecar lock too"
     );
     assert_eq!(
         after.len(),
         0,
-        "the reaper must delete the residue: {after:?}"
+        "no staging residue may survive the install: {after:?}"
     );
     assert_eq!(stray_staging_locks(&containers).len(), 0);
     assert!(
         containers.join("reapme").join("rootfs").is_dir(),
-        "the fresh install must be committed"
+        "the install must commit a whole container"
     );
 
     let _ = fs::remove_dir_all(containers.join("reapme"));
     assert_real_store_intact();
 }
 
-/// (b) `remove --force` must clear staging residue as well as the container.
+/// (b) `remove --force` clears staging residue as well as the container, and it
+/// reaps even for a name that was never installed (the reaper runs before the
+/// existence check, so the residue is cleared and the command still reports
+/// "not found").
 #[test]
 fn remove_force_leaves_zero_staging_residue() {
     let _guard = serial();
     let sb = Sandbox::new();
     let containers = sb.containers();
 
+    // (1) Residue for a name with no committed container.
+    let ghost = plant_residue(&containers, "ghostname");
+    let out = force_remove(&sb, "ghostname");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    println!(
+        "(b) remove --force, never-installed name: rc={:?}; residue gone: {}; stderr: {}",
+        out.status.code(),
+        !ghost.exists(),
+        stderr.trim()
+    );
+    assert!(
+        !ghost.exists(),
+        "remove --force must reap residue even when no container of that name exists"
+    );
+    assert!(
+        !staging_lock_path(&ghost).exists(),
+        "the sidecar lock must go with the reaped residue"
+    );
+    assert!(
+        staging_dirs(&containers).is_empty(),
+        "no staging residue may survive remove --force"
+    );
+    assert!(
+        !out.status.success(),
+        "remove of a never-installed name must still report that it was not found"
+    );
+    assert!(
+        stderr.contains("not found"),
+        "remove --force must still say the container was not found: {stderr}"
+    );
+
+    // (2) Residue next to a committed container of the same name: both go.
     let ok = install(&sb, "removeme", &[]);
     assert!(
         ok.status.success(),
         "setup install must succeed: {}",
         String::from_utf8_lossy(&ok.stderr)
     );
-
-    // A forced reinstall killed mid-flight: the container is still committed, and
-    // its staging tree is now residue.
-    let killed = kill_after(spawn_force_install(&sb, "removeme"), KILL_AFTER);
-    let residue = staging_dirs(&containers);
-    println!(
-        "(b) killed --force reinstall status={killed:?}; residue before remove: {} {residue:?}",
-        residue.len()
-    );
-    assert_eq!(
-        residue.len(),
-        1,
-        "the killed --force reinstall must leave a staging residue to reclaim: {residue:?}"
-    );
-    assert!(
-        containers.join("removeme").join("rootfs").is_dir(),
-        "the committed container must survive the killed reinstall"
-    );
-
+    let planted = plant_residue(&containers, "removeme");
     let out = force_remove(&sb, "removeme");
     let after = staging_dirs(&containers);
     println!(
-        "(b) remove --force rc={:?}; residue after remove: {} {after:?}; container gone: {}",
+        "(b) remove --force, committed container: rc={:?}; residue after: {} {after:?}; container gone: {}",
         out.status.code(),
         after.len(),
         !containers.join("removeme").exists()
@@ -365,6 +480,11 @@ fn remove_force_leaves_zero_staging_residue() {
         "remove --force must succeed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    assert!(
+        !planted.exists(),
+        "remove must clear the planted residue, not only the container"
+    );
+    assert!(!staging_lock_path(&planted).exists());
     assert_eq!(after.len(), 0, "remove must clear the residue: {after:?}");
     assert_eq!(stray_staging_locks(&containers).len(), 0);
     assert!(
@@ -375,8 +495,13 @@ fn remove_force_leaves_zero_staging_residue() {
     assert_real_store_intact();
 }
 
-/// (c) A killed install leaves no orphan `podnext` process and no half-written
-/// state; both counted before and after.
+/// (c) An interrupted install leaves no orphan `podnext` process, no torn
+/// `metadata.json`, and no residue the next install cannot clear - the invariant
+/// that holds whether or not the kill landed mid-flight.
+///
+/// The kill is driven by the observed event (the staging tree appearing), never a
+/// clock, and the test PRINTS which branch it took. It never asserts that the kill
+/// produced residue: measured on this device a fixed 3 s kill leaves none.
 #[test]
 fn killed_install_leaves_no_orphan_and_no_half_written_state() {
     let _guard = serial();
@@ -384,12 +509,24 @@ fn killed_install_leaves_no_orphan_and_no_half_written_state() {
     let containers = sb.containers();
 
     let before = podnext_process_count();
-    let killed = kill_after(spawn_install(&sb, "killme", false), KILL_AFTER);
+    let attempt = interrupt_on_staging(
+        spawn_install(&sb, "killme", false),
+        &containers,
+        STAGING_WINDOW,
+    );
     let after = podnext_process_count();
-    println!("(c) killed status={killed:?}; podnext processes before={before} after={after}");
+    println!(
+        "(c) branch: {}; status={:?}; podnext before={before} after={after}; \
+         residue left by the attempt: {:?}",
+        attempt.label(),
+        attempt.status(),
+        staging_dirs(&containers)
+    );
+    // Branch-independent: interrupted (SIGKILLed and reaped) and not-interrupted
+    // (exited on its own) both leave no `podnext` behind.
     assert_eq!(
         after, before,
-        "a killed install must leave no orphan podnext process (before={before} after={after})"
+        "an install must leave no orphan podnext process (before={before} after={after})"
     );
 
     // No torn committed state: nothing under the store may be a half-written
@@ -411,36 +548,30 @@ fn killed_install_leaves_no_orphan_and_no_half_written_state() {
         "half-written state left behind: {tmp_writes:?}"
     );
 
-    // The killed run left a half-written staging tree. A fresh install of the same
-    // name must be able to reclaim it and commit a whole container: that is the
-    // "no half-written state" half of the property, counted before and after.
-    let residue = staging_dirs(&containers);
-    println!(
-        "(c) half-written staging trees left by the kill: {} {residue:?}",
-        residue.len()
-    );
-    assert_eq!(
-        residue.len(),
-        1,
-        "the kill must leave exactly the half-written staging tree: {residue:?}"
-    );
-
-    let ok = install(&sb, "killme", &[]);
-    assert!(
-        ok.status.success(),
-        "the fresh install must succeed: {}",
-        String::from_utf8_lossy(&ok.stderr)
-    );
+    // The store must end clean and the install path must still work, whichever
+    // branch ran. A plain install reclaims any residue when nothing was committed;
+    // when the install already committed, the equivalent install is `--force`.
+    let extra: &[&str] = if attempt.was_killed() {
+        &[]
+    } else {
+        &["--force"]
+    };
+    let ok = install(&sb, "killme", extra);
     let after_residue = staging_dirs(&containers);
     println!(
-        "(c) fresh install rc={:?}; staging residue after it: {} {after_residue:?}",
+        "(c) next install rc={:?}; staging residue after it: {} {after_residue:?}",
         ok.status.code(),
         after_residue.len()
+    );
+    assert!(
+        ok.status.success(),
+        "the next install must succeed: {}",
+        String::from_utf8_lossy(&ok.stderr)
     );
     assert_eq!(
         after_residue.len(),
         0,
-        "the half-written state must be reclaimed: {after_residue:?}"
+        "no staging residue may survive the next install: {after_residue:?}"
     );
     assert_eq!(stray_staging_locks(&containers).len(), 0);
     assert!(containers.join("killme").join("rootfs").is_dir());
@@ -451,6 +582,11 @@ fn killed_install_leaves_no_orphan_and_no_half_written_state() {
 
 /// (d) Two concurrent same-name installs: exactly one wins, and the survivor is a
 /// whole rootfs (file count equal to a solo install of the same image).
+///
+/// The claim is branch-independent: the loser is refused by the container-name
+/// lock when the installs overlap and because the container is already committed
+/// when they do not (both measured). The fixture prints which it saw instead of
+/// assuming the two overlapped.
 #[test]
 fn concurrent_same_name_install_never_destroys_the_survivor() {
     let _guard = serial();
@@ -480,8 +616,21 @@ fn concurrent_same_name_install_never_destroys_the_survivor() {
         .iter()
         .filter(|o| o.status.success())
         .count();
+    let loser = if out_a.status.success() {
+        &out_b
+    } else {
+        &out_a
+    };
+    let loser_err = String::from_utf8_lossy(&loser.stderr);
+    let branch = if loser_err.contains("acquire lock") {
+        "OVERLAPPING - the loser was refused by the container-name lock"
+    } else if loser_err.contains("already exists") {
+        "NOT OVERLAPPING - the loser was refused because the container was already committed"
+    } else {
+        "UNRECOGNISED refusal"
+    };
     println!(
-        "(d) race rc: {:?} / {:?}; successes={successes}",
+        "(d) race rc: {:?} / {:?}; successes={successes}; branch: {branch}",
         out_a.status.code(),
         out_b.status.code()
     );
@@ -511,65 +660,92 @@ fn concurrent_same_name_install_never_destroys_the_survivor() {
     assert_real_store_intact();
 }
 
-/// The reaper must never take a staging tree a live install owns, or a concurrent
-/// install would be corrupted the moment another install starts.
+/// (e) A staging tree whose sidecar lock another process HOLDS is live and must
+/// survive a reaper running in yet another process; once the lock is released the
+/// same tree is residue and must be reaped.
+///
+/// `flock` excludes across processes, not across descriptors inside one process,
+/// so the owner here is this test process and the reaper is the real binary
+/// (`install` / `remove --force`) - exactly the production arrangement. Planting
+/// the tree and holding the lock makes the property deterministic on every host.
 #[test]
 fn a_live_installs_staging_tree_survives_another_installs_reaper() {
     let _guard = serial();
     let sb = Sandbox::new();
     let containers = sb.containers();
 
-    let live = spawn_install(&sb, "live", true);
-    // The sidecar lock is taken before the tree is created, so once the tree
-    // exists its owner is holding the lock.
-    assert!(
-        wait_until(Duration::from_secs(30), || staging_dirs(&containers).len()
-            == 1),
-        "the live install never created its staging tree"
-    );
-    // A file that only this test writes: it survives only if the staging tree is
-    // the very same directory, so its absence proves the tree was reaped (and
-    // recreated by the install itself).
-    let live_staging = containers.join(staging_dirs(&containers)[0].clone());
-    let sentinel = live_staging.join("pdn-liveness-sentinel");
+    let live = plant_residue(&containers, "live");
+    let lock_path = staging_lock_path(&live);
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("open the live tree's sidecar lock");
+    let rc = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    assert_eq!(rc, 0, "the test could not take the sidecar lock");
+    let sentinel = live.join("pdn-liveness-sentinel");
     fs::write(&sentinel, b"live").expect("write sentinel");
+    println!(
+        "(e) live tree {} with its sidecar lock held by test process {}",
+        live.file_name().unwrap().to_string_lossy(),
+        std::process::id()
+    );
 
-    // A second, unrelated install runs its reaper at start while the first is
-    // still downloading.
-    let other = spawn_install(&sb, "other", true);
+    // The reaper is a DIFFERENT process: an install of an unrelated name reaps at
+    // its start, before it stages anything of its own.
+    let other = install(&sb, "other", &[]);
+    println!(
+        "(e) separate-process reaper (install other) rc={:?}; live tree survived: {}; \
+         sentinel survived: {}",
+        other.status.code(),
+        live.exists(),
+        sentinel.exists()
+    );
     assert!(
-        wait_until(Duration::from_secs(20), || staging_dirs(&containers)
-            .iter()
-            .any(|d| d.contains("-other-"))),
-        "the second install never staged its tree"
+        other.status.success(),
+        "the second install must succeed: {}",
+        String::from_utf8_lossy(&other.stderr)
+    );
+    assert!(
+        live.exists(),
+        "the reaper must not take a live install's staging tree"
     );
     assert!(
         sentinel.exists(),
-        "the second install's reaper deleted the live install's staging tree"
+        "the reaper deleted the live install's staging tree"
+    );
+    assert!(
+        lock_path.exists(),
+        "the live tree's sidecar lock must survive the reaper"
+    );
+    assert!(
+        containers.join("other").join("rootfs").is_dir(),
+        "the install that ran the reaper must commit"
     );
 
-    let live_out = live.wait_with_output().expect("live install");
-    let other_out = other.wait_with_output().expect("other install");
+    // Release the lock: the tree is now unowned residue and the next reaper must
+    // take it. Deterministic - the test chooses when the tree stops being live.
+    drop(lock);
+    let out = force_remove(&sb, "other");
     println!(
-        "(e) rc live={:?} other={:?}; staging residue after both: {}",
-        live_out.status.code(),
-        other_out.status.code(),
-        staging_dirs(&containers).len()
+        "(e) after releasing the lock, separate-process reaper (remove --force other) \
+         rc={:?}; tree gone: {}; sidecar gone: {}",
+        out.status.code(),
+        !live.exists(),
+        !lock_path.exists()
     );
     assert!(
-        live_out.status.success(),
-        "the live install must still complete: {}",
-        String::from_utf8_lossy(&live_out.stderr)
+        out.status.success(),
+        "remove --force must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
+    assert!(!live.exists(), "an unowned staging tree must be reaped");
     assert!(
-        other_out.status.success(),
-        "the second install must succeed: {}",
-        String::from_utf8_lossy(&other_out.stderr)
+        !lock_path.exists(),
+        "the sidecar lock must go with the reaped tree"
     );
-    assert_eq!(staging_dirs(&containers).len(), 0);
+    assert!(staging_dirs(&containers).is_empty());
     assert_eq!(stray_staging_locks(&containers).len(), 0);
 
-    let _ = force_remove(&sb, "live");
-    let _ = force_remove(&sb, "other");
     assert_real_store_intact();
 }
