@@ -62,7 +62,7 @@ pub(crate) async fn execute_command(cmd: Commands, global_binds: Vec<String>) ->
             user,
             command,
         } => cmd_attach(container, user, command).await,
-        Commands::Kill { container } => cmd_kill(container).await,
+        Commands::Kill { container, signal } => cmd_kill(container, signal).await,
         Commands::Remove { name, force, yes } => cmd_remove(name, force || yes).await,
         Commands::Rename { oldname, newname } => cmd_rename(oldname, newname).await,
         Commands::Copy {

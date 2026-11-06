@@ -370,6 +370,11 @@ pub(crate) enum Commands {
     Kill {
         /// Container name
         container: String,
+
+        /// Signal to deliver: a name (STOP, TERM, QUIT, KILL, ...) or a number.
+        /// Naming one delivers exactly it, once, and never escalates.
+        #[arg(short = 's', long = "signal", value_name = "SIGNAL")]
+        signal: Option<String>,
     },
 
     /// [stable] [Core] Delete a container

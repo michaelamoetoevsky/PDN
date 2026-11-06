@@ -11,8 +11,8 @@ use tabled::Tabled;
 
 use crate::native::{
     install_image_native, kill_container_native, list_containers_native, list_sessions_native,
-    list_sessions_native_full, login_container_native, parse_mount_specs, remove_container_native,
-    run_container_native, search_docker_hub, verify_image_available,
+    list_sessions_native_full, parse_mount_specs, remove_container_native, run_container_native,
+    search_docker_hub, verify_image_available,
 };
 use crate::utils::format_size;
 use crate::{output_json, output_table, output_yaml, OutputFormat, SystemInfo};
@@ -182,7 +182,14 @@ pub async fn cmd_login(
     let mounts = parse_mount_specs(&binds)?;
 
     eprintln!("{MAPPED_USER_NOTE}");
-    login_container_native(&container, isolated, cmd, mounts).await
+    // The same applied path `run` takes, so the image's own `Env`/`WorkingDir`
+    // reach the guest (WORKLIST B5, issue #76). `login` used to call
+    // `login_container_native`, which reloads the container through the store
+    // loader that leaves `env_vars`/`working_dir` at their defaults: `podnext run`
+    // on an image built with `ENV GREETING=hi` saw `GREETING=hi` and `podnext
+    // login` on the same image saw nothing, so the image did not behave as built.
+    // One applied path instead of two that disagree.
+    run_container_native(&container, cmd, isolated, mounts).await
 }
 
 pub async fn cmd_run(
@@ -369,54 +376,184 @@ pub async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Re
     Ok(())
 }
 
-pub async fn cmd_kill(container: String) -> Result<()> {
+/// How long each rung of the kill ladder gets before the next one is tried.
+const KILL_LADDER_GRACE: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// The escalation order: `SIGTERM`, then `SIGQUIT` if the guest ignored it, then
+/// `SIGKILL` if it ignored that too (the reference's ladder,
+/// `commands/proot-distro/kill.py:234-236`). `SIGKILL` cannot be ignored, so a
+/// session that survives the first two rungs is gone after the third or not at
+/// all - which is why its rung is what reports the failure.
+const KILL_LADDER: [i32; 3] = [libc::SIGTERM, libc::SIGQUIT, libc::SIGKILL];
+
+/// Resolve a signal `--signal`/`-s` named: a name (`STOP`, `TERM`, with or
+/// without the `SIG` prefix) or a number.
+///
+/// The table is short on purpose. An unknown name is refused by name rather than
+/// guessed at: the number that lands is not something the caller can check from
+/// an exit status afterwards.
+fn parse_signal(spec: &str) -> Result<i32> {
+    let upper = spec.trim().to_ascii_uppercase();
+    let name = upper.strip_prefix("SIG").unwrap_or(&upper);
+    Ok(match name {
+        "HUP" => libc::SIGHUP,
+        "INT" => libc::SIGINT,
+        "QUIT" => libc::SIGQUIT,
+        "KILL" => libc::SIGKILL,
+        "TERM" => libc::SIGTERM,
+        "CONT" => libc::SIGCONT,
+        "STOP" => libc::SIGSTOP,
+        "USR1" => libc::SIGUSR1,
+        "USR2" => libc::SIGUSR2,
+        other => match other.parse::<i32>() {
+            Ok(n) if (1..=64).contains(&n) => n,
+            _ => bail!(
+                "unknown signal '{spec}': expected a name (HUP, INT, QUIT, KILL, TERM, CONT, STOP, \
+                 USR1, USR2) or a number from 1 to 64"
+            ),
+        },
+    })
+}
+
+/// The name a signal is reported under. A bare number arrives only when the
+/// caller asked for one, so it is reported as a number rather than invented.
+fn signal_label(sig: i32) -> String {
+    match sig {
+        libc::SIGHUP => "SIGHUP",
+        libc::SIGINT => "SIGINT",
+        libc::SIGQUIT => "SIGQUIT",
+        libc::SIGKILL => "SIGKILL",
+        libc::SIGTERM => "SIGTERM",
+        libc::SIGCONT => "SIGCONT",
+        libc::SIGSTOP => "SIGSTOP",
+        libc::SIGUSR1 => "SIGUSR1",
+        libc::SIGUSR2 => "SIGUSR2",
+        _ => return format!("signal {sig}"),
+    }
+    .to_string()
+}
+
+/// Wait for a session process to actually go, without touching its files.
+///
+/// The ladder decides the next rung off this, and the store sweep that follows
+/// still has to see the session's record, so nothing may be cleared here; the
+/// teardown of A9 happens once the whole kill is done.
+fn wait_until_gone(pid: u32, start_time: u64, grace: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + grace;
+    while proot_distro_core::session::process_is_alive(pid, start_time) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    true
+}
+
+pub async fn cmd_kill(container: String, signal: Option<String>) -> Result<()> {
+    // A signal named on the command line is the whole instruction: it is
+    // delivered once and never escalated (WORKLIST B8). `kill -s STOP` must
+    // stop the guest and stop there - a ladder that then sent TERM/QUIT/KILL
+    // would kill what the caller asked to pause, and nothing in the exit status
+    // would say so.
+    let requested = match signal {
+        Some(ref spec) => Some(parse_signal(spec)?),
+        None => None,
+    };
+    let all = container == "all" || container == "--all";
+
     let mut killed: Vec<proot_distro_core::session::SessionRecord> = Vec::new();
     if let Ok(active) = proot_distro_core::session::active_sessions() {
         for s in active {
-            if s.container_name == container || container == "all" || container == "--all" {
-                if let Ok(()) = proot_distro_core::session::kill_session(s.pid, libc::SIGQUIT) {
-                    println!(
-                        "Sent SIGQUIT to session PID {} ({})",
-                        s.pid, s.container_name
-                    );
+            if s.container_name != container && !all {
+                continue;
+            }
+            match requested {
+                Some(sig) => {
+                    if proot_distro_core::session::kill_session(s.pid, sig).is_ok() {
+                        println!(
+                            "Sent {} to session PID {} ({})",
+                            signal_label(sig),
+                            s.pid,
+                            s.container_name
+                        );
+                        killed.push(s);
+                    }
+                }
+                // No signal named: escalate, but only past a rung the guest
+                // ignored. `wait_until_gone` asks the kernel, not a stopwatch,
+                // so a rung is skipped the moment the process is really gone.
+                None => {
+                    for sig in KILL_LADDER {
+                        if proot_distro_core::session::kill_session(s.pid, sig).is_err() {
+                            break;
+                        }
+                        println!(
+                            "Sent {} to session PID {} ({})",
+                            signal_label(sig),
+                            s.pid,
+                            s.container_name
+                        );
+                        if wait_until_gone(s.pid, s.start_time, KILL_LADDER_GRACE) {
+                            break;
+                        }
+                    }
                     killed.push(s);
                 }
             }
         }
     }
-    kill_container_native(&container).await?;
-    // The session is over, so its files go with it (A9). A supervisor killed by
-    // a signal that it cannot act on - SIG_IGN inherited from the parent, which
+    // `ContainerManager::kill` also sweeps the matching sessions with a SIGQUIT
+    // of its own, and it reads the registry the same way this command does. Once
+    // a session has been signalled it has nothing left to add - and for a named
+    // signal its sweep would be exactly the escalation that must not happen - so
+    // it runs only when no session matched. That is also where its "Container
+    // '<name>' not found" belongs: the domain error for an address that names
+    // nothing at all (automation_contract asserts exit 1 for it), which a
+    // matching session can never be.
+    if killed.is_empty() {
+        kill_container_native(&container).await?;
+    }
+    // The session is over, so its files go with it (A9) - for the ladder, whose
+    // whole job is that "killed" means the session is gone. A supervisor killed
+    // by a signal it cannot act on - SIG_IGN inherited from the parent, which
     // the cargo test harness does set for SIGQUIT - cannot unlink its own socket
-    // or transcript, and neither can one killed by SIGKILL: that is exactly why
-    // `kill` + `remove` returned 0 while `~/.podnext/sessions` kept both. So the
-    // killer waits for the process to actually go and then removes them, with
-    // one escalation because "killed" has to mean the session is gone. It never
-    // escalates a signal the caller asked for: the caller asked for neither.
-    for s in &killed {
-        let grace = std::time::Duration::from_millis(750);
-        if proot_distro_core::session::wait_and_clear(s.pid, s.start_time, grace) {
-            continue;
-        }
-        let _ = proot_distro_core::session::kill_session(s.pid, libc::SIGKILL);
-        if !proot_distro_core::session::wait_and_clear(s.pid, s.start_time, grace) {
+    // or transcript, and neither can one killed by SIGKILL, so the killer waits
+    // for the process to go and then removes them. A named signal gets no
+    // teardown: `kill -s STOP` names a pause, not a removal.
+    if requested.is_none() {
+        for s in &killed {
+            if proot_distro_core::session::wait_and_clear(s.pid, s.start_time, KILL_LADDER_GRACE) {
+                continue;
+            }
             eprintln!(
-                "Warning: session PID {} ({}) is still running after SIGQUIT and SIGKILL; its \
-                 files in {} were left in place.",
+                "Warning: session PID {} ({}) is still running after {}; its files in {} were \
+                 left in place.",
                 s.pid,
                 s.container_name,
+                KILL_LADDER
+                    .iter()
+                    .map(|s| signal_label(*s))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 proot_distro_core::session::sessions_dir().display()
             );
         }
     }
-    if container == "all" || container == "--all" {
+    if all {
         if killed.is_empty() {
             println!("No active container sessions found.");
+        } else if let Some(sig) = requested {
+            println!(
+                "Sent {} to all active container sessions.",
+                signal_label(sig)
+            );
         } else {
             println!("Killed all active container sessions.");
         }
     } else if killed.is_empty() {
         println!("Container '{}' is not running.", container);
+    } else if let Some(sig) = requested {
+        println!("Sent {} to container '{}'.", signal_label(sig), container);
     } else {
         println!("Container '{}' killed.", container);
     }
