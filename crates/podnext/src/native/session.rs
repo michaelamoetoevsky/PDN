@@ -127,6 +127,8 @@ pub async fn run_container_native(
     let exec = backend.execute(&container, command);
     tokio::pin!(exec);
 
+    // Which signal *we* delivered, kept only to interpret the runtime's
+    // no-status sentinel below: never to guess a status the guest did not have.
     let mut forwarded: Option<i32> = None;
     let result = loop {
         tokio::select! {
@@ -149,21 +151,29 @@ pub async fn run_container_native(
         std::process::id(),
     ));
 
-    let exit_code = result?;
-    // A guest killed by signal N surfaces as 128+N (the shell convention), not
-    // the -1/255 the runtime reports for a signal-terminated child.
-    if let Some(sig) = forwarded {
-        if exit_code != 0 {
-            return Err(anyhow::Error::new(proot_core::ChildExit(128 + sig)));
-        }
-    }
+    // The child's own status is the caller's status (A6, NEXT_DEV section 4:
+    // runc's contract). The runtime reports a signal death as `128 + N` and a
+    // clean exit as the child's own code, and 255 means "no status at all" - a
+    // runtime failure. The old code rewrote *any* non-zero status to
+    // `128 + forwarded signal`, so a guest that caught the Ctrl-C and exited 3
+    // was reported as 143.
+    //
+    // One case still needs the forwarded signal, and it is measured, not
+    // assumed: PRoot here does not die of the signal it was sent, it exits with
+    // code 255 (`raw wait status: code=Some(255) signal=None`, PN_DEBUG trace
+    // above `podnext run` + SIGTERM), which is byte-identical to the runtime's
+    // no-status sentinel. So when - and only when - we delivered a signal and
+    // the runtime reports exactly that sentinel, the guest died of the signal
+    // we sent, and its own status is `128 + N`. A guest that survives the
+    // signal and exits 3 still reports 3, because 3 is not the sentinel.
+    let exit_code = match result? {
+        255 => match forwarded {
+            Some(sig) => 128 + sig,
+            None => 255,
+        },
+        code => code,
+    };
     if exit_code != 0 {
-        if exit_code == 255 {
-            eprintln!(
-                "Hint: if the guest terminated with signal 4 (SIGILL), its binaries are \
-                 incompatible with this host CPU/kernel; consider running with QEMU emulation (-q)."
-            );
-        }
         return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
     Ok(())
@@ -618,6 +628,9 @@ pub async fn run_session_host(container: &str) -> Result<()> {
         }
     };
 
-    let _ = std::fs::remove_file(proot_distro_core::session::session_socket_path(pid));
+    // The session is over: its socket, transcript and record go with it, so a
+    // finished session leaves no file behind (A9). The record is also unlinked
+    // by its own guard, which has already been dropped; this is idempotent.
+    proot_distro_core::session::clear_session_files(pid);
     result
 }

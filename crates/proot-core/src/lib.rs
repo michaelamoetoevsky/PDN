@@ -28,6 +28,10 @@ pub mod tracee;
 pub mod tracee_state;
 pub mod vfs;
 
+// `ExitStatus::signal()`, for the exit-status triple below. This crate is
+// ptrace/PRoot-only, so the unix extension is always available.
+use std::os::unix::process::ExitStatusExt;
+
 pub use arch::{get_arch, sysnum, Arch};
 pub use cli::{BindMount, ProotConfig};
 pub use extension::{Extension, ExtensionManager};
@@ -504,7 +508,23 @@ impl ProotEngine {
         if self.config.verbose > 0 {
             pn_trace!("[DEBUG] Exit status: {:?}", exit_status);
         }
-        let exit_code = exit_status.code().unwrap_or(-1);
+        // The raw wait status, at the point the exit code is derived from it:
+        // `code()` is `None` exactly when the child was killed by a signal, and
+        // the whole triple below turns on that distinction.
+        pn_trace!(
+            "[DEBUG] raw wait status: code={:?} signal={:?}",
+            exit_status.code(),
+            exit_status.signal()
+        );
+        // The exit status is a triple (NEXT_DEV section 4: runc's contract, the
+        // shell convention): a child that died of signal N is reported as
+        // `128 + N`, a clean exit passes its own status through unchanged, and
+        // 255 is reserved for a runtime failure - a wait that reported neither.
+        // `code()` is `None` exactly when the child was killed by a signal, so
+        // collapsing that to -1 (which the CLI then exits as 255) lost the
+        // guest's own 137/139/143 and made a signal death
+        // indistinguishable from a genuine runtime failure (A6).
+        let exit_code = exit_status_code(exit_status);
         if self.config.verbose > 0 {
             pn_trace!("[DEBUG] Exit code: {}", exit_code);
         }
@@ -521,6 +541,29 @@ impl ProotEngine {
 pub fn init() -> Result<ProotEngine> {
     let config = ProotConfig::default();
     ProotEngine::new(config)
+}
+
+/// The exit code a completed wait maps onto (NEXT_DEV section 4: runc's
+/// contract). See the call site for why the signal case cannot be collapsed
+/// into the code case.
+pub fn exit_status_code(status: std::process::ExitStatus) -> i32 {
+    exit_status_code_parts(status.code(), status.signal())
+}
+
+/// The rule over its two inputs, so all three branches - including the 255
+/// runtime-failure branch, which no real wait on this device produces - are
+/// testable directly.
+fn exit_status_code_parts(code: Option<i32>, signal: Option<i32>) -> i32 {
+    match (code, signal) {
+        // A clean exit: the child's own status, passed through unchanged.
+        (Some(code), _) => code,
+        // A signal death: `128 + N`, the shell convention. Never invented - the
+        // signal comes from the wait status itself, not from a guess about what
+        // was delivered.
+        (None, Some(signal)) => 128 + signal,
+        // Neither: 255, reserved for a runtime failure.
+        (None, None) => 255,
+    }
 }
 
 #[cfg(test)]
@@ -582,5 +625,46 @@ mod tests {
         assert_eq!(config.command, vec!["/bin/bash".to_string()]);
         assert_eq!(config.bind, vec!["/host:/guest".to_string()]);
         assert_eq!(config.env, vec!["TEST=value".to_string()]);
+    }
+
+    /// All three branches of the triple rule (A6). The 255 branch is not
+    /// reachable from a real wait on this device, so it is asserted here over
+    /// the rule itself rather than only through a guest.
+    #[test]
+    fn the_exit_status_triple() {
+        // Signal death: `128 + N`. 9 = SIGKILL (137), 15 = SIGTERM (143).
+        assert_eq!(exit_status_code_parts(None, Some(9)), 137);
+        assert_eq!(exit_status_code_parts(None, Some(15)), 143);
+        assert_eq!(exit_status_code_parts(None, Some(11)), 139);
+        // The child's own status, including 255 as the child's own choice.
+        assert_eq!(exit_status_code_parts(Some(3), None), 3);
+        assert_eq!(exit_status_code_parts(Some(255), None), 255);
+        // Neither: a runtime failure.
+        assert_eq!(exit_status_code_parts(None, None), 255);
+    }
+
+    /// The rule was read from `ExitStatus`, not assumed: a real child that
+    /// SIGKILLs itself must map to 137 (it used to become -1 and exit 255).
+    #[test]
+    fn a_real_sigkilled_child_maps_to_137() {
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("kill -9 $$")
+            .status()
+            .expect("spawn /bin/sh");
+        assert_eq!(status.code(), None, "a signal death carries no exit code");
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert_eq!(exit_status_code(status), 137);
+    }
+
+    /// And a real clean exit passes its own code through.
+    #[test]
+    fn a_real_exit_passes_its_code_through() {
+        let status = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("exit 3")
+            .status()
+            .expect("spawn /bin/sh");
+        assert_eq!(exit_status_code(status), 3);
     }
 }

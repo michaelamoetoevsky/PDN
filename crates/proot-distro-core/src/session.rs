@@ -18,6 +18,16 @@ pub struct SessionRecord {
     pub started_at: u64,
     pub login_uid: String,
     pub cmdline: Vec<String>,
+    /// Kernel start time of `pid` (field 22 of `/proc/<pid>/stat`, in clock
+    /// ticks), read when the record was written.
+    ///
+    /// Liveness is `(pid, start-time, not-a-zombie)`, not a bare PID: the kernel
+    /// reuses PIDs, so a recycled PID can make a dead session look live, while a
+    /// PID *plus* its start time cannot (B13, runc's `hasInit()`). `0` in a
+    /// record written before this field existed means "not recorded" and is
+    /// accepted as-is, so an upgrade does not discard live sessions.
+    #[serde(default)]
+    pub start_time: u64,
 }
 
 /// Directory storing runtime session files.
@@ -51,6 +61,87 @@ pub fn session_socket_path(pid: u32) -> PathBuf {
 /// connected; same `active_sessions()` caveat as the socket.
 pub fn session_log_path(pid: u32) -> PathBuf {
     sessions_dir().join(format!("{}.log", pid))
+}
+
+/// `(state, start-time)` from `/proc/<pid>/stat`, or `None` when the process is
+/// gone.
+///
+/// `comm` (field 2) is parenthesised and may contain spaces or parentheses, so
+/// the remaining fields only start reliably after the last `)`. After `comm`,
+/// `start-time` is the 22nd field overall, i.e. the 19th after the state.
+pub fn process_state_and_start_time(pid: u32) -> Option<(char, u64)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let mut fields = rest.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let start_time = fields.nth(18)?.parse::<u64>().ok()?;
+    Some((state, start_time))
+}
+
+/// The start time of a live process, for the record that will describe it.
+pub fn process_start_time(pid: u32) -> Option<u64> {
+    process_state_and_start_time(pid).map(|(_, start)| start)
+}
+
+/// Liveness of a recorded session: the process exists, its kernel start time is
+/// the recorded one, and it is not a zombie.
+///
+/// A bare `kill(pid, 0)` answers "some process has this pid", which is not the
+/// question: the kernel reuses PIDs, and a reaped-but-not-collected child still
+/// answers the signal probe. `Z`/`X` states and a mismatched start time both
+/// mean the recorded process is gone (B13).
+pub fn process_is_alive(pid: u32, start_time: u64) -> bool {
+    let Some((state, current)) = process_state_and_start_time(pid) else {
+        return false;
+    };
+    if state == 'Z' || state == 'X' {
+        return false;
+    }
+    // A record written before the field existed (`0`) cannot be checked; the
+    // flock probe remains its evidence.
+    start_time == 0 || current == start_time
+}
+
+/// Remove every artifact of `pid`'s session: the record, the rendezvous socket
+/// and the transcript. Idempotent, and safe when some are already gone.
+pub fn clear_session_files(pid: u32) {
+    for path in [
+        session_file_path(pid),
+        session_socket_path(pid),
+        session_log_path(pid),
+    ] {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Reclaim a container's session artifacts once it is killed or removed (A9).
+///
+/// The records still naming the container are cleared; then any rendezvous file
+/// whose supervisor is gone is reaped. Without this, `kill` + `remove` returned
+/// 0 while `~/.podnext/sessions` kept the session's socket and log.
+pub fn clear_container_sessions(container: &str) {
+    for record in active_sessions().unwrap_or_default() {
+        if record.container_name == container {
+            clear_session_files(record.pid);
+        }
+    }
+    reap_stale_rendezvous();
+}
+
+/// Wait, bounded, for `pid` (identified by `start_time`) to be gone, then remove
+/// its artifacts. `false` means it was still running when `timeout` elapsed and
+/// nothing was removed - the caller must say so rather than claim the session
+/// was cleaned up (A9).
+pub fn wait_and_clear(pid: u32, start_time: u64, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while process_is_alive(pid, start_time) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    clear_session_files(pid);
+    true
 }
 
 /// Remove rendezvous files whose supervisor is gone (PDN#57).
@@ -184,6 +275,9 @@ fn register_session_in(
         started_at,
         login_uid: uid.to_string(),
         cmdline: cmd.to_vec(),
+        // The registering process's own kernel start time: `(pid, start-time)`
+        // is what later identifies this process, not the pid alone (B13).
+        start_time: process_start_time(std::process::id()).unwrap_or(0),
     };
 
     use std::io::Write;
@@ -201,6 +295,12 @@ fn register_session_in(
 }
 
 /// Query active sessions by probing non-blocking shared locks on session files.
+///
+/// A record counts as a live session only when both hold: the registering
+/// process still holds its `LOCK_EX`, **and** the recorded `(pid, start_time)`
+/// names that same live, non-zombie process (B13). The lock alone was the old
+/// evidence, and it answers "some process still has this file open" - a PID the
+/// kernel has since reused is not a session, and a zombie is not running.
 pub fn active_sessions() -> Result<Vec<SessionRecord>> {
     let dir = sessions_dir();
     if !dir.exists() {
@@ -243,11 +343,25 @@ pub fn active_sessions() -> Result<Vec<SessionRecord>> {
             let err = std::io::Error::last_os_error();
             let errno = err.raw_os_error().unwrap_or(0);
             if errno == libc::EWOULDBLOCK || errno == libc::EAGAIN {
-                // Session is alive (LOCK_EX held)
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(record) = serde_json::from_str::<SessionRecord>(&content) {
-                        sessions.push(record);
-                    }
+                // A lock is held: the registering process is still alive. The
+                // record must agree that it is the *same* process, and that it
+                // is not a zombie (B13), or it is not a running session.
+                let Ok(content) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Ok(record) = serde_json::from_str::<SessionRecord>(&content) else {
+                    continue;
+                };
+                if process_is_alive(record.pid, record.start_time) {
+                    sessions.push(record);
+                } else {
+                    pn_trace!(
+                        "[DEBUG] session liveness: pid {} start-time {} is not the recorded \
+                         process; dropping the record",
+                        record.pid,
+                        record.start_time
+                    );
+                    let _ = std::fs::remove_file(&path);
                 }
             }
         }
@@ -383,10 +497,76 @@ mod tests {
             started_at: 1700000000,
             login_uid: "1000".to_string(),
             cmdline: vec!["/bin/sh".to_string(), "-l".to_string()],
+            start_time: 42,
         };
         let json = serde_json::to_string(&record).unwrap();
         let parsed: SessionRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(record, parsed);
+    }
+
+    /// A record written before `start_time` existed (no field at all) still
+    /// parses, so an upgrade does not make existing sessions unreadable.
+    #[test]
+    fn a_record_without_a_start_time_still_parses() {
+        let json = r#"{"container_name":"c1","pid":7,"started_at":1,"login_uid":"0","cmdline":[]}"#;
+        let parsed: SessionRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.start_time, 0);
+        // `0` means "not recorded", not "start time zero": an old record for a
+        // live process stays live rather than being declared dead on upgrade.
+        let me = std::process::id();
+        assert!(process_is_alive(me, 0));
+    }
+
+    /// The kernel start time is read from `/proc/<pid>/stat`, and it is stable
+    /// for the life of the process.
+    #[test]
+    fn the_start_time_of_a_live_process_is_read_and_stable() {
+        let me = std::process::id();
+        let first = process_start_time(me).expect("own start time");
+        assert!(first > 0, "a real process has a non-zero start time");
+        assert_eq!(process_start_time(me), Some(first));
+        assert!(process_is_alive(me, first));
+    }
+
+    /// A PID that has been reused by another process must not resurrect a dead
+    /// session: the start time of the process now holding that PID differs from
+    /// the one recorded (B13, runc's `hasInit()`).
+    #[test]
+    fn a_reused_pid_is_not_a_live_session() {
+        let me = std::process::id();
+        let real = process_start_time(me).expect("own start time");
+        assert!(!process_is_alive(me, real + 1));
+        // A PID that names nothing is not alive either.
+        assert!(!process_is_alive(0x7fff_fffe, 1));
+        assert_eq!(process_start_time(0x7fff_fffe), None);
+    }
+
+    /// A zombie is not "running": it kept its PID and its `/proc` entry, but the
+    /// work is over. `kill(pid, 0)` answers for it; liveness must not.
+    #[test]
+    fn a_zombie_is_not_running() {
+        // `sh -c exit 0` reaps itself; the parent never calls `wait()` in this
+        // test, so the child stays a zombie with a live `/proc/<pid>/stat`.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("spawn a zombie");
+        let pid = child.id();
+        let start = (0..200)
+            .find_map(|_| {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                match process_state_and_start_time(pid) {
+                    Some((state, start)) if state == 'Z' => Some(start),
+                    _ => None,
+                }
+            })
+            .expect("the child did not become a zombie");
+        assert_eq!(process_state_and_start_time(pid).map(|(s, _)| s), Some('Z'));
+        assert!(
+            !process_is_alive(pid, start),
+            "a zombie must not be reported as a running session"
+        );
+        let _ = child.kill();
     }
 
     #[test]

@@ -114,14 +114,82 @@ pub(crate) fn apply_image_runtime_config(container: &mut proot_distro_core::Cont
     }
 }
 
-pub async fn list_sessions_native() -> Result<Vec<proot_distro_core::SessionInfo>> {
-    let session_mgr = proot_distro_core::SessionManager::new()?;
-    Ok(session_mgr.list_all())
+/// One session, as the registry reports it.
+///
+/// The single reader behind `podnext ps`, `podnext ps -f json` and
+/// `podnext sessions` (A2). The three used to be derived from three different
+/// lists -- the in-process `SessionManager`, which is empty in every fresh
+/// process, and the on-disk registry reached separately by `ps` -- so at one
+/// instant `ps` listed a session that `sessions` and `ps -f json` did not. The
+/// disk registry is the only source that crosses process boundaries; deriving
+/// all three from it is what makes them agree.
+#[derive(Debug, Clone, serde::Serialize, tabled::Tabled)]
+pub struct SessionRow {
+    #[tabled(rename = "ID")]
+    pub id: String,
+    #[tabled(rename = "CONTAINER")]
+    pub container: String,
+    #[tabled(rename = "USER")]
+    pub user: String,
+    #[tabled(rename = "COMMAND")]
+    pub command: String,
+    #[tabled(rename = "CWD")]
+    pub cwd: String,
+    #[tabled(rename = "PID")]
+    pub pid: String,
+    #[tabled(rename = "STATUS")]
+    pub status: String,
+    #[tabled(rename = "CREATED")]
+    pub created: String,
+    #[tabled(rename = "STARTED")]
+    pub started: String,
 }
 
-pub async fn list_sessions_native_full() -> Result<Vec<proot_distro_core::Session>> {
-    let session_mgr = proot_distro_core::SessionManager::new()?;
-    Ok(session_mgr.list_all_full())
+/// Every live session, in one deterministic order.
+///
+/// `id` is `sess-<pid>`: the name `ps` printed before this reader existed, kept
+/// so scripts that matched it keep working. Liveness is the registry's own
+/// `(pid, start-time, not-a-zombie)` rule (B13), so a dead or recycled PID is
+/// not listed. The `cwd` and `created` columns are not recorded by the runtime
+/// and stay `-` rather than being invented.
+pub fn session_registry() -> Vec<SessionRow> {
+    let mut rows: Vec<SessionRow> = proot_distro_core::session::active_sessions()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| SessionRow {
+            id: format!("sess-{}", r.pid),
+            container: r.container_name,
+            user: r.login_uid,
+            command: r.cmdline.join(" "),
+            cwd: "-".to_string(),
+            pid: r.pid.to_string(),
+            status: "Running".to_string(),
+            created: "-".to_string(),
+            started: format_started(r.started_at),
+        })
+        .collect();
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    rows
+}
+
+/// The registry's wall-clock start time, in the same UTC format the other tables use.
+fn format_started(unix_secs: u64) -> String {
+    use chrono::TimeZone;
+    chrono::Utc
+        .timestamp_opt(unix_secs as i64, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+pub async fn list_sessions_native() -> Result<Vec<SessionRow>> {
+    Ok(session_registry())
+}
+
+/// The caller that used the full in-memory list now reads the same registry:
+/// two sources is exactly how the renderings diverged (A2).
+pub async fn list_sessions_native_full() -> Result<Vec<SessionRow>> {
+    Ok(session_registry())
 }
 
 pub async fn kill_container_native(container_name: &str) -> Result<()> {
@@ -131,13 +199,26 @@ pub async fn kill_container_native(container_name: &str) -> Result<()> {
 
 pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
-    let container_dir = dirs::home_dir().map(|h| h.join(".podnext").join("containers").join(&name));
-    // Reclaim staging residue a killed install left behind (A3b): `remove` is the
-    // other command that must be able to clear the store, and it used to leave
-    // every `.tmp-install-*` directory untouched.
-    if let Some(containers) = dirs::home_dir().map(|h| h.join(".podnext").join("containers")) {
-        crate::native::reap_stale_staging(&containers);
+    // Reclaim staging residue a killed install left behind (A3b, from dept/w1-lifecycle):
+    // `remove` is the other command that must be able to clear the store, and it used to leave
+    // every `.tmp-install-*` directory untouched. It runs BEFORE the existence check so that
+    // residue is cleared even when no committed container matches the name.
+    //
+    // Re-inserted by hand while resolving the `native/meta.rs` collision: both departments
+    // changed this file (this one inserted the reaper, the other rewrote the session registry and
+    // this function's root resolution), and taking either side wholesale would have silently
+    // dropped the other's change. It uses the same resolved root as the code below, so the reaper
+    // and the removal cannot look at two different stores.
+    if let Ok(paths) = proot_distro_core::paths::ContainerPaths::new() {
+        crate::native::reap_stale_staging(&paths.containers_dir);
     }
+    // The container store's own resolved root. `dirs::home_dir()` is a second,
+    // unrelated answer - it ignores `PN_TEST_ROOT` and a relocated `HOME` - so
+    // `remove` could find the container in the index and then look for its
+    // directory under a different root entirely.
+    let container_dir = proot_distro_core::paths::ContainerPaths::new()
+        .ok()
+        .map(|paths| paths.containers_dir.join(&name));
     let dir_exists = container_dir.as_ref().map(|d| d.exists()).unwrap_or(false);
     let in_mgr = container_mgr.get(&name).await.is_ok();
 
@@ -184,6 +265,11 @@ pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
             })?;
         }
     }
+
+    // A removed container must not leave its session's rendezvous socket or
+    // transcript behind (A9): `kill` + `remove` returned 0 while
+    // `~/.podnext/sessions` kept both, with no process owning them.
+    proot_distro_core::session::clear_container_sessions(&name);
 
     println!("Container '{}' removed.", name);
     Ok(())

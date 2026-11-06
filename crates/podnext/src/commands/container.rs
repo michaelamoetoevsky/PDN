@@ -264,89 +264,23 @@ pub async fn cmd_run(
 }
 
 pub async fn cmd_ps(format: OutputFormat) -> Result<()> {
-    let mut sessions = match daemon_query::<Vec<proot_distro_core::Session>>("sessions").await {
-        Some(s) => s,
-        None => list_sessions_native_full().await?,
-    };
-    // Same `HashMap`-order caveat as `list`: sorted so both paths (and repeated
-    // runs) render the same bytes.
-    sessions.sort_by(|a, b| a.id.cmp(&b.id));
-    let active_disk_sessions = proot_distro_core::session::active_sessions().unwrap_or_default();
-
-    #[derive(Tabled, Serialize)]
-    struct SessionRow {
-        #[tabled(rename = "ID")]
-        id: String,
-        #[tabled(rename = "CONTAINER")]
-        container: String,
-        #[tabled(rename = "USER")]
-        user: String,
-        #[tabled(rename = "COMMAND")]
-        command: String,
-        #[tabled(rename = "CWD")]
-        cwd: String,
-        #[tabled(rename = "PID")]
-        pid: String,
-        #[tabled(rename = "STATUS")]
-        status: String,
-        #[tabled(rename = "CREATED")]
-        created: String,
-        #[tabled(rename = "STARTED")]
-        started: String,
-    }
-
-    let mut rows: Vec<SessionRow> = sessions
-        .iter()
-        .map(|s| SessionRow {
-            id: s.id.clone(),
-            container: s.container_name.clone(),
-            user: s.user.clone(),
-            command: s.command.join(" "),
-            cwd: s.cwd.clone(),
-            pid: s.pid.map_or("-".to_string(), |p| p.to_string()),
-            status: format!("{:?}", s.status),
-            created: s.created_at.format("%Y-%m-%d %H:%M").to_string(),
-            started: s.started_at.map_or("-".to_string(), |dt| {
-                dt.format("%Y-%m-%d %H:%M").to_string()
-            }),
-        })
-        .collect();
-
-    for act in active_disk_sessions {
-        if !rows.iter().any(|r| r.pid == act.pid.to_string()) {
-            rows.push(SessionRow {
-                id: format!("sess-{}", act.pid),
-                container: act.container_name,
-                user: act.login_uid,
-                command: act.cmdline.join(" "),
-                cwd: "-".to_string(),
-                pid: act.pid.to_string(),
-                status: "Running".to_string(),
-                created: "-".to_string(),
-                started: "-".to_string(),
-            });
-        }
-    }
-
-    // The disk rows are appended after the store rows and `active_sessions()` reads a
-    // directory, so its order is not guaranteed either: one more sort keeps the table
-    // and text output deterministic between the two paths.
-    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    // One reader for all three renderings (A2). The disk registry is the only
+    // session list that crosses process boundaries, so `ps`, `ps -f json` and
+    // `sessions` cannot disagree about the same instant. The daemon used to
+    // answer this query from its own view, which is empty while a detached
+    // guest runs: that is how `ps` listed a session that `ps -f json` reported
+    // as `[]`.
+    let sessions = list_sessions_native_full().await?;
 
     match format {
-        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Table => output_table(&sessions),
         OutputFormat::Json => output_json(&sessions)?,
         OutputFormat::Yaml => output_yaml(&sessions)?,
         OutputFormat::Text => {
-            for s in sessions {
+            for s in &sessions {
                 println!(
                     "{} {} {} {} {} {}",
-                    s.id,
-                    s.container_name,
-                    s.user,
-                    s.pid.map_or("-".to_string(), |p| p.to_string()),
-                    format!("{:?}", s.status),
-                    s.command.join(" ")
+                    s.id, s.container, s.user, s.pid, s.status, s.command
                 );
             }
         }
@@ -355,46 +289,19 @@ pub async fn cmd_ps(format: OutputFormat) -> Result<()> {
 }
 
 pub async fn cmd_sessions(format: OutputFormat) -> Result<()> {
+    // The same reader `ps` renders, so the table and the JSON are the same
+    // answer to the same question (A2). Both used to read the in-process
+    // `SessionManager`, which is empty in a fresh process, so `sessions`
+    // printed a header with no rows while a guest was running.
     let sessions = list_sessions_native().await?;
 
-    #[derive(Tabled, Serialize)]
-    struct SessionRow {
-        #[tabled(rename = "CONTAINER")]
-        container: String,
-        #[tabled(rename = "USER")]
-        user: String,
-        #[tabled(rename = "PID")]
-        pid: String,
-        #[tabled(rename = "STATUS")]
-        status: String,
-        #[tabled(rename = "STARTED")]
-        started: String,
-    }
-
-    let rows: Vec<SessionRow> = sessions
-        .iter()
-        .map(|s| SessionRow {
-            container: s.container_name.clone(),
-            user: s.user.clone(),
-            pid: s.pid.map_or("-".to_string(), |p| p.to_string()),
-            status: s.status.clone(),
-            started: s.started_at.format("%Y-%m-%d %H:%M").to_string(),
-        })
-        .collect();
-
     match format {
-        OutputFormat::Table => output_table(&rows),
+        OutputFormat::Table => output_table(&sessions),
         OutputFormat::Json => output_json(&sessions)?,
         OutputFormat::Yaml => output_yaml(&sessions)?,
         OutputFormat::Text => {
-            for s in sessions {
-                println!(
-                    "{} {} {} {}",
-                    s.container_name,
-                    s.user,
-                    s.pid.map_or("-".to_string(), |p| p.to_string()),
-                    s.status
-                );
+            for s in &sessions {
+                println!("{} {} {} {}", s.container, s.user, s.pid, s.status);
             }
         }
     }
@@ -463,7 +370,7 @@ pub async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Re
 }
 
 pub async fn cmd_kill(container: String) -> Result<()> {
-    let mut killed_any = false;
+    let mut killed: Vec<proot_distro_core::session::SessionRecord> = Vec::new();
     if let Ok(active) = proot_distro_core::session::active_sessions() {
         for s in active {
             if s.container_name == container || container == "all" || container == "--all" {
@@ -472,25 +379,46 @@ pub async fn cmd_kill(container: String) -> Result<()> {
                         "Sent SIGQUIT to session PID {} ({})",
                         s.pid, s.container_name
                     );
-                    killed_any = true;
+                    killed.push(s);
                 }
             }
         }
-        if killed_any {
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        }
     }
     kill_container_native(&container).await?;
-    if container == "all" || container == "--all" {
-        if killed_any {
-            println!("Killed all active container sessions.");
-        } else {
-            println!("No active container sessions found.");
+    // The session is over, so its files go with it (A9). A supervisor killed by
+    // a signal that it cannot act on - SIG_IGN inherited from the parent, which
+    // the cargo test harness does set for SIGQUIT - cannot unlink its own socket
+    // or transcript, and neither can one killed by SIGKILL: that is exactly why
+    // `kill` + `remove` returned 0 while `~/.podnext/sessions` kept both. So the
+    // killer waits for the process to actually go and then removes them, with
+    // one escalation because "killed" has to mean the session is gone. It never
+    // escalates a signal the caller asked for: the caller asked for neither.
+    for s in &killed {
+        let grace = std::time::Duration::from_millis(750);
+        if proot_distro_core::session::wait_and_clear(s.pid, s.start_time, grace) {
+            continue;
         }
-    } else if killed_any {
-        println!("Container '{}' killed.", container);
-    } else {
+        let _ = proot_distro_core::session::kill_session(s.pid, libc::SIGKILL);
+        if !proot_distro_core::session::wait_and_clear(s.pid, s.start_time, grace) {
+            eprintln!(
+                "Warning: session PID {} ({}) is still running after SIGQUIT and SIGKILL; its \
+                 files in {} were left in place.",
+                s.pid,
+                s.container_name,
+                proot_distro_core::session::sessions_dir().display()
+            );
+        }
+    }
+    if container == "all" || container == "--all" {
+        if killed.is_empty() {
+            println!("No active container sessions found.");
+        } else {
+            println!("Killed all active container sessions.");
+        }
+    } else if killed.is_empty() {
         println!("Container '{}' is not running.", container);
+    } else {
+        println!("Container '{}' killed.", container);
     }
     Ok(())
 }
