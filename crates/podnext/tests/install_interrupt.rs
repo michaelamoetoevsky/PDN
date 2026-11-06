@@ -28,8 +28,15 @@ use std::time::Duration;
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
-/// A small, reliably published image; the same one the WORKLIST evidence used.
-const IMAGE: &str = "alpine:latest";
+/// A small, reliably published image ... with a window wide enough to interrupt.
+///
+/// This was `alpine:latest` (~3 MB) and the tests raced a 3-second kill against it. On a CI runner the
+/// install finished BEFORE the kill, so the interruption never happened and five tests failed on their own
+/// precondition - `the killed --force reinstall must leave a staging residue to reclaim: []`, with the child
+/// having exited 0 (run 42187850363). The window has to be part of the fixture, not an accident of how slow
+/// the host is: ~30 MB of layers keeps the staging tree observable on both a phone and a runner, and the
+/// residue the tests reclaim is then genuinely produced by an interrupted install.
+const IMAGE: &str = "debian:stable-slim";
 
 /// Long enough that the staging tree exists and layers are still downloading
 /// (the measured evidence kills at 2-5 s and always finds the residue).
@@ -133,6 +140,15 @@ fn force_remove(sb: &Sandbox, name: &str) -> Output {
 /// measured (exit 137), not a graceful shutdown.
 fn kill_after(mut child: Child, after: Duration) -> std::process::ExitStatus {
     std::thread::sleep(after);
+    // A host fast enough to finish the install inside the window leaves nothing to interrupt, and the next
+    // assertion ("must leave a staging residue to reclaim") then reports a phantom. Diagnose it here instead:
+    // the fixture is wrong for that host, the product is not.
+    if let Ok(Some(status)) = child.try_wait() {
+        panic!(
+            "the install exited ({status}) before the {after:?} kill: this host completed it faster than the \
+             fixture's window. Widen the fixture (IMAGE in this file) - do not read the next assertion as a defect"
+        );
+    }
     let _ = child.kill();
     child.wait().expect("wait for killed install")
 }
