@@ -135,11 +135,11 @@ pub fn store(dir: &Path, cache: &Path, entries: &[Container]) {
     if let Some(parent) = cache.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    // Write to a temporary sibling and rename, so a reader never sees a partial file.
-    let tmp = cache.with_extension("json.tmp");
-    if std::fs::write(&tmp, &bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, cache);
-    }
+    // Write to a temporary sibling and rename, so a reader never sees a partial
+    // file. The rename is identity-checked (B11): if the temp path was replaced
+    // or removed between the write and the rename, it is refused as ESTALE
+    // rather than installing somebody else's bytes.
+    let _ = crate::storage::atomic_write(cache, &bytes);
 }
 
 #[cfg(test)]

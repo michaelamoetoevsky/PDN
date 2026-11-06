@@ -3,7 +3,9 @@
 use anyhow::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Volume configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -164,6 +166,79 @@ impl StorageManager {
             )))
         }
     }
+}
+
+/// Identity of one inode: the `(st_dev, st_ino)` pair a path resolves to. Two
+/// stats of the same path agree only while that path still names that inode, so
+/// comparing the pair is what tells a writer "this is still my temp file".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileId {
+    pub dev: u64,
+    pub ino: u64,
+}
+
+impl std::fmt::Display for FileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(st_dev={}, st_ino={})", self.dev, self.ino)
+    }
+}
+
+/// Stat `path` *without* following a final symlink and report its identity.
+///
+/// `symlink_metadata` (lstat) rather than `metadata` (stat): the gate must see the
+/// directory entry itself, not whatever a symlink someone repointed at it resolves
+/// to. For the regular temp file a writer just created the two agree.
+pub fn file_id(path: &Path) -> Result<FileId> {
+    let md = std::fs::symlink_metadata(path)?;
+    Ok(FileId {
+        dev: md.dev(),
+        ino: md.ino(),
+    })
+}
+
+/// Rename `tmp` onto `dest`, but only if `tmp` still names the inode `expected`.
+///
+/// This is the identity gate `atomic_write` wraps around its rename, split out so
+/// a test can drive the refusal with a *planted* swap instead of racing a timing
+/// window. Returns an error naming `ESTALE`, with both identity pairs, when the
+/// temp file was replaced or removed between the write and the rename — so `dest`
+/// keeps its previous bytes rather than receiving someone else's.
+pub fn rename_if_unchanged(tmp: &Path, expected: FileId, dest: &Path) -> Result<()> {
+    let now = file_id(tmp).map_err(|e| {
+        Error::msg(format!(
+            "ESTALE: temp file {} vanished before rename (expected {expected}): {e}",
+            tmp.display()
+        ))
+    })?;
+    if now != expected {
+        return Err(Error::msg(format!(
+            "ESTALE: temp file {} changed identity before rename (expected {expected}, found {now})",
+            tmp.display()
+        )));
+    }
+    std::fs::rename(tmp, dest)?;
+    Ok(())
+}
+
+/// Monotonic suffix so two writers in one process never compose the same temp path.
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Write `bytes` to `path` atomically: write a sibling temp, then rename it into
+/// place only while its identity is unchanged.
+///
+/// A plain `fs::rename` on a path composed earlier silently installs whatever now
+/// sits at that path — another writer's bytes, or nothing (a half state). The
+/// identity check turns that into a refused `ESTALE` instead of a clobber.
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp-{}-{}", std::process::id(), n));
+    std::fs::write(&tmp, bytes)?;
+    let id = file_id(&tmp)?;
+    let res = rename_if_unchanged(&tmp, id, path);
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
 }
 
 #[cfg(test)]
