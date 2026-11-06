@@ -39,8 +39,17 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_podnext")
+fn bin() -> String {
+    // The workspace shares one CARGO_TARGET_DIR across worktrees, so a sibling's
+    // build can silently replace `target/debug/podnext`. `PODNEXT_BIN` lets the
+    // run pin the binary to a copy provenanced by a grep of an added string; the
+    // default stays the Cargo-built binary.
+    if let Ok(pinned) = std::env::var("PODNEXT_BIN") {
+        if !pinned.is_empty() {
+            return pinned;
+        }
+    }
+    env!("CARGO_BIN_EXE_podnext").to_string()
 }
 
 /// Writable scratch base: `/tmp` is not writable for an app uid on Android.
