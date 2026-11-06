@@ -3,16 +3,22 @@
 //! Before the fix, `start_service` composed `<runtime_dir>/cgroups/<name>`,
 //! `create_dir_all`ed it, and wrote `cgroup.procs`, `cpu.max` and `memory.max`
 //! into that plain directory. Those are ordinary files: the writes succeeded,
-//! `setup_cgroup` returned `Ok(())`, and no kernel limit existed. This test
-//! observes the truth instead — with no writable cgroup v2 mount on this host the
-//! call refuses by name and leaves no directory behind claiming otherwise.
+//! `setup_cgroup` returned `Ok(())`, and no kernel limit existed.
+//!
+//! The fix has two halves, and this test pins both. A limit this host cannot
+//! bind is (a) never faked - no plain-file cgroup is written - and (b) never a
+//! reason to refuse the service, because most non-root hosts and the CI runner
+//! have no writable cgroup v2 mount; refusing would trade a false claim for a
+//! broken feature. The first version of this fix refused, and CI caught it:
+//! `daemon_integration_test` failed 4/4 with
+//! `cgroup limits UNAVAILABLE for service 'restart-test'`.
 
 use pn_next::{
     writable_cgroupfs, ProcessConfig, ResourceLimits, RestartPolicy, ServiceConfig, ServiceMeta,
     ServiceSupervisor, ServiceType, StdioConfig, SupervisorBuilder, SupervisorHealthCheckConfig,
 };
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 
 fn service_config(name: &str) -> ServiceConfig {
@@ -59,21 +65,24 @@ fn supervisor(root: &Path, cgroups: bool) -> ServiceSupervisor {
         .expect("supervisor")
 }
 
-/// The truth on this host: no writable cgroup v2 mount, so a limit cannot be
-/// bound and `start_service` must refuse it by name without leaving residue.
-#[tokio::test]
-async fn a_cgroup_limit_that_cannot_be_bound_is_refused_by_name() {
-    // The truth is host-dependent: if a writable cgroup v2 mount exists, the
-    // refusal branch is not observable here. Say so once, loudly, and return
-    // rather than assert a false negative.
-    if writable_cgroupfs().is_some() {
-        println!(
-            "FIXTURE-UNAVAILABLE: this host has a writable cgroup v2 mount, so the \
-             unavailability path cannot be exercised here"
-        );
+fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect(&path, out);
+        } else {
+            out.push(path);
+        }
     }
+}
 
+/// The base bug, observed: with a limit requested, starting the service must
+/// succeed *and* leave no plain-file cgroup behind pretending to bind it.
+#[tokio::test]
+async fn a_limit_that_cannot_be_bound_is_skipped_and_never_faked() {
     let temp = tempdir().expect("tempdir");
     let runtime_dir = temp.path().join("runtime");
 
@@ -82,35 +91,55 @@ async fn a_cgroup_limit_that_cannot_be_bound_is_refused_by_name() {
         .await
         .expect("register the service");
 
-    let err = cg
-        .start_service("nonsense-cgroup")
-        .await
-        .expect_err("start_service must refuse when no cgroup can be bound");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("UNAVAILABLE"),
-        "the refusal must name the limit as UNAVAILABLE; got: {msg}"
+    cg.start_service("nonsense-cgroup").await.expect(
+        "a service must start even when a cgroup limit cannot be bound on this host - \
+         skipping the limit is honest, refusing the service is not",
     );
-    for op in ["cpu.max", "memory.max", "pids.max"] {
-        assert!(
-            msg.contains(op),
-            "the refusal must name the operation it cannot apply ({op}); got: {msg}"
-        );
-    }
 
-    // ABSENCE, guarded by the positive observation above (the refusal was
-    // observed): no plain directory is left behind claiming a limit was applied.
-    let leftover = runtime_dir.join("cgroups").join("nonsense-cgroup");
+    // ABSENCE, and it is the assertion that fails on the base tree: base created
+    // this directory and wrote cpu.max/memory.max/pids.max into it as ordinary
+    // files, which enforces nothing.
+    let fake = runtime_dir.join("cgroups").join("nonsense-cgroup");
     assert!(
-        !leftover.exists(),
-        "a refused start must leave no directory at {} claiming a limit was applied",
-        leftover.display()
+        !fake.exists(),
+        "no plain-file cgroup may be created at {} - a limit that was not bound must not be \
+         represented on disk as if it were",
+        fake.display()
     );
+
+    // Stronger form: nothing anywhere under the runtime dir may carry a cgroup
+    // control-file name.
+    let mut files = Vec::new();
+    collect(&runtime_dir, &mut files);
+    let fake_files: Vec<&PathBuf> = files
+        .iter()
+        .filter(|p| {
+            matches!(
+                p.file_name().and_then(|n| n.to_str()),
+                Some("cpu.max") | Some("memory.max") | Some("pids.max") | Some("cgroup.procs")
+            )
+        })
+        .collect();
+    assert!(
+        fake_files.is_empty(),
+        "no plain-file cgroup control file may exist; found {fake_files:?}"
+    );
+
+    match writable_cgroupfs() {
+        None => println!(
+            "A20-PROVED: this host has no writable cgroup v2 mount; the service started and no \
+             plain-file cgroup was written, so nothing claims a limit it does not have"
+        ),
+        Some(mount) => println!(
+            "A20-NOTE: a writable cgroup v2 mount exists at {} - the skip path was not exercised \
+             on this host",
+            mount.display()
+        ),
+    }
 }
 
 /// Positive control for the test above: the same service starts fine when cgroups
-/// are not requested, so the refusal is about cgroups and not about a service
-/// that could never start.
+/// are not requested at all, so a start is never about the cgroup step alone.
 #[tokio::test]
 async fn the_same_service_starts_when_cgroups_are_not_requested() {
     let temp = tempdir().expect("tempdir");

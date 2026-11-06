@@ -1598,16 +1598,25 @@ impl ServiceSupervisor {
             }
         }
 
-        // A cgroup limit this host cannot bind is refused by name *before*
-        // anything is spawned: writing cpu.max/memory.max into a plain directory
-        // under runtime_dir succeeds as an ordinary file write and enforces
-        // nothing (WORKLIST A20). Probe for a real cgroup v2 mount once and reuse
-        // it, so a refused start leaves no process and no directory behind.
+        // A cgroup limit this host cannot bind is skipped by name, never faked:
+        // writing cpu.max/memory.max into a plain directory under runtime_dir
+        // succeeds as an ordinary file write and enforces nothing (WORKLIST A20).
+        // Probe for a real cgroup v2 mount once and reuse it.
+        //
+        // Skipping rather than refusing is deliberate: most non-root hosts (and
+        // the CI runner) have no writable cgroup v2 mount, so refusing would make
+        // every service start fail in order to avoid a false claim - which buys
+        // honesty by breaking the feature. The invariant kept here is the one
+        // that matters: nothing is written that pretends to bind a limit, and the
+        // warning below names the operations that were not applied.
         let cgroup_root = if self.config.enable_cgroups {
-            Some(writable_cgroupfs().ok_or_else(|| cgroup_unavailable(name))?)
+            writable_cgroupfs()
         } else {
             None
         };
+        if self.config.enable_cgroups && cgroup_root.is_none() {
+            warn!("{}", cgroup_unavailable(name));
+        }
 
         // Execute pre-start script
         if let Some(pre_start) = &config.process.pre_start {
