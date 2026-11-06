@@ -78,3 +78,36 @@ execution to proot; the question this document answers is what is worth taking, 
 The metadata wins and the process-creation loss are both explained by the same design choice: stopping per
 *selected syscall* is cheap, while the supervisor/worker per-process setup is not. A reimplementation should adopt
 the win and plan for the cost - and, following this project's own rule, publish the worse number too.
+
+## 4. Correction after a challenge: cgroups are two different things
+
+A fair objection was raised - if PDN is to run Docker *inside* it, are cgroups not required? Reading `cgroup.c` and
+its own resource table separates the two halves, and shows that my first pass collapsed them wrongly.
+
+**What shroot's `cgroup.c` actually is (1.239 lines):** a userspace **view** of cgroupfs, not enforcement. It owns a
+private file enum (`PROCS, THREADS, EVENTS, CONTROLLERS, SUBTREE, TYPE, FREEZE, ALLOW, DENY, LIST, TASKS, NOTIFY,
+RELEASE, PIDS_MAX, PIDS_CURRENT, PIDS_EVENTS`, `src/cgroup.c:25-26`) with per-file modes 0644/0444 (`:31-33`), answers
+`mkdir`/`subtree_control` writes itself (`md_cgroup_mkdir :755`, `subtree_write :872`), and produces its own errno
+values (`-EBUSY`, `-EPERM`, `-EACCES`, `-EROFS` at `:781-986`). Nothing here writes to the host's `/sys/fs/cgroup`.
+
+**What it does not do, in its own words** (`docs/shroot.md:75`): the resource table lists "hierarchical cgroup
+`pids.max`, membership, freezer and sampled CPU/RSS counters" and then states the boundary - "Android's physical
+FD/task budgets still apply; **cgroup CPU, cpuset, memory and device policies are not enforced**; sampled RSS is not
+kernel page charging; other resource limits remain native".
+
+**So how does Docker run there at all** (`docs/shroot.md:1130` "Docker Engine", `:139`, `:918` "systemd runs as guest
+PID 1 in Shroot's private PID/mount/UTS/IPC/cgroup" namespaces, `:999` the routed network backend "for guests such as
+Docker/Podman that configure their own network topology")? Not by enforcing limits: by giving the guest a private
+cgroup **namespace view** plus the real kernel operations that its executor is permitted to perform. That permission
+is the load-bearing part, and it is exactly what PDN's executor - Android shell UID 2000 inside Termux - does not
+have for cgroup subtree creation.
+
+**Therefore the adoption splits, and the earlier "not taken" note was too coarse:**
+
+- **Take the view** (recorded as S8): a private cgroupfs hierarchy with `pids.max`, membership, freezer and sampled
+  counters, refusing what it cannot honour with an explicit errno instead of pretending.
+- **Do not port enforcement** (S9, conditional): CPU, cpuset, memory and device policies need a rootful executor and
+  a delegated subtree before they can be enforced by anyone. Record the prerequisite and probe for it; do not
+  reimplement 1.239 lines that the reference implementation itself does not enforce.
+- The dockerd `Devices`-cgroup gate dissected earlier (`daemon/daemon.go:1130-1132`, WORKLIST B15) is the same
+  conclusion from the other side: an engine that needs device policy cannot be satisfied by a view.
