@@ -34,7 +34,11 @@ pub async fn cmd_socket_unregister(name: String) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_socket_list(_format: crate::OutputFormat) -> Result<()> {
-    println!("Socket activations:");
+pub async fn cmd_socket_list(format: crate::OutputFormat) -> Result<()> {
+    // B9: "Socket activations:" is a heading, not a message, but a machine caller asked for data.
+    match format {
+        crate::OutputFormat::Json | crate::OutputFormat::Yaml => println!("[]"),
+        _ => println!("Socket activations:"),
+    }
     Ok(())
 }

@@ -231,7 +231,12 @@ pub async fn cmd_gitops_drift(format: crate::OutputFormat) -> Result<()> {
         .collect();
 
     if drifted.is_empty() {
-        println!("No drift recorded: every synced resource last reported as Synced.");
+        // B9: a message for a human, and an empty list for a machine.
+        eprintln!("No drift recorded: every synced resource last reported as Synced.");
+        match format {
+            crate::OutputFormat::Json | crate::OutputFormat::Yaml => println!("[]"),
+            _ => println!("drifted: 0"),
+        }
     } else {
         #[derive(Tabled, Serialize)]
         struct DriftRow {
@@ -261,7 +266,7 @@ pub async fn cmd_gitops_drift(format: crate::OutputFormat) -> Result<()> {
     }
 
     // Stated every time, so nobody reads the line above as a live comparison.
-    println!(
+    eprintln!(
         "Note: this reports the last recorded sync status. Comparing against a live \
          cluster is not implemented - PDN has no cluster adapter, so real drift \
          cannot be detected yet."

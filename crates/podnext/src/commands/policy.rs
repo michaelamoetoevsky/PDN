@@ -30,7 +30,7 @@ pub async fn execute_policy_command(cmd: crate::PolicyCommands) -> Result<()> {
 /// every evaluation was a no-op whatever the user had configured; and nothing
 /// built an `EvaluationContext`, which needs live counters only the supervisor
 /// has.
-pub async fn cmd_policy_eval(name: String, _format: crate::OutputFormat) -> Result<()> {
+pub async fn cmd_policy_eval(name: String, format: crate::OutputFormat) -> Result<()> {
     let config = PolicyEngineConfig::default();
     let policy_dir = config.policy_dir.display().to_string();
     let engine = PolicyEngine::new(config);
@@ -39,8 +39,13 @@ pub async fn cmd_policy_eval(name: String, _format: crate::OutputFormat) -> Resu
     let rules = engine.get_rules().await;
 
     if rules.is_empty() {
-        println!("No policy rules found in {}", policy_dir);
-        println!("Add .yaml/.yml/.toml rule files there, then re-run.");
+        // B9: both lines are messages. The data channel answers per format, and a count is a datum.
+        eprintln!("No policy rules found in {}", policy_dir);
+        eprintln!("Add .yaml/.yml/.toml rule files there, then re-run.");
+        match format {
+            crate::OutputFormat::Json | crate::OutputFormat::Yaml => println!("[]"),
+            _ => println!("rules: 0"),
+        }
         return Ok(());
     }
 

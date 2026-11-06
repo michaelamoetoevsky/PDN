@@ -243,13 +243,22 @@ pub async fn cmd_quota_usage(name: String, _format: crate::OutputFormat) -> Resu
     Ok(())
 }
 
-pub async fn cmd_quota_list(_format: crate::OutputFormat) -> Result<()> {
+pub async fn cmd_quota_list(format: crate::OutputFormat) -> Result<()> {
     let mut quota_manager = ResourceQuotaManager::new(ResourceQuotaConfig::default());
     quota_manager.load_quotas()?;
     let all = quota_manager.all_quotas();
 
     if all.is_empty() {
-        println!("No per-service quotas set. (Defaults still apply to every service.)");
+        // B9: the sentence is a message, so it goes to stderr; the data channel still answers in the
+        // requested format. `[]` is valid JSON and valid YAML, so one line serves both machine formats.
+        eprintln!("No per-service quotas set. (Defaults still apply to every service.)");
+        match format {
+            crate::OutputFormat::Json | crate::OutputFormat::Yaml => println!("[]"),
+            _ => println!(
+                "{:<24} {:>10} {:>12} {:>12} {:>10}",
+                "SERVICE", "CPU", "MEMORY", "SWAP", "PIDS"
+            ),
+        }
         return Ok(());
     }
 

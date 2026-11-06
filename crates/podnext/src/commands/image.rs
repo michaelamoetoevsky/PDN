@@ -99,7 +99,7 @@ pub async fn cmd_search(query: String, limit: usize, format: OutputFormat) -> Re
             OutputFormat::Table => {
                 println!("Curated Official Distributions for PDN:\n");
                 output_table(&curated);
-                println!("\nHint: Run 'podnext install <distro:tag>' or search Docker Hub with 'podnext search <term>'.");
+                eprintln!("\nHint: Run 'podnext install <distro:tag>' or search Docker Hub with 'podnext search <term>'.");
             }
             OutputFormat::Json => output_json(&curated)?,
             OutputFormat::Yaml => output_yaml(&curated)?,
