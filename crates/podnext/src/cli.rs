@@ -277,13 +277,16 @@ pub(crate) fn parse_or_exit() -> Cli {
 fn owning_page() -> String {
     let mut argv: Vec<std::ffi::OsString> = vec!["podnext".into()];
     let mut cmd = Cli::command();
-    for arg in std::env::args().skip(1) {
+    for arg in std::env::args_os().skip(1) {
+        // Issue #41: argv is bytes. `args()` panics re-reading argv when any argument is not valid
+        // UTF-8, and this runs on the failure path - exactly where a bad argument is likely.
+        let arg = arg.to_string_lossy();
         if arg.starts_with('-') {
             continue;
         }
-        if let Some(sub) = cmd.find_subcommand(&arg) {
+        if let Some(sub) = cmd.find_subcommand(&*arg) {
             cmd = sub.clone();
-            argv.push(arg.into());
+            argv.push(arg.as_ref().into());
         }
     }
     argv.push("--help".into());
