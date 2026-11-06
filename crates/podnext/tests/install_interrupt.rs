@@ -212,6 +212,20 @@ fn assert_no_torn_metadata(containers: &Path) {
     }
 }
 
+/// Poll until `f` is true or `deadline` passes.
+fn wait_until(deadline: Duration, mut f: impl FnMut() -> bool) -> bool {
+    let end = std::time::Instant::now() + deadline;
+    loop {
+        if f() {
+            return true;
+        }
+        if std::time::Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// The operator's real store must be byte-for-byte the set it started with.
 fn assert_real_store_intact() {
     let home = std::env::var("HOME").expect("HOME for the real store");
@@ -478,5 +492,68 @@ fn concurrent_same_name_install_never_destroys_the_survivor() {
     assert_eq!(stray_staging_locks(&containers).len(), 0);
 
     let _ = fs::remove_dir_all(containers.join("race"));
+    assert_real_store_intact();
+}
+
+/// The reaper must never take a staging tree a live install owns, or a concurrent
+/// install would be corrupted the moment another install starts.
+#[test]
+fn a_live_installs_staging_tree_survives_another_installs_reaper() {
+    let _guard = serial();
+    let sb = Sandbox::new();
+    let containers = sb.containers();
+
+    let live = spawn_install(&sb, "live", true);
+    // The sidecar lock is taken before the tree is created, so once the tree
+    // exists its owner is holding the lock.
+    assert!(
+        wait_until(Duration::from_secs(30), || staging_dirs(&containers).len()
+            == 1),
+        "the live install never created its staging tree"
+    );
+    // A file that only this test writes: it survives only if the staging tree is
+    // the very same directory, so its absence proves the tree was reaped (and
+    // recreated by the install itself).
+    let live_staging = containers.join(staging_dirs(&containers)[0].clone());
+    let sentinel = live_staging.join("pdn-liveness-sentinel");
+    fs::write(&sentinel, b"live").expect("write sentinel");
+
+    // A second, unrelated install runs its reaper at start while the first is
+    // still downloading.
+    let other = spawn_install(&sb, "other", true);
+    assert!(
+        wait_until(Duration::from_secs(20), || staging_dirs(&containers)
+            .iter()
+            .any(|d| d.contains("-other-"))),
+        "the second install never staged its tree"
+    );
+    assert!(
+        sentinel.exists(),
+        "the second install's reaper deleted the live install's staging tree"
+    );
+
+    let live_out = live.wait_with_output().expect("live install");
+    let other_out = other.wait_with_output().expect("other install");
+    println!(
+        "(e) rc live={:?} other={:?}; staging residue after both: {}",
+        live_out.status.code(),
+        other_out.status.code(),
+        staging_dirs(&containers).len()
+    );
+    assert!(
+        live_out.status.success(),
+        "the live install must still complete: {}",
+        String::from_utf8_lossy(&live_out.stderr)
+    );
+    assert!(
+        other_out.status.success(),
+        "the second install must succeed: {}",
+        String::from_utf8_lossy(&other_out.stderr)
+    );
+    assert_eq!(staging_dirs(&containers).len(), 0);
+    assert_eq!(stray_staging_locks(&containers).len(), 0);
+
+    let _ = force_remove(&sb, "live");
+    let _ = force_remove(&sb, "other");
     assert_real_store_intact();
 }
