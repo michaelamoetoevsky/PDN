@@ -30,8 +30,12 @@ impl ShmManager {
             })
             .or_else(|| dirs::runtime_dir())
             .or_else(|| {
-                // On Android/Termux, use a writable directory in home
-                dirs::home_dir().map(|h| h.join(".local").join("run").join("pn-next"))
+                // On Android/Termux, use a writable directory in home. Routed
+                // through the store's resolver (A19) so a redirected root
+                // (`PN_TEST_ROOT`) is followed, not the operator's real home.
+                crate::paths::resolve_home()
+                    .ok()
+                    .map(|h| h.join(".local").join("run").join("pn-next"))
             })
             .unwrap_or_else(|| crate::paths::temp_base().join("pn-next"));
 

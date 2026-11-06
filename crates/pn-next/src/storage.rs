@@ -20,8 +20,10 @@ pub struct StorageConfig {
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        let root = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/home/user"))
+        // A19: the store root is resolved once (`paths::resolve_home`), so a
+        // redirected root is followed instead of `dirs::home_dir()`.
+        let root = proot_distro_core::paths::resolve_home()
+            .unwrap_or_else(|_| PathBuf::from("/home/user"))
             .join(".pn-next");
         Self {
             root_dir: root.clone(),
@@ -136,8 +138,8 @@ impl VolumeDriver for LocalVolumeDriver {
         name: &str,
         options: &std::collections::HashMap<String, String>,
     ) -> Result<crate::Volume> {
-        let path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/home/user"))
+        let path = proot_distro_core::paths::resolve_home()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/home/user"))
             .join(".pn-next")
             .join("volumes")
             .join(name);
@@ -157,8 +159,8 @@ impl VolumeDriver for LocalVolumeDriver {
     }
 
     async fn remove(&self, name: &str) -> Result<()> {
-        let path = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/home/user"))
+        let path = proot_distro_core::paths::resolve_home()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/home/user"))
             .join(".pn-next")
             .join("volumes")
             .join(name);

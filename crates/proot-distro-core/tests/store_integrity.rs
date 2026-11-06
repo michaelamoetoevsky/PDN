@@ -329,3 +329,99 @@ fn two_concurrent_installs_of_one_name_one_wins_and_the_refusal_names_the_holder
     let _ = child.kill();
     let _ = child.wait();
 }
+
+// ---------------------------------------------------------------------------
+// A19 - the store root has ONE resolver. A redirected root must not spill into
+// the operator's real ~/.podnext.
+// ---------------------------------------------------------------------------
+
+/// Read-only, depth-2 listing of the operator's real store as relative paths.
+///
+/// Depth 2 is enough: every path this class composes is `<real>/.podnext/<entry>`
+/// or `<real>/.podnext/<dir>/<entry>` (containers, volumes, locks, quotas.json), so
+/// a leak appears as a new entry here. Symlinks are listed but not descended.
+fn store_snapshot(root: &Option<PathBuf>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let root = match root {
+        Some(r) if r.exists() => r.clone(),
+        _ => return out,
+    };
+    let mut stack = vec![(root.clone(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            out.push(path.strip_prefix(&root).unwrap_or(&path).to_path_buf());
+            let is_plain_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_plain_dir && depth + 1 < 2 {
+                stack.push((path, depth + 1));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// A19: with the store root redirected (`PN_TEST_ROOT`), every home-derived
+/// default this class owns resolves under the redirect, and NOTHING is created
+/// under the operator's real `~/.podnext`.
+///
+/// The real store is probed through `dirs::home_dir()` on purpose: that is the one
+/// location that must NOT follow the redirect, because the whole point is to
+/// observe whether the redirect reached the operator's store. It is the same probe
+/// A16's lock test uses, and the ledger's A19 predicate exempts it.
+#[test]
+fn a_redirected_root_creates_nothing_under_the_operators_real_store() {
+    let _g = ENV_LOCK.lock().unwrap();
+
+    // Snapshot the operator's real store BEFORE anything is redirected.
+    let real_store = dirs::home_dir().map(|h| h.join(".podnext"));
+    let before = store_snapshot(&real_store);
+
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    std::env::set_var("PN_TEST_ROOT", &home);
+
+    // Every default the class owns must follow the redirect.
+    let cfg = proot_distro_core::config::Config::default();
+    assert!(
+        cfg.storage.root_dir.starts_with(&home),
+        "storage.root_dir did not follow the redirect: {:?}",
+        cfg.storage.root_dir
+    );
+    assert!(
+        cfg.paths.root_dir.starts_with(&home),
+        "paths.root_dir did not follow the redirect: {:?}",
+        cfg.paths.root_dir
+    );
+
+    let container = proot_distro_core::container::Container::new("a19".into(), Default::default())
+        .expect("container");
+    assert!(
+        container.rootfs_path.starts_with(&home),
+        "rootfs_path did not follow the redirect: {:?}",
+        container.rootfs_path
+    );
+
+    // The store itself: creating it is where a second root would leak.
+    let paths = proot_distro_core::ContainerPaths::new().expect("store paths");
+    paths.ensure_dirs().expect("ensure dirs");
+    assert!(
+        paths.containers_dir.starts_with(&home),
+        "containers_dir did not follow the redirect: {:?}",
+        paths.containers_dir
+    );
+
+    std::env::remove_var("PN_TEST_ROOT");
+
+    // Nothing appeared under the operator's real store.
+    let after = store_snapshot(&real_store);
+    assert_eq!(
+        before, after,
+        "a redirected root wrote into the operator's real store"
+    );
+}

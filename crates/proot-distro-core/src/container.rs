@@ -492,8 +492,11 @@ pub struct Container {
 impl Container {
     pub fn new(name: String, config: ContainerConfig) -> Result<Self> {
         let rootfs_path = config.rootfs_path.clone().unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("/home/user"))
+            // A19: the store root has exactly one resolver. Composing it from
+            // `dirs::home_dir()` here ignored `PN_TEST_ROOT`, so a redirected
+            // store still placed rootfs paths under the operator's real home.
+            crate::paths::resolve_home()
+                .unwrap_or_else(|_| PathBuf::from("/home/user"))
                 .join(".pn-next")
                 .join("containers")
                 .join(&name)

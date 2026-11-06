@@ -453,6 +453,24 @@ CHECKS: list[dict] = [
          cmd="[ $(grep -c 'Refused:' docs/src/cli-reference.md) -ge 7 ]", needle=None),
     dict(issue="47", claim="each refused option exits 1 without running the command",
          cmd="cargo test -p podnext --test stub_refusals", needle=None, cargo=True),
+
+    # ── A19: the store root has ONE resolver (paths::resolve_home) ──────────────
+    # A path composed from the raw `dirs::home_dir()` while the product resolves its
+    # root through `paths::resolve_home()` is a SECOND root: redirecting one does not
+    # redirect the other. A4 left lock files in the operator's real store; A16 fixed
+    # that one path; A19 closes the class. The rule: outside the resolver no product
+    # module may compose a path from the raw call. The exemptions are named so a
+    # reader can audit them: the resolver itself (`paths.rs`), the one real-store
+    # probe (locking.rs's A16 test must resolve the REAL home to prove the redirect
+    # did not reach it), the integration-test tree (its acceptance test reads the
+    # real store for the same reason), and comment lines (a mention is not a call).
+    dict(issue="46", claim="no product module outside the resolver composes a path from the raw dirs::home_dir() call",
+         cmd="grep -rnF --include='*.rs' 'dirs::home_dir()' crates "
+             "| grep -vF '/tests/' "
+             "| grep -vF 'crates/proot-distro-core/src/paths.rs:' "
+             "| grep -vF 'crates/proot-distro-core/src/locking.rs:' "
+             "| grep -vE ':[0-9]+:[[:space:]]*//'",
+         mode="absent", needle="dirs::home_dir()"),
 ]
 
 # Issues with no honest automated check, and why. Every key is an issue that exists.

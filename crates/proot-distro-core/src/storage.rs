@@ -34,8 +34,10 @@ pub struct VolumeInfo {
 /// every volume advertised an unusable path. Keep the data beside the
 /// containers instead, where the user can actually write.
 fn volumes_root() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+    // A19: the store root is resolved once, through `paths::resolve_home`, so a
+    // redirected root (`PN_TEST_ROOT`) is followed rather than `dirs::home_dir()`.
+    crate::paths::resolve_home()
+        .unwrap_or_else(|_| PathBuf::from("."))
         .join(".podnext")
         .join("volumes")
 }

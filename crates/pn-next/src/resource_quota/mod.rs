@@ -187,7 +187,11 @@ pub enum ResourceType {
 /// Sits beside the other PDN runtime state so it is removed with the rest, and
 /// follows the same `~/.podnext/` convention the container store uses.
 fn quotas_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|home| home.join(".podnext").join("quotas.json"))
+    // A19: the store root is resolved once (`paths::resolve_home`), not from the
+    // raw `dirs::home_dir()`, so a redirected root is followed.
+    proot_distro_core::paths::resolve_home()
+        .ok()
+        .map(|home| home.join(".podnext").join("quotas.json"))
 }
 
 pub struct ResourceQuotaManager {

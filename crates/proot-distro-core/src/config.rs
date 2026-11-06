@@ -210,8 +210,10 @@ pub struct StorageConfig {
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        let root = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/home/user"))
+        // A19: one resolver for the store root, so a redirected root
+        // (`PN_TEST_ROOT`) is followed instead of the operator's real home.
+        let root = crate::paths::resolve_home()
+            .unwrap_or_else(|_| PathBuf::from("/home/user"))
             .join(".pn-next");
         Self {
             driver: "local".to_string(),
@@ -263,8 +265,10 @@ pub struct PathsConfig {
 
 impl Default for PathsConfig {
     fn default() -> Self {
-        let root = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/home/user"))
+        // A19: one resolver for the store root, so a redirected root
+        // (`PN_TEST_ROOT`) is followed instead of the operator's real home.
+        let root = crate::paths::resolve_home()
+            .unwrap_or_else(|_| PathBuf::from("/home/user"))
             .join(".pn-next");
         Self {
             root_dir: root.clone(),

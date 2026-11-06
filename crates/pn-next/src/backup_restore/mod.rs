@@ -87,9 +87,10 @@ impl Default for BackupConfig {
         let containers_dir = std::env::var("PDN_CONTAINERS_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
-                pn_trace!("DEBUG: dirs::home_dir() = {:?}", dirs::home_dir());
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/"))
+                // A19: one resolver for the store root, so a redirected root
+                // (`PN_TEST_ROOT`) is followed, not the operator's real home.
+                proot_distro_core::paths::resolve_home()
+                    .unwrap_or_else(|_| PathBuf::from("/"))
                     .join(".podnext")
                     .join("containers")
             });
@@ -98,9 +99,10 @@ impl Default for BackupConfig {
         let backup_dir = std::env::var("PDN_BACKUP_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
-                pn_trace!("DEBUG: dirs::home_dir() = {:?}", dirs::home_dir());
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/"))
+                // A19: one resolver for the store root, so a redirected root
+                // (`PN_TEST_ROOT`) is followed, not the operator's real home.
+                proot_distro_core::paths::resolve_home()
+                    .unwrap_or_else(|_| PathBuf::from("/"))
                     .join(".podnext")
                     .join("backups")
             });

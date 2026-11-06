@@ -148,8 +148,10 @@ pub async fn build_local_image(
     println!("Base image: {}", base_image);
 
     let containers_dir = containers_dir.unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+        // A19: one resolver for the store root, so a redirected root
+        // (`PN_TEST_ROOT`) is followed instead of the raw `dirs::home_dir()`.
+        proot_distro_core::paths::resolve_home()
+            .unwrap_or_else(|_| PathBuf::from("."))
             .join(".podnext")
             .join("containers")
     });

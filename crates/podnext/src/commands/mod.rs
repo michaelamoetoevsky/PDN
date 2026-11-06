@@ -96,7 +96,9 @@ fn output_yaml<T: Serialize>(items: &T) -> Result<()> {
 async fn get_supervisor() -> Result<ServiceSupervisor> {
     // Derived from the home directory rather than a hardcoded Termux path, so the
     // supervisor also works when PDN is run from a different prefix.
-    let home = dirs::home_dir().unwrap_or_default();
+    // A19: one resolver for the store root, so a redirected root (`PN_TEST_ROOT`)
+    // is followed instead of the raw `dirs::home_dir()`.
+    let home = proot_distro_core::paths::resolve_home().unwrap_or_default();
     let env_or = |key: &str, fallback: std::path::PathBuf| {
         std::env::var(key).unwrap_or_else(|_| fallback.to_string_lossy().into_owned())
     };

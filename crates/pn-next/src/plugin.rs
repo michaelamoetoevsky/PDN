@@ -27,7 +27,8 @@ pub struct PluginConfig {
 impl Default for PluginConfig {
     fn default() -> Self {
         let mut dirs = Vec::new();
-        if let Some(home) = dirs::home_dir() {
+        // A19: one resolver for the store root, so a redirected root is followed.
+        if let Ok(home) = proot_distro_core::paths::resolve_home() {
             dirs.push(home.join(".pn-next").join("plugins"));
         }
         dirs.push("/usr/local/lib/pn-next/plugins".into());
