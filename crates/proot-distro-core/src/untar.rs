@@ -80,6 +80,19 @@ pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result
         if !is_inside(dest, &target) {
             continue;
         }
+        // ...and refuse to travel *through* one. An earlier entry (or a lower
+        // layer) may have planted a symlink, and `File::create`/`create_dir_all`
+        // follow it, so this entry's bytes would land wherever the link points —
+        // `is_inside` only normalises the name and cannot see the link on disk.
+        if let Some(link) = first_symlink_component(dest, &target) {
+            return Err(anyhow!(
+                "refusing entry `{}`: `{}` is a symlink on its path, which would carry the \
+                 write outside `{}`",
+                path.display(),
+                link.display(),
+                dest.display()
+            ));
+        }
         if let Some(parent) = target.parent() {
             ensure_dir(parent, &mut created)?;
         }
@@ -220,6 +233,27 @@ fn is_inside(root: &Path, path: &Path) -> bool {
         }
     }
     normalized.starts_with(root)
+}
+
+/// The first component of `target` below `dest` that already exists and is a
+/// symlink, if any.
+///
+/// `symlink_metadata` classifies each component itself, so a link that points
+/// out of the tree is caught without ever following it. A path whose components
+/// are all real (or not yet created — the directory is made later) finds
+/// nothing, which is the legitimate case.
+fn first_symlink_component(dest: &Path, target: &Path) -> Option<PathBuf> {
+    let relative = target.strip_prefix(dest).ok()?;
+    let mut current = dest.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        if let Ok(meta) = fs::symlink_metadata(&current) {
+            if meta.file_type().is_symlink() {
+                return Some(current);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -481,6 +515,75 @@ mod tests {
         assert!(dir.join("unrelated.txt").exists());
         assert!(!dir.join(".wh.never-existed").exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The defect this closes: a symlink entry that points outside `dest`, followed by a regular
+    /// entry whose path goes *through* that link. `File::create` follows the link, so the later
+    /// file's bytes land outside the extraction root — the classic tar write-through. The archive
+    /// is built in memory; reaching the bug needs no real image.
+    #[test]
+    fn a_symlink_cannot_carry_a_later_entry_out_of_the_tree() {
+        let dir = std::env::temp_dir().join(format!("pdn-untar-wt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // A sibling of the destination, holding a sentinel that must survive.
+        let outside = dir
+            .parent()
+            .unwrap()
+            .join(format!("pdn-untar-wt-out-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("sentinel"), b"untouched").unwrap();
+
+        let mut builder = Builder::new(Vec::new());
+
+        // (a) a symlink inside the archive that points outside the destination.
+        let mut sym = tar::Header::new_gnu();
+        sym.set_size(0);
+        sym.set_mode(0o777);
+        sym.set_entry_type(EntryType::Symlink);
+        sym.set_link_name(&outside).unwrap();
+        sym.set_cksum();
+        builder
+            .append_data(&mut sym, "escape", io::empty())
+            .unwrap();
+
+        // (b) a later regular entry whose path is reached through that symlink.
+        let mut pwn = tar::Header::new_gnu();
+        pwn.set_size(5);
+        pwn.set_mode(0o644);
+        pwn.set_entry_type(EntryType::Regular);
+        pwn.set_cksum();
+        builder
+            .append_data(&mut pwn, "escape/pwned", &b"pwned"[..])
+            .unwrap();
+
+        let tar = builder.into_inner().unwrap();
+        let result = extract(tar.as_slice(), &dir);
+
+        // The bytes must never leave the destination, on either outcome.
+        assert!(
+            !outside.join("pwned").exists(),
+            "the later entry was written through the archive's symlink, outside the destination"
+        );
+        assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"untouched");
+        assert_eq!(
+            fs::read_dir(&outside).unwrap().count(),
+            1,
+            "the destination's sibling gained an entry"
+        );
+
+        // ...and the write-through is refused by name, not silently skipped.
+        let err = result.expect_err("the write-through must be refused, not allowed");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("escape/pwned"),
+            "the refusal must name the offending entry: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     // A whiteout whose own path escapes the destination cannot be built with this crate: the `tar`
