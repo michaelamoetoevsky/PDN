@@ -21,8 +21,10 @@ macro_rules! pn_trace {
     };
 }
 
+mod digest;
 mod image;
 mod meta;
+mod retry;
 mod session;
 
 pub use image::*;

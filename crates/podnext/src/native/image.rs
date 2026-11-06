@@ -3,6 +3,7 @@
 //!
 //! Split out of `native` in wave 7; behaviour unchanged.
 
+use super::{digest, retry};
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use hex;
@@ -37,6 +38,19 @@ pub struct DockerHubImage {
 fn http_client() -> Client {
     Client::builder()
         .timeout(std::time::Duration::from_secs(60))
+        // B2: credentials are bound to their origin. reqwest itself drops the sensitive headers
+        // when the host or port changes; what it would otherwise still do - follow a same-host
+        // HTTPS -> HTTP redirect, i.e. hand the bearer token to a cleartext connection - is
+        // refused here, so the transfer fails instead (retry::plan_redirect owns the decision).
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            let from = attempt.previous().last().unwrap_or(attempt.url());
+            match retry::plan_redirect(from, attempt.url()) {
+                retry::Redirect::Refuse(reason) => attempt.error(reason),
+                retry::Redirect::Follow | retry::Redirect::FollowWithoutCredentials => {
+                    attempt.follow()
+                }
+            }
+        }))
         .build()
         .unwrap_or_else(|_| Client::new())
 }
@@ -693,7 +707,12 @@ async fn download_and_extract_layers(
 
     for layer in layers {
         let digest_str = layer.digest().to_string();
-        pb.set_message(format!("Downloading {}", &digest_str[..20]));
+        // B1: validate before this value reaches any path, URL or slice.
+        digest::validate_digest(&digest_str)?;
+        // A validated digest is `sha256:` + 64 hex, so this cannot panic; it is taken through
+        // `get` so a refusal upstream can never be turned into a slice-bounds panic here.
+        let short = digest_str.get(..20).unwrap_or(&digest_str);
+        pb.set_message(format!("Downloading {}", short));
 
         let layer_data = download_layer(name, &digest_str, token).await?;
 
@@ -721,7 +740,60 @@ async fn download_and_extract_layers(
     Ok(())
 }
 
+/// One transfer attempt, for the retry loop in [`download_layer`].
+enum AttemptOutcome {
+    /// The body arrived whole.
+    Body(Vec<u8>),
+    /// The attempt failed; `status` is `None` when no response arrived at all (B3).
+    Failed {
+        status: Option<u16>,
+        retry_after: Option<String>,
+        note: String,
+    },
+}
+
+/// One attempt: send, read, and check the body against its declared length.
+///
+/// A hard error is returned as one (a truncated body is a broken transfer, not a shorter layer);
+/// a failed status is returned as data, because whether it may be repeated is the policy's
+/// decision, not this function's.
+async fn fetch_layer(client: &Client, url: &str, token: &str) -> Result<AttemptOutcome> {
+    let response = match client.get(url).bearer_auth(token).send().await {
+        Ok(response) => response,
+        Err(e) => {
+            return Ok(AttemptOutcome::Failed {
+                status: None,
+                retry_after: None,
+                note: e.to_string(),
+            })
+        }
+    };
+
+    let status = response.status();
+    if !status.is_success() {
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        return Ok(AttemptOutcome::Failed {
+            status: Some(status.as_u16()),
+            retry_after,
+            note: status.to_string(),
+        });
+    }
+
+    let declared = response.content_length();
+    let body = response.bytes().await?;
+    retry::ensure_complete_body(declared, body.len() as u64)?;
+    Ok(AttemptOutcome::Body(body.to_vec()))
+}
+
 async fn download_layer(name: &str, digest: &str, token: &str) -> Result<Vec<u8>> {
+    // B1: validate before any path - here the request path of the blob URL - is composed from the
+    // digest. This is the choke point the comparator names (`docker/cache.py:validate_digest`).
+    digest::validate_digest(digest)?;
+
     let client = http_client();
     // Add library/ prefix for official images (no slash in name)
     let manifest_name = if name.contains('/') {
@@ -734,14 +806,33 @@ async fn download_layer(name: &str, digest: &str, token: &str) -> Result<Vec<u8>
         manifest_name, digest
     );
 
-    let response = client.get(&url).bearer_auth(token).send().await?;
-
-    if !response.status().is_success() {
-        bail!("Failed to download layer {}: {}", digest, response.status());
+    // B3: a real retry policy. Transient failures are repeated up to the budget; a deterministic
+    // status (a 404, a 401) is not repeated at all, because a repeat cannot succeed.
+    let mut attempt = 1;
+    loop {
+        match fetch_layer(&client, &url, token).await? {
+            AttemptOutcome::Body(body) => return Ok(body),
+            AttemptOutcome::Failed {
+                status,
+                retry_after,
+                note,
+            } => {
+                let now = std::time::SystemTime::now();
+                match retry::next_attempt(attempt, status, retry_after.as_deref(), now) {
+                    retry::Decision::Retry { delay } => {
+                        eprintln!(
+                            "layer {digest}: {note}; attempt {attempt} failed, retrying in {delay:?}"
+                        );
+                        tokio::time::sleep(delay).await;
+                        attempt += 1;
+                    }
+                    retry::Decision::GiveUp { reason } => {
+                        bail!("Failed to download layer {digest}: {note} ({reason})")
+                    }
+                }
+            }
+        }
     }
-
-    let bytes = response.bytes().await?;
-    Ok(bytes.to_vec())
 }
 
 fn extract_layer(data: &[u8], _media_type: &str, rootfs: &Path) -> Result<()> {
