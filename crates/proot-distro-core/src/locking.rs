@@ -118,9 +118,15 @@ impl Drop for FileLock {
 /// that shares the store also shares the lock directory. It used to be `.pn-next`,
 /// a directory nothing else in the store used, while the install path took no lock
 /// at all: `~/.podnext/locks/` stayed empty through every race (WORKLIST A4).
+///
+/// The root comes from [`crate::paths::resolve_home`], the same resolver the store
+/// (`ContainerPaths`) and the CLI use - one source of truth. Calling
+/// `dirs::home_dir()` directly here ignored `PN_TEST_ROOT`, so a test that
+/// redirected the store still wrote its lock into the operator's real
+/// `~/.podnext/locks/` (WORKLIST A16).
 pub fn lock_path(name: &str) -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/home/user"))
+    crate::paths::resolve_home()
+        .unwrap_or_else(|_| PathBuf::from("/home/user"))
         .join(".podnext")
         .join("locks")
         .join(format!("{}.lock", name))
@@ -236,13 +242,28 @@ impl Drop for ContainerLock {
 mod tests {
     use super::*;
 
+    /// Serialises the tests that read or mutate the store-root environment.
+    static STORE_ROOT_ENV: Mutex<()> = Mutex::new(());
+
+    /// A lock path in this process's own temp dir, never the operator's store.
+    ///
+    /// These tests used `ContainerLock::new`, which resolves the real store root
+    /// and so left `~/.podnext/locks/*.lock` behind on every `cargo test`
+    /// (WORKLIST A16). `/tmp` is not writable on Android, hence `temp_base`.
+    fn scratch_lock(tag: &str) -> (PathBuf, PathBuf) {
+        let dir = crate::paths::temp_base().join(format!("pdn-lock-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        (dir.clone(), dir.join("box.lock"))
+    }
+
     #[test]
     fn test_container_lock_exclusive_contention() {
-        let mut lock1 = ContainerLock::new("test_contention_box", true);
+        let (dir, path) = scratch_lock("contention");
+        let mut lock1 = ContainerLock::at(&path, true);
         assert!(lock1.acquire().is_ok());
 
         // Second exclusive lock attempt on same container must fail with non-blocking contention
-        let mut lock2 = ContainerLock::new("test_contention_box", true);
+        let mut lock2 = ContainerLock::at(&path, true);
         let res2 = lock2.acquire();
         assert!(res2.is_err());
         assert!(res2
@@ -255,19 +276,22 @@ mod tests {
 
         // Now lock2 should succeed
         assert!(lock2.acquire().is_ok());
+        drop(lock2);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_container_lock_shared_vs_exclusive() {
-        let mut shared1 = ContainerLock::new("test_sh_ex_box", false);
+        let (dir, path) = scratch_lock("shared");
+        let mut shared1 = ContainerLock::at(&path, false);
         assert!(shared1.acquire().is_ok());
 
         // Second shared lock should succeed
-        let mut shared2 = ContainerLock::new("test_sh_ex_box", false);
+        let mut shared2 = ContainerLock::at(&path, false);
         assert!(shared2.acquire().is_ok());
 
         // Exclusive lock must fail while shared locks are held
-        let mut exclusive = ContainerLock::new("test_sh_ex_box", true);
+        let mut exclusive = ContainerLock::at(&path, true);
         assert!(exclusive.acquire().is_err());
 
         drop(shared1);
@@ -275,6 +299,70 @@ mod tests {
 
         // Exclusive lock now succeeds
         assert!(exclusive.acquire().is_ok());
+        drop(exclusive);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The lock lives under the one resolved store root, not a second home.
+    #[test]
+    fn lock_path_follows_the_resolved_store_root() {
+        let _g = STORE_ROOT_ENV.lock().unwrap();
+        let root = crate::paths::resolve_home().expect("a resolvable store root");
+        assert_eq!(
+            lock_path("probe"),
+            root.join(".podnext").join("locks").join("probe.lock"),
+            "the lock directory must be the root the store resolves"
+        );
+    }
+
+    /// A redirected store root redirects the lock with it, and the operator's real
+    /// `~/.podnext/locks/` is left untouched.
+    #[test]
+    fn a_redirected_store_root_keeps_the_lock_out_of_the_real_store() {
+        let _g = STORE_ROOT_ENV.lock().unwrap();
+
+        let base =
+            crate::paths::temp_base().join(format!("pdn-lock-redirect-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        let name = format!("redirect-probe-{}", std::process::id());
+        let redirected = base
+            .join(".podnext")
+            .join("locks")
+            .join(format!("{name}.lock"));
+        // The real store's path for this unique name, before the root is moved.
+        let real = dirs::home_dir().map(|h| {
+            h.join(".podnext")
+                .join("locks")
+                .join(format!("{name}.lock"))
+        });
+
+        std::env::set_var("PN_TEST_ROOT", &base);
+        let mut lock = ContainerLock::new(&name, true);
+        lock.acquire()
+            .expect("the redirected lock must be acquirable");
+
+        assert_eq!(
+            lock_path(&name),
+            redirected,
+            "the lock must follow the redirected store root"
+        );
+        assert!(
+            redirected.exists(),
+            "the lock must exist under the redirected root"
+        );
+        if let Some(real) = real {
+            assert!(
+                !real.exists(),
+                "a redirected store root wrote {} into the operator's real store",
+                real.display()
+            );
+        }
+
+        drop(lock);
+        std::env::remove_var("PN_TEST_ROOT");
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

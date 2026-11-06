@@ -358,6 +358,26 @@ pub fn copy_into_rootfs(
     dest: &str,
     rootfs: &std::path::Path,
 ) -> Result<()> {
+    // A `..` component climbs out of whatever the path is joined onto: the
+    // destination is joined onto the image rootfs, so `COPY x ../../../escaped`
+    // wrote outside the image and into the store; the source is joined onto the
+    // build context, so `../secret` read outside it. Docker refuses both. Checked
+    // here, before any filesystem write, so nothing lands outside the root
+    // (WORKLIST A11).
+    //
+    // ponytail: a literal `..` component only - a symlink already inside the
+    // rootfs that points outward is not resolved. Add realpath containment when a
+    // Dockerfile can place such a symlink before its COPY.
+    if dest.split('/').any(|c| c == "..") {
+        bail!(
+            "COPY/ADD destination '{dest}' escapes the image root: '..' is not allowed in a COPY/ADD path"
+        );
+    }
+    if src.split('/').any(|c| c == "..") {
+        bail!(
+            "COPY/ADD source '{src}' escapes the build context: '..' is not allowed in a COPY/ADD path"
+        );
+    }
     if src.contains('*') || src.contains('?') {
         // ponytail: `*`/`?` within a path component only — no `**`, `[...]`
         // classes or brace expansion. Add when a real Dockerfile needs them.
