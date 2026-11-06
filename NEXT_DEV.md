@@ -122,6 +122,95 @@ reason the backlog in section 8 is ordered the way it is:
    it"; `paths.py:container_manifest` is read at every `login`/`run` because "its Env goes into the child
    environment".
 
+### Round-2 additions, from the deep readings (R), parent-verified where marked
+
+The parent re-checked these against the trees on this device rather than accepting the report - six claims
+confirmed at the cited line, one refuted (below).
+
+**proot, the parts round 1 had not read**
+
+- **Exactly one extension is enabled by default: `mountinfo`,** gated only by the environment variable
+  `PROOT_NO_MOUNTINFO` - `src/cli/cli.c:481-482`. **verified**: those two lines are the `getenv` guard and
+  the `initialize_extension(tracee, mountinfo_callback, NULL)` call. Every other extension is opt-in:
+  `kompat` `-k`, `fake_id0` `-0/-i/--change-id/-S`, `link2symlink` `-l`, `sysvipc` `--sysvipc`,
+  `ashmem_memfd` `--ashmem-memfd` (Android/bionic builds only), `fix_symlink_size` `-L`, `hidden_files`
+  `-H`, `port_switch` `-p`. `src/extension/extension.c:103` is the only registration path, and there are
+  exactly **9 call sites** - **verified** by counting them.
+- **Two facts about PDN's own argv that follow from it, measured in PDN's source.** PDN passes
+  `--link2symlink` by default (`crates/proot-core/src/lib.rs:208`, `:347`,
+  `crates/podnext/src/native/image.rs:117`, default `true` at `crates/proot-core/src/cli.rs:91`), so L2S is
+  live in every session - which is why `crates/podnext/src/commands/sync.rs:58-67` must rewrite L2S
+  intermediate targets. And PDN **never** sets `PROOT_NO_MOUNTINFO` (no occurrence under `crates/`), so the
+  one default-on extension is always active in a PDN guest. Neither fact is recorded in PDN's own docs.
+- **Seccomp acceleration comes from a static list**, not from observation: `proot_sysnums[]` at
+  `src/syscall/seccomp.c:331` carries **exactly 108 entries** - **verified** by counting the unique `PR_`
+  symbols that follow it - and an extension appends to the filter, so the filter is a function of the
+  extension set. The gate is `PROOT_NO_SECCOMP`.
+- **`/dev/shm` is faked at the syscall layer, not mounted**: `src/syscall/exit.c:747` writes `TMPFS_MAGIC`
+  into the returned `statfs`, and `src/tracee/seccomp.c:356` sets `f_type = 0x01021994` - **verified**, both
+  lines. PDN's per-container `/dev/shm` therefore stands on a fiction, which belongs in what PDN documents
+  about shared memory.
+- **`kill-on-exit` is off unless asked**: `src/cli/proot.c:195-199` sets `tracee->killall_on_exit = true`
+  only inside the option handler - **verified**.
+- **The guest never runs its own program directly**: proot substitutes its embedded loader for `SYSARG_1`
+  (`src/execve/enter.c:718-728`), extracts that loader to a temporary file (overridable with
+  `PROOT_LOADER`; directory via `PROOT_TMP_DIR`), and pushes a serialized load script below the tracee's
+  stack pointer at exit (`src/execve/exit.c:174-403`). Two consequences PDN lives with: exec needs a
+  writable temp directory, and `PROOT_TMP_DIR` names a host path the guest can influence.
+- **Many syscalls are emulated or voided rather than passed through**: `getcwd`, `chdir`/`fchdir`,
+  `mount`/`umount`/`pivot_root`/`unshare`/`setns`, `CLONE_NEW*` stripping in `clone`/`clone3`, the
+  `fsopen` family (`-ENOSYS`), `execveat` without `AT_FDCWD` (`-ENOSYS`), `brk` rebuilt on `mmap`/`mremap`,
+  `statx` rebuilt on `stat`. The void trick is `set_sysnum(tracee, PR_void)`, with `PR_void` mapped to a
+  "SYSCALL_AVOIDER" number that differs per architecture. For PDN the question is which of these a Rust
+  reimplementation must reproduce to keep a guest working and which it can ignore precisely because it
+  drives proot rather than replacing it.
+- **An outer seccomp policy is a supported path**: a `SIGSYS` carrying `si_code == SYS_SECCOMP` is caught
+  and rewritten (`src/tracee/event.c:837-891`), so a guest that installs its own filter gets emulated
+  syscalls rather than a killed process. This is why "it worked on my machine" is not evidence for a guest
+  under proot.
+
+**proot-distro, the parts round 1 had not read**
+
+9. **stdout is a data channel; every message goes to stderr.** `message.py:187` writes to `stderr` and
+   erases the progress line only on a TTY; the only `print()`s in the whole package are the pipeable
+   identifiers in `list.py`/`ps.py`/`search.py` plus the `backup` archive stream and `--get-proot-cmd`.
+   **verified**: a grep for `print(` across all 77 modules produced exactly one other hit,
+   `message.py:207: print(*args, file=sys.stderr)`, which is stderr. PDN records the same rule for its own
+   output in its 0.2.0 changelog (`41768a6`, with stdout reserved for data and `--json` purity asserted at
+   `f6329c5`); the reference's version is stricter because it is enforced across the whole package rather
+   than per command.
+10. **Writes are atomic and the rename is identity-checked.** `atomic.py:92 atomic_replace` writes through a
+   descriptor obtained by `statedir.py:156 open_state_dir` (a per-component O_NOFOLLOW walk from a trust
+   root), and `atomic.py:232` refuses with `ESTALE` if the temporary file's `(st_dev, st_ino)` changed
+   underneath it. `statedir.py:44-50` names the one case it cannot close - a name re-pointed after a
+   validated descriptor has been handed out.
+11. **Session liveness is an inherited flock, never a PID.** `session.py:174` clears O_CLOEXEC so proot and
+   every descendant hold the descriptor; `session.py:472` probes with a shared, non-blocking `flock`;
+   `session.py:392 session_holders()` finds survivors by scanning `/proc/*/fd` for the inode. A PID can be
+   reused; a held descriptor cannot.
+12. **`sync --delete` refuses to guess, and `kill` escalates for a stated reason.** `sync.py:1093` declines
+   to prune when the root was unreadable, `sync.py:565` refills the source list for a second pass so a file
+   written between passes is not pruned, and `copy.py:198` falls back from `renameat` on `EXDEV` in a way
+   that removes nothing when the copy was incomplete. `kill.py:236` escalates TERM then QUIT then KILL
+   because, in its own words, "proot ignores SIGTERM/SIGINT/SIGHUP outright, so a graceful request never
+   reached the container root" - **verified** at those lines, along with a
+   `_NON_TERMINATING_SIGNALS` set (`SIGSTOP`, `SIGCONT`, `SIGTSTP`, `SIGTTIN`, `SIGTTOU`, `SIGCHLD`,
+   `SIGURG`, `SIGWINCH`, `SIGUSR1`, `SIGUSR2`) that is delivered as asked and never escalated, so
+   `kill -s STOP` cannot become a teardown by surprise. PDN's `kill` has the same problem and its own
+   answer; the reference's is the one to compare against.
+13. **A run lower in the stack is not a run lower in the argument order.** `cli.py:204` dispatches
+   `HELP_COMMANDS` before argparse ever runs, so `help` works with no dependency resolution, and
+   `parser.py:49` renders a command's own page on a parse error rather than a usage blob. Help is data:
+   `pages.py:43 HELP_PAGES` rendered by `render.py:290`.
+
+**One claim did not survive verification, and the reverse is true.** The proot-distro report stated that
+`names.py:40` "allows a space/newline in a container name". The line is
+`_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*\Z")` - a strict rule, with `NAME_RULE_HINT` spelling
+it out for users. The reference is *stricter* here than the report claimed, and stricter than PDN needs to
+be; the claim is recorded as refuted rather than folded into this document's findings. Every other claim
+the parent checked held at the cited line, which is the only reason the rest are quoted as findings rather
+than as a summary of a summary.
+
 ## 5. The round-1 adoption list, with its acceptance tests (condensed)
 
 Full table with each test in `research/PROOT_AND_PROOTDISTRO_SOURCE_DISSECTION.md` section 3. Status is
@@ -164,10 +253,10 @@ are folded into sections 4-5 and the backlog in section 8 as they land.
 
 | dissection | source | file | status |
 |---|---|---|---|
-| proot, deep | `src/syscall` (25 files, `enter.c` 3,069 lines), `src/tracee` (13 files), the extension enable logic, `src/execve`, `src/loader` | `research/DISSECTION_PROOT_DEEP.md` | running |
-| proot-distro, deep | the argv parser, message/progress layer, state-dir and atomic/compress/shm helpers, and the commands `copy`, `sync`, `remove`, `kill`, `list`, `run`, `build`, `help` + completions | `research/DISSECTION_PROOTDISTRO_DEEP.md` | running |
+| proot, deep | `src/syscall` (25 files, `enter.c` 3,069 lines), `src/tracee` (13 files), the extension enable logic, `src/execve`, `src/loader` | `research/DISSECTION_PROOT_DEEP.md` | **landed, parent-verified** (6 claims checked at their cited lines) |
+| proot-distro, deep | the argv parser, message/progress layer, state-dir and atomic/compress/shm helpers, and the commands `copy`, `sync`, `remove`, `kill`, `list`, `run`, `build`, `help` + completions | `research/DISSECTION_PROOTDISTRO_DEEP.md` | **landed, parent-verified** (one claim refuted; see section 4) |
 | dockerd | `daemon/`, `cmd/dockerd/`, `libcontainerd/`, `api/types/`, `pkg/plugins/` | `research/DISSECTION_DOCKERD.md` | running |
-| containerd | the supervisor/shim split, shim v2 (ttrpc, fds, stdio, exit status), content store + snapshotters with GC and leases, events and task lifecycle | `research/DISSECTION_CONTAINERD.md` | running |
+| containerd | the supervisor/shim split, shim v2 (ttrpc, fds, stdio, exit status), content store + snapshotters with GC and leases, events and task lifecycle | `research/DISSECTION_CONTAINERD.md` | landed, verification pending |
 | runc | the `runc init` re-exec, `state.json`, cgroup v2 layout, the namespace/mount/seccomp/capability order, exit-status propagation | `research/DISSECTION_RUNC.md` | running |
 
 ## 8. The consolidated next-dev list
@@ -188,6 +277,23 @@ Ordered by what unblocks the most, with the test that settles each. Round-1 item
 5. **Image config retention and `Env` application** (#76) - the smallest useful half of the config story.
 6. **The inherited default bind documented** (§5.13) - one paragraph in `known-limitations.md`.
 
+**Added by round 2 (small, each verifiable without a new subsystem)**
+
+- **R1 - the three argv facts, documented.** The one default-on extension (`mountinfo`, and PDN never
+  disables it), `--link2symlink` on by default, and `/dev/shm` as a syscall-level fiction with magic
+  `0x01021994`. Acceptance: `known-limitations.md` states all three, and a test asserts the built argv
+  contains `--link2symlink` and never `PROOT_NO_MOUNTINFO`.
+- **R2 - a kill ladder, and a set of signals that are never escalated** (§4.12). Acceptance: a guest that
+  ignores `TERM` is escalated `TERM` → `QUIT` → `KILL`, and `kill -s STOP` is delivered exactly as asked.
+- **R3 - stdout discipline as a gate** (§4.9). Acceptance: on the JSON path stdout parses as JSON; on the
+  human path stdout carries only the data channels, with every prompt and progress line on stderr.
+- **R4 - help that stands alone** (§4.13). Acceptance: `podnext help <cmd>` works with an unreadable config,
+  and a bad flag prints that command's own page rather than a generic usage blob.
+- **R5 - atomic state writes with an identity check** (§4.10). PDN writes state files; the reference's
+  `atomic_replace` refuses with `ESTALE` when the temporary file's `(st_dev, st_ino)` changed underneath it,
+  and names the one race it cannot close. Acceptance: a write whose temporary file is replaced before the
+  rename fails with `ESTALE` and leaves the previous content intact.
+
 **v0.3.0 (each needs a subsystem or a rewrite)**
 
 7. **The image store that keeps layer blobs** - the precondition for `push`/`pull`/`export` (#37, #39), with
@@ -198,6 +304,9 @@ Ordered by what unblocks the most, with the test that settles each. Round-1 item
 11. **Reap instead of count** (§5.9) and **the WORKDIR thin layer with a recipe cache** (§5.10).
 12. **Cache eviction by reference count** (§5.11).
 13. **A syscall-level probe corpus** (§5.12).
+14. **Session liveness from an inherited descriptor rather than a PID** (§4.11): the reference's session is
+    live exactly while some process holds the descriptor it registered, and survivors are found by scanning
+    `/proc/*/fd` for the inode. A PID can be reused; a held descriptor cannot.
 
 **Explicitly not taken**
 
