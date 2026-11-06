@@ -93,12 +93,25 @@ pub async fn cmd_volume_ls(format: OutputFormat) -> Result<()> {
 pub async fn cmd_volume_inspect(volumes: Vec<String>, format: OutputFormat) -> Result<()> {
     let mut core = proot_distro_core::ProotDistroCore::new()?;
     let mut results = Vec::new();
+    // A name that does not resolve must FAIL the command, not just print a line. Before this fix
+    // the error was printed to stderr and swallowed, the function ended with Ok(()) and the command
+    // exited 0 with `[]` on stdout - a command whose whole purpose is to report on a volume reported
+    // success while reporting nothing (WORKLIST A8, measured). Convention copied from
+    // `cmd_image_inspect`: collect the missing names, then bail before printing anything.
+    let mut missing: Vec<String> = Vec::new();
 
     for name in volumes {
         match core.storage_manager().inspect_volume(&name) {
             Ok(info) => results.push(info),
-            Err(e) => eprintln!("Volume '{}': {}", proot_distro_core::escape_name(&name), e),
+            Err(e) => {
+                eprintln!("Volume '{}': {}", proot_distro_core::escape_name(&name), e);
+                missing.push(name);
+            }
         }
+    }
+
+    if !missing.is_empty() {
+        anyhow::bail!("no such volume: {}", missing.join(", "));
     }
 
     #[derive(Tabled, Serialize)]

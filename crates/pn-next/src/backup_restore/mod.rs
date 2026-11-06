@@ -524,6 +524,18 @@ impl BackupManager {
             Err(e) => {
                 pn_trace!("DEBUG create_backup: backup failed with error: {:?}", e);
                 error!("Backup failed: {}", e);
+                // Record the failure and RETURN it. Before this fix the branch logged and fell
+                // through to `Ok(backup_id)`, so `podnext backup create` exited 0 after printing
+                // `Backup failed: File name too long` and left a partial backup behind - success
+                // reported for work that did not happen (WORKLIST A7, measured).
+                {
+                    let mut backups = self.backups.write().await;
+                    if let Some(metadata) = backups.get_mut(&backup_id) {
+                        metadata.error_message = Some(e.to_string());
+                        metadata.completed_at = Some(SystemTime::now());
+                    }
+                }
+                return Err(e);
             }
         }
         pn_trace!("DEBUG create_backup: backup completed");
@@ -1111,33 +1123,34 @@ impl BackupManager {
     }
 
     pub async fn delete_backup(&self, backup_id: &str) -> Result<()> {
-        let backups = self.backups.read().await;
-        let exists = backups.contains_key(backup_id);
-        // Release the read guard before touching anything else: `backups` is a
-        // tokio RwLock (not reentrant), so taking write() below while still
-        // holding read() would wait on ourselves forever.
-        drop(backups);
-        if exists {
-            let archive_path = self.config.backup_dir.join(format!("{}.tar.gz", backup_id));
-            if archive_path.exists() {
-                fs::remove_file(archive_path).await?;
-            }
-            // Remove the sidecar too, or the next `backup list` reports an entry
-            // whose archive is gone.
-            let sidecar_path = self
-                .config
-                .backup_dir
-                .join(format!("{}.meta.json", backup_id));
-            if sidecar_path.exists() {
-                fs::remove_file(sidecar_path).await.ok();
-            }
-            let staging_dir = self.config.backup_dir.join(backup_id);
-            if staging_dir.is_dir() {
-                fs::remove_dir_all(staging_dir).await.ok();
-            }
+        // Do NOT gate the on-disk removal on the in-memory map. A fresh CLI process starts with an
+        // empty map, so `exists` was false, nothing on disk was touched, and the command still
+        // exited 0 - measured as "cleared the index but left the directory" (WORKLIST A7).
+        let mut removed = false;
+        let archive_path = self.config.backup_dir.join(format!("{}.tar.gz", backup_id));
+        if archive_path.exists() {
+            fs::remove_file(archive_path).await?;
+            removed = true;
+        }
+        // Remove the sidecar too, or the next `backup list` reports an entry whose archive is gone.
+        let sidecar_path = self
+            .config
+            .backup_dir
+            .join(format!("{}.meta.json", backup_id));
+        if sidecar_path.exists() {
+            fs::remove_file(sidecar_path).await.ok();
+            removed = true;
+        }
+        let staging_dir = self.config.backup_dir.join(backup_id);
+        if staging_dir.is_dir() {
+            fs::remove_dir_all(staging_dir).await.ok();
+            removed = true;
         }
 
         self.backups.write().await.remove(backup_id);
+        if !removed {
+            anyhow::bail!("no such backup: {}", backup_id);
+        }
         Ok(())
     }
 
@@ -1528,6 +1541,43 @@ mod tests {
 
         result.expect("delete_backup deadlocked: it waited on its own read guard");
         assert!(manager.get_backup(id).await.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_create_backup_reports_failure_instead_of_ok() {
+        // WORKLIST A7, measured on the device: `podnext backup create` exited 0 after printing
+        // `Backup failed: File name too long`, leaving a partial backup behind. The error branch
+        // logged and then fell through to `Ok(backup_id)`; a caller cannot tell a completed backup
+        // from a failed one. This asserts the contract: the failure is RETURNED.
+        let dir = std::env::temp_dir().join(format!("pn-backup-fail-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Put a FILE where the backup directory must be, so creating the staging directory inside it
+        // cannot succeed - the same class of failure the device produced with an over-long name.
+        let blocker = dir.join("not-a-dir");
+        std::fs::write(&blocker, b"x").unwrap();
+
+        let mut config = BackupConfig::default();
+        config.backup_dir = blocker.clone();
+        let manager = BackupManager::new(config);
+
+        let result = manager.create_backup("c1", "c1", BackupType::Full).await;
+        let recorded_error = manager
+            .list_backups(None)
+            .await
+            .into_iter()
+            .find_map(|m| m.error_message);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            result.is_err(),
+            "create_backup must return the failure instead of Ok(id) - otherwise the CLI reports a \
+             successful backup of nothing, which is exactly what was measured"
+        );
+        assert!(
+            recorded_error.is_some(),
+            "the failed attempt must be recorded with its error message, so `backup list`/`status` \
+             cannot present it as a completed backup"
+        );
     }
 }
 

@@ -291,7 +291,7 @@ async fn cmd_backup_status(manager: &BackupManager, backup_id: String) -> Result
             );
         }
     } else {
-        println!("Backup '{}' not found", backup_id);
+        anyhow::bail!("no such backup: {}", backup_id);
     }
     Ok(())
 }

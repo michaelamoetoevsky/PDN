@@ -108,12 +108,22 @@ pub async fn cmd_network_ls(format: OutputFormat) -> Result<()> {
 pub async fn cmd_network_inspect(networks: Vec<String>, format: OutputFormat) -> Result<()> {
     let mut core = proot_distro_core::ProotDistroCore::new()?;
     let mut results = Vec::new();
+    // Same defect and same fix as `cmd_volume_inspect`: the per-name error was printed and
+    // swallowed, so `network inspect <missing>` exited 0 with `[]` on stdout (WORKLIST A8).
+    let mut missing: Vec<String> = Vec::new();
 
     for name in networks {
         match core.network_manager().inspect(&name) {
             Ok(info) => results.push(info),
-            Err(e) => eprintln!("Network '{}': {}", proot_distro_core::escape_name(&name), e),
+            Err(e) => {
+                eprintln!("Network '{}': {}", proot_distro_core::escape_name(&name), e);
+                missing.push(name);
+            }
         }
+    }
+
+    if !missing.is_empty() {
+        anyhow::bail!("no such network: {}", missing.join(", "));
     }
 
     #[derive(Tabled, Serialize)]
