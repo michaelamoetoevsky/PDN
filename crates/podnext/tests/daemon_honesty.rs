@@ -1,6 +1,10 @@
 //! WORKLIST A10: `daemon status` must not claim a running daemon when there is none,
 //! and `service create` must not exit 0 while persisting nothing.
 //!
+//! WORKLIST A14 (extended here): `daemon stop`, `daemon reload` and `daemon logs`
+//! had the same defect one layer down — all three printed a success line and exited 0
+//! with nothing listening. They now share `daemon status`'s socket probe and refuse.
+//!
 //! Both commands are run as the real binary with `HOME`, `XDG_RUNTIME_DIR`,
 //! `XDG_CONFIG_HOME` and every `PN_NEXT_*` path redirected into a throwaway directory
 //! under the process temp dir. No fixed path, no container name, and no assumption
@@ -161,6 +165,56 @@ fn service_create_persists_a_retrievable_service_or_refuses() {
         println!(
             "service create refused with a reason: exit {:?}, stderr={cstderr:?}",
             created.status.code()
+        );
+    }
+}
+
+/// A14: `daemon stop`, `daemon reload` and `daemon logs` must refuse when no daemon
+/// answers on the socket — the same honesty `daemon status` was given in A10. The
+/// base printed a success line to stdout and exited 0 for all three; that line is
+/// quoted below as the negative control, and the test fails if it still appears.
+#[test]
+fn daemon_stop_reload_and_logs_refuse_with_no_daemon() {
+    let env = Sandbox::new("daemon_refuse");
+
+    // What each command printed, and exited 0 on, with nothing listening (base).
+    let cases: [(&[&str], &str); 3] = [
+        (&["daemon", "stop"], "PDN daemon stopped"),
+        (&["daemon", "reload"], "Reloading daemon configuration..."),
+        (&["daemon", "logs"], "Daemon logs (last 100 lines):"),
+    ];
+
+    for (args, base_success_line) in cases {
+        let out = env.command().args(args).output().expect("run podnext");
+        let (stdout, stderr) = split(&out);
+
+        assert!(
+            !out.status.success(),
+            "`{}` must refuse with no daemon; exit {:?}, stdout={stdout:?}, stderr={stderr:?}",
+            args.join(" "),
+            out.status.code()
+        );
+
+        let names_reason =
+            stderr.contains("not running") || stderr.contains("nothing is listening");
+        assert!(
+            names_reason,
+            "`{}` refused without a named reason: stderr={stderr:?}",
+            args.join(" ")
+        );
+
+        assert!(
+            !stdout.contains(base_success_line),
+            "`{}` still printed the base success line {base_success_line:?}: stdout={stdout:?}",
+            args.join(" ")
+        );
+
+        println!(
+            "`{}` with no daemon: exit {:?}, stderr={:?} \
+             (base printed {base_success_line:?} to stdout and exited 0)",
+            args.join(" "),
+            out.status.code(),
+            stderr.trim()
         );
     }
 }

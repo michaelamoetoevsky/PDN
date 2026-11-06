@@ -1131,18 +1131,17 @@ impl ServiceSupervisor {
 
                                                     let recent_restarts = {
                                                         let services = services_for_restart.read().await;
-                                                        if let Some(managed) = services.get(&name_clone) {
-                                                            if managed
-                                                                .status
-                                                                .last_restart_at
-                                                                .map_or(false, |t| t > window_start)
-                                                            {
-                                                                managed.status.restart_count + 1
-                                                            } else {
-                                                                1
+                                                        match services.get(&name_clone) {
+                                                            Some(managed) => {
+                                                                crate::restart_policy::recent_restarts(
+                                                                    managed.status.restart_count,
+                                                                    managed
+                                                                        .status
+                                                                        .last_restart_at
+                                                                        .map_or(false, |t| t > window_start),
+                                                                )
                                                             }
-                                                        } else {
-                                                            1
+                                                            None => 1,
                                                         }
                                                     };
 
@@ -1167,13 +1166,9 @@ impl ServiceSupervisor {
                                                         return;
                                                     }
 
-                                                    let delay = std::cmp::min(
-                                                        (config_clone.restart.base_delay_secs as f64
-                                                            * config_clone
-                                                                .restart
-                                                                .backoff_multiplier
-                                                                .powi(recent_restarts as i32)) as u64,
-                                                        config_clone.restart.max_delay_secs,
+                                                    let delay = crate::restart_policy::backoff_secs(
+                                                        &config_clone.restart,
+                                                        recent_restarts,
                                                     );
 
                                                     {
@@ -1232,6 +1227,20 @@ impl ServiceSupervisor {
         });
         Ok(())
     }
+    /// The plain outcome a `ServiceStatus` plus a user-stop flag reduce to for the
+    /// pure restart decision (B14): a deliberate stop is `ManualStop`, an exit is its
+    /// code. Kept next to the decision so both call sites reduce it the same way.
+    fn outcome_of(
+        status: &ServiceStatus,
+        user_stopped: bool,
+    ) -> crate::restart_policy::ServiceOutcome {
+        if user_stopped {
+            crate::restart_policy::ServiceOutcome::ManualStop
+        } else {
+            crate::restart_policy::ServiceOutcome::Exited(status.exit_code)
+        }
+    }
+
     /// Determine if service should be restarted (static version for use in supervision loop)
     fn should_restart_static(
         status: &ServiceStatus,
@@ -1244,18 +1253,10 @@ impl ServiceSupervisor {
             return false;
         }
 
-        match policy.condition {
-            RestartCondition::Never => false,
-            RestartCondition::Always => true,
-            RestartCondition::OnFailure => status.exit_code.map_or(false, |c| c != 0),
-            RestartCondition::OnAbnormal => {
-                // OnAbnormal restarts on:
-                // - Exit code < 0 or > 128 (some systems encode signals this way)
-                // - Exit code is None (process terminated by signal on Unix)
-                status.exit_code.map_or(true, |c| c < 0 || c > 128)
-            }
-            RestartCondition::UnlessStopped => !user_stopped,
-        }
+        crate::restart_policy::condition_matches(
+            policy.condition,
+            Self::outcome_of(status, user_stopped),
+        )
     }
 
     /// Single supervision tick
@@ -1379,18 +1380,10 @@ impl ServiceSupervisor {
             return false;
         }
 
-        match policy.condition {
-            RestartCondition::Never => false,
-            RestartCondition::Always => true,
-            RestartCondition::OnFailure => status.exit_code.map_or(false, |c| c != 0),
-            RestartCondition::OnAbnormal => {
-                // OnAbnormal restarts on:
-                // - Exit code < 0 or > 128 (some systems encode signals this way)
-                // - Exit code is None (process terminated by signal on Unix)
-                status.exit_code.map_or(true, |c| c < 0 || c > 128)
-            }
-            RestartCondition::UnlessStopped => !user_stopped,
-        }
+        crate::restart_policy::condition_matches(
+            policy.condition,
+            Self::outcome_of(status, user_stopped),
+        )
     }
 
     /// Schedule a service restart
@@ -1443,18 +1436,15 @@ impl ServiceSupervisor {
         // Count recent restarts - need to get current status
         let recent_restarts = {
             let services = self.services.read().await;
-            if let Some(managed) = services.get(&name) {
-                if managed
-                    .status
-                    .last_restart_at
-                    .map_or(false, |t| t > window_start)
-                {
-                    managed.status.restart_count + 1
-                } else {
-                    1
-                }
-            } else {
-                1
+            match services.get(&name) {
+                Some(managed) => crate::restart_policy::recent_restarts(
+                    managed.status.restart_count,
+                    managed
+                        .status
+                        .last_restart_at
+                        .map_or(false, |t| t > window_start),
+                ),
+                None => 1,
             }
         };
 
@@ -1480,14 +1470,7 @@ impl ServiceSupervisor {
         }
 
         // Calculate backoff delay
-        let delay = std::cmp::min(
-            (config.restart.base_delay_secs as f64
-                * config
-                    .restart
-                    .backoff_multiplier
-                    .powi(recent_restarts as i32)) as u64,
-            config.restart.max_delay_secs,
-        );
+        let delay = crate::restart_policy::backoff_secs(&config.restart, recent_restarts);
 
         // Update restart count
         {

@@ -586,6 +586,14 @@ pub async fn cmd_daemon_start() -> Result<()> {
 }
 
 pub async fn cmd_daemon_stop() -> Result<()> {
+    // Same handshake as `daemon status`: a stop that cannot be delivered is a
+    // refusal, not a success line. Nothing to stop means a named non-zero exit.
+    if !is_daemon_running().await {
+        bail!(
+            "daemon is not running: nothing is listening on {}",
+            daemon_socket().display()
+        );
+    }
     eprintln!("Stopping PDN daemon...");
     println!("PDN daemon stopped");
     Ok(())
@@ -652,11 +660,27 @@ pub async fn cmd_daemon_status(format: crate::OutputFormat) -> Result<()> {
 }
 
 pub async fn cmd_daemon_reload() -> Result<()> {
+    // A reload the daemon never receives is not a reload. Without a socket there is
+    // nobody to reload, so refuse with the same named reason as `daemon status`.
+    if !is_daemon_running().await {
+        bail!(
+            "daemon is not running: nothing is listening on {}",
+            daemon_socket().display()
+        );
+    }
     println!("Reloading daemon configuration...");
     Ok(())
 }
 
 pub async fn cmd_daemon_logs(_follow: bool, lines: usize) -> Result<()> {
+    // There is no log stream without a daemon; the empty header this used to print
+    // was a success line over nothing. Refuse instead.
+    if !is_daemon_running().await {
+        bail!(
+            "daemon is not running: nothing is listening on {}",
+            daemon_socket().display()
+        );
+    }
     println!("Daemon logs (last {} lines):", lines);
     Ok(())
 }

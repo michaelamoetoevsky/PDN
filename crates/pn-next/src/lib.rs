@@ -21,6 +21,7 @@ pub mod network;
 pub mod plugin;
 pub mod policy_engine;
 pub mod resource_quota;
+pub mod restart_policy;
 pub mod runtime;
 pub mod scheduler;
 pub mod security;
