@@ -23,3 +23,6 @@ tokio = { version = "1.0", features = ["full", "macros"] }
 
 [dev-dependencies]
 tempfile = "3.0"
+# `tests/argv_facts.rs` drives the real async `execute()` path to capture the
+# argv. Integration tests only see dev-dependencies, so tokio is repeated here.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -171,6 +171,36 @@ to stderr and nothing to stdout.
   field. The flag would be accepted and never enforced, so it refuses with that measurement
   (issue #63).
 
+- **`/etc/ld.so.preload` is empty in every guest, and that is proot's default, not a PDN bind.**
+  proot opens each tracee by binding `/dev/null` over `/etc/ld.so.preload`
+  (`cli/proot.c:142`, `new_binding(tracee, "/dev/null", "/etc/ld.so.preload", false)`, quoted in
+  `research/PROOT_AND_PROOTDISTRO_SOURCE_DISSECTION.md:113`), which is why that file is empty
+  inside a guest and why a host carrying an `ld.so.preload` cannot inject a library into one. PDN
+  inherits the bind rather than passing it: the only binds `proot-core` builds are the fixed
+  `/dev`, `/proc`, `/sys` (`crates/proot-core/src/lib.rs:256-258`, `:395-397`), the Android system
+  binds (`crates/proot-core/src/lib.rs:187-197`) and the caller's own `--bind`
+  (`crates/proot-core/src/lib.rs:288-290`) — none of them is `ld.so.preload`.
+  `crates/proot-core/tests/argv_facts.rs` asserts PDN's built argv carries **no**
+  `ld.so.preload` bind, with `--bind=/dev` as the positive control that bind building works at
+  all, so the assertion fails if such a bind is ever added.
+- **What the built `proot` argv does and does not contain.** Three facts, each asserted against
+  the argv `execute()` actually builds in `crates/proot-core/tests/argv_facts.rs`. First,
+  `--link2symlink` is always present: the `ProotConfig` default is `true`
+  (`crates/proot-core/src/cli.rs:91`) and both `start()` and `execute()` pass the token
+  unconditionally (`crates/proot-core/src/lib.rs:212`, `:351`), which is why the direct-execution
+  path refuses the flag as a no-op (`crates/podnext/src/direct.rs:299-306`). Second,
+  `PROOT_NO_MOUNTINFO` never appears in the argv or in the guest environment: outside the test,
+  no file under `crates/` mentions it, so PDN never disables proot's `mountinfo` extension and a
+  guest's `/proc/mounts` is the fake table PDN binds over it
+  (`crates/proot-distro-core/src/sysdata.rs:574-579`). Third, the guest's `/dev/shm` is a real
+  bind, not a kernel `tmpfs`: PDN binds a per-container directory
+  (`crates/proot-distro-core/src/guestdirs.rs:57-68`) and proot makes it report as a tmpfs by
+  faking the statfs type `0x01021994` (`proot exit.c:747`, `tracee/seccomp.c:356` — that magic is
+  the comparator's, not re-derived in this tree).
+- **`dockerd` cannot run under proot, and the gate is the devices cgroup.** dockerd refuses to
+  start without a usable devices cgroup (`daemon/daemon.go:1130-1132` in the upstream reference;
+  no cgroup emulation exists in proot), so the daemon never gets past its own startup check.
+
 ## Not measured yet
 
 These are claims the project cannot currently make, listed so that the absence is visible:
