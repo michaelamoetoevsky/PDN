@@ -19,7 +19,7 @@ macro_rules! pn_trace {
     };
 }
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use serde_yaml;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -155,7 +155,7 @@ async fn run() -> Result<()> {
         Vec::new()
     };
 
-    let cli = Cli::parse();
+    let cli = parse_or_exit();
 
     // A global flag can ask for something PDN cannot deliver, and the honest place to say so is
     // before any work happens: `--seccomp` promises syscall filtering, and this PRoot build applies

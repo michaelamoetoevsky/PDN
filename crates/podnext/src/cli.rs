@@ -13,7 +13,8 @@
 //! | `system` | D-Bus, socket, boot, wakelock, policy, config, GitOps, dashboard |
 //! | `backup` / `build` | snapshot management and the image builder |
 
-use clap::{Parser, Subcommand};
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 
 mod backup;
@@ -228,6 +229,68 @@ pub(crate) struct Cli {
         help = "Output format (table, json, yaml, text)"
     )]
     pub(crate) format: Option<OutputFormat>,
+}
+
+/// Parse the command line, answering a rejected invocation with the page of the
+/// command that owns it.
+///
+/// clap's own answer to an unknown flag is a one-line `Usage:` blob: it names no
+/// option and describes nothing, so the reader cannot tell what the command they
+/// got wrong actually accepts. A bad flag on `image ls` is answered by
+/// `podnext image ls --help` plus the reason, on stderr, and exits 2 (the
+/// documented code for invalid arguments).
+///
+/// `--help` and `--version` are not failures and keep clap's own handling: their
+/// page goes to stdout and the exit status is 0.
+pub(crate) fn parse_or_exit() -> Cli {
+    match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => {
+            if matches!(
+                err.kind(),
+                ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayVersion
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            ) {
+                err.exit();
+            }
+            let page = owning_page();
+            let _ = err.print();
+            if !page.is_empty() {
+                eprintln!();
+                eprint!("{page}");
+            }
+            std::process::exit(2);
+        }
+    }
+}
+
+/// The page of the deepest command named on the command line, rendered by clap
+/// itself (`podnext <path> --help`), so it carries the global options that command
+/// inherits. Empty when no path resolves, which leaves the error alone.
+///
+/// Flag tokens are skipped, which is what lets a global option precede the
+/// sub-command (`podnext --format json list --typo` still resolves to `list`).
+/// Known ceiling: a *value* that happens to spell a sub-command name resolves one
+/// level too deep, and a flag taking a value that names a sub-command
+/// (`podnext -b list list --typo`) resolves to the wrong page.
+fn owning_page() -> String {
+    let mut argv: Vec<std::ffi::OsString> = vec!["podnext".into()];
+    let mut cmd = Cli::command();
+    for arg in std::env::args().skip(1) {
+        if arg.starts_with('-') {
+            continue;
+        }
+        if let Some(sub) = cmd.find_subcommand(&arg) {
+            cmd = sub.clone();
+            argv.push(arg.into());
+        }
+    }
+    argv.push("--help".into());
+    match Cli::try_parse_from(argv) {
+        Err(err) if err.kind() == ErrorKind::DisplayHelp => err.to_string(),
+        _ => String::new(),
+    }
 }
 
 #[derive(Subcommand, Debug)]
