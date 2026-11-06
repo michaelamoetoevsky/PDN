@@ -118,12 +118,20 @@ CHECKS: list[dict] = [
     dict(issue="11", claim="install validates the container name before creating anything",
          cmd="grep -rnF 'validate_container_name' crates/podnext/src",
          needle="validate_container_name"),
-    dict(issue="12", claim="delete_backup drops its read guard before taking the write lock",
-         cmd="grep -rnF 'contains_key' crates/pn-next/src/backup_restore/mod.rs",
-         needle="contains_key"),
+    # Re-derived when delete_backup was rewritten (WORKLIST A7): the old needle was
+    # `contains_key`, the in-memory lookup the fix DELETED, so the predicate had inverted - it went red
+    # on a tree where the behaviour was just corrected. A predicate that greps for the code a fix
+    # removes is not a stale-snapshot problem to be re-run; it is a claim about the old implementation.
+    # Each new needle is proven absent at the pre-fix commit below.
+    dict(issue="12", claim="delete_backup decides from the filesystem, not from an in-memory map that is empty in a fresh process",
+         cmd="grep -rnF 'let mut removed = false;' crates/pn-next/src/backup_restore/mod.rs",
+         needle="let mut removed = false;"),
     dict(issue="12", claim="the deadlock regression test exists",
          cmd="grep -rnF 'test_delete_backup_does_not_deadlock' crates/pn-next/src/backup_restore/mod.rs",
          needle="test_delete_backup_does_not_deadlock"),
+    dict(issue="12", claim="a failed backup is reported as a failure, not as a success",
+         cmd="grep -rnF 'test_create_backup_reports_failure_instead_of_ok' crates/pn-next/src/backup_restore/mod.rs",
+         needle="test_create_backup_reports_failure_instead_of_ok"),
     dict(issue="13", claim="reset verifies the image BEFORE destroying the container",
          # -A walks the body, so the order the claim depends on survives the code moving file
          cmd="grep -rnA 40 'fn cmd_reset' crates/podnext/src | "
