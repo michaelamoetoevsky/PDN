@@ -66,6 +66,9 @@ const IMAGE: &str = "debian:stable-slim";
 const STAGING_WINDOW: Duration = Duration::from_secs(3);
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
+    // Prime the real-store snapshot HERE, before any test body acts: every test takes this guard first, so the
+    // comparison in `assert_real_store_intact` can only be against the state that preceded all fixtures.
+    REAL_STORE.get_or_init(real_store_entries);
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -331,34 +334,36 @@ fn assert_no_torn_metadata(containers: &Path) {
     }
 }
 
-/// The operator's real store must be byte-for-byte the set it started with.
-fn assert_real_store_intact() {
-    let home = std::env::var("HOME").expect("HOME for the real store");
+/// Names in the store the TEST PROCESS sees - not the sandbox each fixture spawns for its children.
+fn real_store_entries() -> Vec<String> {
+    let Ok(home) = std::env::var("HOME") else {
+        return Vec::new();
+    };
     let containers = Path::new(&home).join(".podnext").join("containers");
-    let mut names: Vec<String> = fs::read_dir(&containers)
-        .expect("the real store must exist")
+    let Ok(entries) = fs::read_dir(&containers) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    let expected: Vec<String> = [
-        "almalinux",
-        "alpine",
-        "deb-pdn",
-        "deb-renamed",
-        "dev-renamed-target",
-        "nousresearch",
-        "pdn-bench",
-        "test-alpine",
-        "test-pdn-install",
-        "ubuntu",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
+    names
+}
+
+static REAL_STORE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// The fixture redirects `HOME`/`PN_TEST_ROOT` for every process it spawns, so nothing it does may change the
+/// store the test process itself sees. This compares against a snapshot taken before any fixture acts (primed
+/// by `serial()`) instead of against a fixed list of names: a fixed list can only ever be right on the machine
+/// it was copied from. The previous version asserted ten hardcoded container names, so it failed at setup on
+/// every other host - including CI, where no such store exists at all - and took all five tests down with it.
+fn assert_real_store_intact() {
+    let snapshot = REAL_STORE.get_or_init(real_store_entries);
     assert_eq!(
-        names, expected,
-        "the operator's real ~/.podnext/containers must be untouched"
+        *snapshot,
+        real_store_entries(),
+        "the fixture changed the store the test process sees"
     );
 }
 
