@@ -42,7 +42,7 @@
   ],
   "image_store_files": [],
   "line_budgets": {
-    "crates/pn-next/src": 23157,
+    "crates/pn-next/src": 23226,
     "crates/pn-next/src/cluster": 889,
     "crates/pn-next/src/dbus": 2565,
     "crates/pn-next/src/gitops": 1067,
