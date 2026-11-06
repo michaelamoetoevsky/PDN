@@ -43,6 +43,13 @@ stage "warning ratchet (self-check, no cargo)"
 env -u LD_LIBRARY_PATH python3 scripts/check_warnings.py self-check >/dev/null
 verdict $?
 
+stage "non-goal line budgets (real, not a self-check)"
+env -u LD_LIBRARY_PATH python3 scripts/check_non_goals.py >$PREFIX/tmp/goal.out 2>&1 || true
+grep -E "VIOLATION" $PREFIX/tmp/goal.out | head -5 | sed 's/^/   /'
+grep -E "^non-goals:" $PREFIX/tmp/goal.out | sed 's/^/   /'
+env -u LD_LIBRARY_PATH python3 scripts/check_non_goals.py >/dev/null 2>&1
+verdict $?
+
 stage "rust formatting (read-only)"
 env -u LD_LIBRARY_PATH cargo fmt --all -- --check >/dev/null 2>&1
 verdict $?
