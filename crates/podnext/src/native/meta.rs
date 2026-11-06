@@ -132,6 +132,12 @@ pub async fn kill_container_native(container_name: &str) -> Result<()> {
 pub async fn remove_container_native(name: String, force: bool) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     let container_dir = dirs::home_dir().map(|h| h.join(".podnext").join("containers").join(&name));
+    // Reclaim staging residue a killed install left behind (A3b): `remove` is the
+    // other command that must be able to clear the store, and it used to leave
+    // every `.tmp-install-*` directory untouched.
+    if let Some(containers) = dirs::home_dir().map(|h| h.join(".podnext").join("containers")) {
+        crate::native::reap_stale_staging(&containers);
+    }
     let dir_exists = container_dir.as_ref().map(|d| d.exists()).unwrap_or(false);
     let in_mgr = container_mgr.get(&name).await.is_ok();
 

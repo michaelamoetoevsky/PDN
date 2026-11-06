@@ -11,6 +11,7 @@ use oci_spec::image::ImageManifest;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use urlencoding::encode;
 
@@ -159,6 +160,168 @@ pub(crate) async fn smoke_test_rootfs(rootfs: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Prefix of the directory this path builds a container in before it owns the
+/// container's own name. Renamed into place only once the install has succeeded.
+const STAGING_PREFIX: &str = ".tmp-install-";
+
+/// Prefix of the directory holding the container a `--force` reinstall has moved
+/// aside while it swaps in the replacement.
+const REPLACED_PREFIX: &str = ".tmp-replaced-";
+
+/// Sidecar lock path for a staging directory: `<staging dir>.lock`.
+///
+/// The lock is created and taken *before* the staging tree exists, so a staging
+/// directory whose lock file is missing is residue from an older build (or from
+/// a kill before the lock was written) and can be reclaimed. A live install holds
+/// the lock for its whole run, so [`reap_stale_staging`] never touches it.
+fn staging_lock_path(stage_dir: &Path) -> PathBuf {
+    let mut name = stage_dir.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+/// Create and take an exclusive `flock` on the staging directory's sidecar file.
+///
+/// Holding the returned handle is what marks the staging tree as live: the lock
+/// is released when the handle is dropped or the process dies, which is exactly
+/// the signal [`reap_stale_staging`] reads.
+fn hold_staging_lock(stage_dir: &Path) -> Result<fs::File> {
+    let path = staging_lock_path(stage_dir);
+    let file =
+        fs::File::create(&path).with_context(|| format!("could not create {}", path.display()))?;
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        bail!("could not lock staging directory {}", stage_dir.display());
+    }
+    Ok(file)
+}
+
+/// Reclaim staging residue: every `.tmp-install-*` / `.tmp-replaced-*` directory
+/// that no live install owns (A3b).
+///
+/// An install that is `SIGKILL`ed used to leave its half-filled staging
+/// directory behind with nothing to reclaim it, so every interruption added one
+/// more permanent directory to the store. The sidecar lock is the liveness
+/// signal: if this process can take a staging tree's lock, its owner is gone and
+/// the tree is residue; if the lock file is absent the tree was never claimed and
+/// is residue too. Called at the start of every install and from `remove`.
+pub fn reap_stale_staging(containers_dir: &Path) {
+    let Ok(entries) = fs::read_dir(containers_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        let path = entry.path();
+
+        if name.starts_with(REPLACED_PREFIX) {
+            // A `--force` reinstall that died after moving the previous container
+            // aside: that container has already been superseded, so nothing can
+            // be using this directory.
+            let _ = fs::remove_dir_all(&path);
+            let _ = fs::remove_file(staging_lock_path(&path));
+            continue;
+        }
+
+        if name.starts_with(STAGING_PREFIX) && !path.is_dir() {
+            // A sidecar lock whose staging tree is already gone: drop it too,
+            // but only once the tree it names is really absent.
+            if let Some(owner) = name.strip_suffix(".lock") {
+                if !containers_dir.join(owner).exists() {
+                    let _ = fs::remove_file(&path);
+                }
+            }
+            continue;
+        }
+
+        if !name.starts_with(STAGING_PREFIX) {
+            continue;
+        }
+
+        // No sidecar lock means no install ever claimed this tree; reclaim it.
+        let lock_path = staging_lock_path(&path);
+        let Ok(lock) = fs::File::open(&lock_path) else {
+            let _ = fs::remove_dir_all(&path);
+            continue;
+        };
+
+        // If the lock can be taken, its owner is gone and the tree is residue.
+        let taken = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+        if taken {
+            let _ = fs::remove_dir_all(&path);
+            let _ = fs::remove_file(&lock_path);
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
+}
+
+/// Move a fully built staging tree into place as `target`.
+///
+/// The old code did `if target.exists() { remove_dir_all(target)? }` and then
+/// `rename(stage, target)`; under two concurrent same-name installs that let the
+/// loser delete the winner's freshly committed container (A4b). Here the `rename`
+/// itself is the arbiter — it refuses with `ENOTEMPTY` when `target` already
+/// holds a container — and the only container ever destroyed is the one that was
+/// already present when *this* install began and that the caller explicitly asked
+/// to replace with `--force`. A container that appeared while this install was
+/// running therefore cannot be destroyed by it.
+fn commit_staging(
+    stage: &Path,
+    target: &Path,
+    container_name: &str,
+    force: bool,
+    target_preexisting: bool,
+) -> Result<()> {
+    let drop_staging = || {
+        let _ = fs::remove_dir_all(stage);
+        let _ = fs::remove_file(staging_lock_path(stage));
+    };
+
+    match fs::rename(stage, target) {
+        Ok(()) => {
+            let _ = fs::remove_file(staging_lock_path(stage));
+            Ok(())
+        }
+        Err(e) if is_not_empty(&e) => {
+            // `target` holds a container: either the one that was here when this
+            // install started (a --force replace), or one a concurrent install
+            // committed while we were building.
+            if !(force && target_preexisting) {
+                drop_staging();
+                bail!(
+                    "Container '{}' was installed while this install was still running; \
+                     refusing to replace it (a concurrent install won)",
+                    container_name
+                );
+            }
+            // Replace the container that was already here: move it aside
+            // atomically — never remove a committed container in place — swap the
+            // new tree in, then drop the superseded one.
+            let trash = target.with_file_name(format!(
+                "{}{}-{}",
+                REPLACED_PREFIX,
+                container_name,
+                uuid::Uuid::new_v4()
+            ));
+            fs::rename(target, &trash)?;
+            fs::rename(stage, target)?;
+            let _ = fs::remove_file(staging_lock_path(stage));
+            let _ = fs::remove_dir_all(&trash);
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// `rename(2)` refuses to replace a non-empty directory with `ENOTEMPTY` (and
+/// `EEXIST` on some kernels), which is how [`commit_staging`] learns the target
+/// is a live container without a race-prone existence check.
+fn is_not_empty(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(libc::ENOTEMPTY) | Some(libc::EEXIST))
+}
+
 pub async fn install_image_native(
     image_ref: &str,
     container_name: &str,
@@ -172,35 +335,59 @@ pub async fn install_image_native(
 
     println!("Installing '{}' as '{}'...", image_ref, container_name);
 
-    let (target_container_dir, staging_dir, staging_rootfs) = if let Some(ref r) = rootfs_path {
-        if r.exists() && !force {
-            bail!(
-                "Container '{}' already exists at {}. Use --force to overwrite.",
-                container_name,
-                r.display()
-            );
-        }
-        fs::create_dir_all(r)?;
-        (None, None, r.clone())
-    } else {
-        let containers_dir = proot_distro_core::paths::resolve_home()?
-            .join(".podnext")
-            .join("containers");
-        fs::create_dir_all(&containers_dir)?;
-        let target_dir = containers_dir.join(&container_name);
-        if target_dir.exists() && !force {
-            bail!(
-                "Container '{}' already exists at {}. Use --force to overwrite.",
-                container_name,
-                target_dir.display()
-            );
-        }
-        let staging_name = format!(".tmp-install-{}-{}", container_name, uuid::Uuid::new_v4());
-        let stage_dir = containers_dir.join(staging_name);
-        let stage_rootfs = stage_dir.join("rootfs");
-        fs::create_dir_all(&stage_rootfs)?;
-        (Some(target_dir), Some(stage_dir), stage_rootfs)
-    };
+    // `_staging_lock` holds an exclusive flock on the staging tree for as long as
+    // this install runs. It must stay bound until this function returns:
+    // `reap_stale_staging` reclaims a tree the moment that lock is free, and
+    // dropping it early would let another install reap a live tree.
+    let (target_container_dir, staging_dir, staging_rootfs, target_preexisting, _staging_lock) =
+        if let Some(ref r) = rootfs_path {
+            if r.exists() && !force {
+                bail!(
+                    "Container '{}' already exists at {}. Use --force to overwrite.",
+                    container_name,
+                    r.display()
+                );
+            }
+            fs::create_dir_all(r)?;
+            (None, None, r.clone(), false, None)
+        } else {
+            let containers_dir = proot_distro_core::paths::resolve_home()?
+                .join(".podnext")
+                .join("containers");
+            fs::create_dir_all(&containers_dir)?;
+            // Reclaim residue left by a previous install that was killed, before
+            // adding more of it (A3b).
+            reap_stale_staging(&containers_dir);
+
+            let target_dir = containers_dir.join(&container_name);
+            if target_dir.exists() && !force {
+                bail!(
+                    "Container '{}' already exists at {}. Use --force to overwrite.",
+                    container_name,
+                    target_dir.display()
+                );
+            }
+            // Whether the container was already here when this install began is
+            // what separates "replace what the caller asked to replace" from
+            // "clobber a container a concurrent install just committed" (A4b).
+            let target_preexisting = target_dir.exists();
+
+            let staging_name = format!(".tmp-install-{}-{}", container_name, uuid::Uuid::new_v4());
+            let stage_dir = containers_dir.join(staging_name);
+            // Take the lock *before* creating the tree: a staging directory whose
+            // sidecar lock is missing is treated as residue, so the lock has to
+            // exist first.
+            let lock = hold_staging_lock(&stage_dir)?;
+            let stage_rootfs = stage_dir.join("rootfs");
+            fs::create_dir_all(&stage_rootfs)?;
+            (
+                Some(target_dir),
+                Some(stage_dir),
+                stage_rootfs,
+                target_preexisting,
+                Some(lock),
+            )
+        };
 
     let install_work = async {
         // Step 1: Get auth token from Docker Hub
@@ -242,6 +429,7 @@ pub async fn install_image_native(
     if let Err(e) = install_work {
         if let Some(ref stage) = staging_dir {
             let _ = fs::remove_dir_all(stage);
+            let _ = fs::remove_file(staging_lock_path(stage));
         } else if let Some(ref r) = rootfs_path {
             let _ = fs::remove_dir_all(r);
         }
@@ -249,10 +437,7 @@ pub async fn install_image_native(
     }
 
     let final_rootfs = if let (Some(target), Some(stage)) = (target_container_dir, staging_dir) {
-        if target.exists() {
-            fs::remove_dir_all(&target)?;
-        }
-        fs::rename(&stage, &target)?;
+        commit_staging(&stage, &target, &container_name, force, target_preexisting)?;
         target.join("rootfs")
     } else {
         staging_rootfs
@@ -574,6 +759,10 @@ fn save_container_metadata(
         "status": "Stopped"
     });
 
-    fs::write(metadata_path, serde_json::to_string_pretty(&metadata)?)?;
+    // Write to a temporary sibling and rename, so an interruption cannot leave a
+    // half-written metadata.json behind (B12).
+    let tmp = metadata_dir.join(format!("metadata.json.tmp-{}", uuid::Uuid::new_v4()));
+    fs::write(&tmp, serde_json::to_string_pretty(&metadata)?)?;
+    fs::rename(&tmp, &metadata_path)?;
     Ok(())
 }
