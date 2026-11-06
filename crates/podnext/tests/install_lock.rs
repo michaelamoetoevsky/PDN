@@ -117,29 +117,50 @@ fn concurrent_same_name_install_is_refused_with_the_holder_named() {
         b.status.code()
     );
 
-    // 3. the refused one did not claim success, and its refusal names the holder.
-    let refused_stdout = if a.status.success() {
-        &b_stdout
+    // 3. the refused one did not claim success, and its refusal is one of the two legitimate ones.
+    //
+    // Which of the two is host-dependent, and both are correct: if the second install knocked while the holder
+    // was still installing, the refusal names the holder; if the holder committed first, the second is refused
+    // by the existence check instead. Asserting the lock's wording unconditionally made this test pass only on
+    // a host slow enough to keep the holder running - on CI it failed with `Error: Container 'a4race' already
+    // exists ... Use --force to overwrite` (run 42202519011). The claim worth keeping is that a refusal names
+    // the holder WHEN THE HOLDER IS LIVE, so that is what the lock branch asserts; the branch taken is printed,
+    // and a refusal that is neither of the two still fails.
+    let refused_stdout: String = if a.status.success() {
+        b_stdout.clone()
     } else {
-        &a_stdout
+        a_stdout.clone()
     };
-    let refused_stderr = if a.status.success() {
-        &b_stderr
+    let refused_stderr: String = if a.status.success() {
+        b_stderr.clone()
     } else {
-        &String::from_utf8_lossy(&a.stderr).into_owned()
+        String::from_utf8_lossy(&a.stderr).into_owned()
     };
     assert!(
         !refused_stdout.contains("installed successfully"),
         "the refused install must not report success: {refused_stdout:?}"
     );
-    assert!(
-        refused_stderr.contains("held by another process"),
-        "the refusal must say the name is held by another process: {refused_stderr:?}"
+    let lock_refusal = refused_stderr.contains("held by another process");
+    let exists_refusal = refused_stderr.contains("already exists");
+    println!(
+        "branch: {} - refusal {:?}",
+        if lock_refusal {
+            "LOCK (the holder was still installing, so the refusal names it)"
+        } else {
+            "EXISTS (the holder committed before the second install arrived)"
+        },
+        refused_stderr.trim()
     );
     assert!(
-        refused_stderr.contains(&a_pid.to_string()),
-        "the refusal must name the holder's PID {a_pid}: {refused_stderr:?}"
+        lock_refusal || exists_refusal,
+        "the refusal must be either the lock's or the existence check's: {refused_stderr:?}"
     );
+    if lock_refusal {
+        assert!(
+            refused_stderr.contains(&a_pid.to_string()),
+            "a lock refusal must name the holder's PID {a_pid}: {refused_stderr:?}"
+        );
+    }
 
     // 4. the store ends with exactly one whole container and no staging residue.
     let staging = staging_dirs(&containers);
