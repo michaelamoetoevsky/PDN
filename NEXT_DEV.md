@@ -180,10 +180,14 @@ confirmed at the cited line, one refuted (below).
    `f6329c5`); the reference's version is stricter because it is enforced across the whole package rather
    than per command.
 10. **Writes are atomic and the rename is identity-checked.** `atomic.py:92 atomic_replace` writes through a
-   descriptor obtained by `statedir.py:156 open_state_dir` (a per-component O_NOFOLLOW walk from a trust
-   root), and `atomic.py:232` refuses with `ESTALE` if the temporary file's `(st_dev, st_ino)` changed
-   underneath it. `statedir.py:44-50` names the one case it cannot close - a name re-pointed after a
-   validated descriptor has been handed out.
+    descriptor obtained by `statedir.py:156 open_state_dir` (a per-component O_NOFOLLOW walk from a trust
+    root), and `atomic.py:232` refuses with `ESTALE` if the temporary file's `(st_dev, st_ino)` changed
+    underneath it. `statedir.py:44-50` names the one case it cannot close - a name re-pointed after a
+    validated descriptor has been handed out. **verified**: line 93 is
+    `def atomic_replace(path: str, *, suffix: str = ".tmp")` (the decorator is line 92, which is why the
+    citation said 92), its docstring is "yield an open fd on a tmp next to *path*; rename it on success", and
+    the refusal at `:232-234` is
+    `if (entry is None or (entry.st_dev, entry.st_ino) != (written.st_dev, written.st_ino)): raise OSError(errno.ESTALE, ...)`.
 11. **Session liveness is an inherited flock, never a PID.** `session.py:174` clears O_CLOEXEC so proot and
    every descendant hold the descriptor; `session.py:472` probes with a shared, non-blocking `flock`;
    `session.py:392 session_holders()` finds survivors by scanning `/proc/*/fd` for the inode. A PID can be
@@ -197,7 +201,10 @@ confirmed at the cited line, one refuted (below).
    `_NON_TERMINATING_SIGNALS` set (`SIGSTOP`, `SIGCONT`, `SIGTSTP`, `SIGTTIN`, `SIGTTOU`, `SIGCHLD`,
    `SIGURG`, `SIGWINCH`, `SIGUSR1`, `SIGUSR2`) that is delivered as asked and never escalated, so
    `kill -s STOP` cannot become a teardown by surprise. PDN's `kill` has the same problem and its own
-   answer; the reference's is the one to compare against.
+   answer; the reference's is the one to compare against. **verified** for the `sync` half: `sync.py:1093`
+   is `if ctx.root_unreadable:` followed by a warning and a bare `return` - "not deleting anything: the
+   source could not be listed, so nothing can be called an orphan of it" - and the comment above it cites
+   rsync disabling `--delete` on an I/O error for the same reason.
 13. **A run lower in the stack is not a run lower in the argument order.** `cli.py:204` dispatches
    `HELP_COMMANDS` before argparse ever runs, so `help` works with no dependency resolution, and
    `parser.py:49` renders a command's own page on a parse error rather than a usage blob. Help is data:
