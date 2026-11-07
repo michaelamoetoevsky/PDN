@@ -15,8 +15,30 @@ fn prefix() -> String {
     std::env::var("PREFIX").unwrap_or_else(|_| "/data/data/com.termux/files/usr".to_string())
 }
 
-fn sh_bin() -> String {
-    format!("{}/bin/sh", prefix())
+/// Resolve a shell by RUNNING it, not by looking for it.
+///
+/// The first CI run of this file failed with exit 127 on a GitHub runner: `prefix()` answers
+/// `$PREFIX` or the Termux path, and the Termux path does not exist off-device. A path that
+/// does not resolve is not a failing test, it is an absent fixture - the same distinction the
+/// measurement test below already makes for `proot`. So: try the candidates, keep the first that
+/// actually executes, and let the caller report FIXTURE-UNAVAILABLE when none does.
+fn sh_bin() -> Option<String> {
+    let mut candidates = vec![
+        format!("{}/bin/sh", prefix()),
+        "/bin/sh".to_string(),
+        "sh".to_string(),
+    ];
+    candidates.dedup();
+    candidates.into_iter().find(|c| {
+        std::process::Command::new(c)
+            .arg("-c")
+            .arg("exit 0")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false)
+    })
 }
 
 fn proot_bin() -> Option<String> {
@@ -44,8 +66,12 @@ fn best_of<F: FnMut() -> bool>(mut run: F) -> u128 {
 /// native. 4000 metadata lookups run with a small, bounded number of stops.
 #[test]
 fn the_backend_intercepts_the_selected_set_and_leaves_the_rest_native() {
+    let Some(sh) = sh_bin() else {
+        println!("FIXTURE-UNAVAILABLE: no executable shell (tried $PREFIX/bin/sh, /bin/sh, sh)");
+        return;
+    };
     let selected = selective::selected_syscalls();
-    let run = selective::run_selected_cmd(&[sh_bin(), "-c".into(), WORKLOAD.into()], &selected)
+    let run = selective::run_selected_cmd(&[sh, "-c".into(), WORKLOAD.into()], &selected)
         .expect("run the workload under the selective backend");
 
     println!(
@@ -73,7 +99,11 @@ async fn the_opt_in_mode_runs_a_command_under_the_filter() {
         seccomp_selective: true,
         ..Default::default()
     };
-    config.command = vec![sh_bin(), "-c".into(), "exit 7".into()];
+    let Some(sh) = sh_bin() else {
+        println!("FIXTURE-UNAVAILABLE: no executable shell for the opt-in test");
+        return;
+    };
+    config.command = vec![sh, "-c".into(), "exit 7".into()];
     let mut engine = proot_core::ProotEngine::new(config).expect("engine");
     let code = engine
         .execute()
@@ -93,7 +123,10 @@ fn measurement_selective_vs_proot_on_the_same_workload() {
         );
         return;
     };
-    let sh = sh_bin();
+    let Some(sh) = sh_bin() else {
+        println!("FIXTURE-UNAVAILABLE: no executable shell for the measurement");
+        return;
+    };
     let selected = selective::selected_syscalls();
 
     let proot_ms = best_of(|| {
