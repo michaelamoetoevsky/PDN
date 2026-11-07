@@ -193,6 +193,10 @@ impl TestEnvironment {
             user: None,
             stdio: Default::default(),
             sockets: vec![],
+            // Opt-in readiness: None keeps the semantics this harness was written against (the
+            // supervisor reports Running without waiting for a readiness byte), so the integration
+            // suite exercises the same service lifecycle it did before C10.
+            readiness_timeout_ms: None,
         };
         supervisor.create_service(config).await
     }
