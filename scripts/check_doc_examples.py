@@ -227,7 +227,18 @@ def extract(doc, cli):
             flags = re.findall(r"--[A-Za-z][A-Za-z0-9-]*", line)
             if not flags:
                 continue
-            text = cli.help_text(payload)
+            scope = payload
+            if not scope:
+                # An excluded line can still name a subcommand whose flags matter. The
+                # URL/placeholder rules above return an empty payload, and an empty path made
+                # this check ask `podnext --help` for a subcommand flag - measured on
+                # `podnext install <url> --checksum <hex>`, which is correct documentation and
+                # was reported as a failure. Derive the scope from the line instead: the first
+                # token after `podnext` that is a known subcommand.
+                top = cli.help_text([])
+                known = Cli.subcommands(top) if top else []
+                scope = [t for t in line.split()[1:] if t in known][:1]
+            text = cli.help_text(scope)
             if text is None:
                 failures.append(
                     f"L{lineno}: {line}\n    'podnext {' '.join(payload)} --help' does not run".rstrip()
@@ -237,7 +248,7 @@ def extract(doc, cli):
             missing = [f for f in flags if f not in text]
             if missing:
                 failures.append(
-                    f"L{lineno}: {line}\n    'podnext {' '.join(payload)} --help' does not list: {', '.join(missing)}"
+                    f"L{lineno}: {line}\n    'podnext {' '.join(scope)} --help' does not list: {', '.join(missing)}"
                 )
         blocks.append(
             {
