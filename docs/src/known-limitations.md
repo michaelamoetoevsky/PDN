@@ -186,10 +186,10 @@ to stderr and nothing to stdout.
   observation that the file *looks* empty inside a guest still holds for an image that does not
   ship it, but it is not caused by a proot default, so the earlier explanation is wrong (refuted in
   `research/R2-REFERENCE.md` §0 item 3 and §A3). PDN does not build such a bind itself: the only
-  binds `proot-core` builds are the fixed `/dev`, `/proc`, `/sys`
-  (`crates/proot-core/src/lib.rs:256-258`, `:395-397`), the Android system binds
-  (`crates/proot-core/src/lib.rs:187-197`) and the caller's own `--bind`
-  (`crates/proot-core/src/lib.rs:288-290`) — none of them is `ld.so.preload`.
+  binds `proot-core` builds are the fixed `/dev`, `/proc`, `/sys` and the caller's own `--bind`
+  (`crates/proot-core/src/lib.rs`); the Android system binds a session gets are decided one layer
+  up, by `proot-distro-core` (`crates/proot-distro-core/src/android_binds.rs`, applied in
+  `crates/proot-distro-core/src/runtime.rs`) — none of them is `ld.so.preload`.
   `crates/proot-core/tests/argv_facts.rs` asserts PDN's built argv carries **no**
   `ld.so.preload` bind, with `--bind=/dev` as the positive control that bind building works at
   all, so the assertion fails if such a bind is ever added. (That test's own doc comment still

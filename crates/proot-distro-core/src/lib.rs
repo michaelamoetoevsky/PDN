@@ -13,6 +13,7 @@ macro_rules! pn_trace {
         }
     };
 }
+pub mod android_binds;
 pub mod bindings;
 pub mod compress;
 pub mod config;

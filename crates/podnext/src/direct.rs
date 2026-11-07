@@ -48,6 +48,16 @@ pub(crate) async fn execute_direct(cli: &Cli, trailing_args: &[String]) -> Resul
         engine.config.bind.push(bind.clone());
     }
 
+    // The Android bind set for a directly-executed rootfs: the same decision the
+    // container paths make, withheld from a termux-type rootfs. proot-core no
+    // longer bakes it in (see `proot_distro_core::android_binds`).
+    let direct_isolated = engine.config.isolated;
+    proot_distro_core::android_binds::extend_binds(
+        &mut engine.config.bind,
+        std::path::Path::new(rootfs_path.as_str()),
+        direct_isolated,
+    );
+
     // Set working directory
     if let Some(pwd) = &cli.pwd {
         engine.config.cwd = Some(pwd.into());
@@ -130,6 +140,18 @@ pub(crate) async fn execute_direct_manual(config: proot_core::ProotConfig) -> Re
     // Use proot-core directly for direct execution. The config already carries every flag this
     // entry point can honour; the ones it cannot refused in the scanner before reaching here.
     let mut engine = proot_core::ProotEngine::new(config)?;
+
+    // The Android bind set for a directly-executed rootfs (see
+    // `proot_distro_core::android_binds`); it used to be emitted by proot-core for
+    // every rootfs, with no distro-type exclusion.
+    if let Some(rootfs) = engine.config.rootfs.clone() {
+        let direct_isolated = engine.config.isolated;
+        proot_distro_core::android_binds::extend_binds(
+            &mut engine.config.bind,
+            &rootfs,
+            direct_isolated,
+        );
+    }
 
     // Execute and wait for completion
     let exit_code = engine.execute().await? as i32;

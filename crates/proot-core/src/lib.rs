@@ -181,21 +181,6 @@ impl ProotEngine {
         )
     }
 
-    /// Add Android/Termux system binds required for dynamic linker to work
-    fn add_android_system_binds(cmd: &mut Command, _isolated: bool) {
-        // Android system directories - required for dynamic linker
-        cmd.arg("--bind=/apex");
-        cmd.arg("--bind=/odm");
-        cmd.arg("--bind=/product");
-        cmd.arg("--bind=/system");
-        cmd.arg("--bind=/system_ext");
-        cmd.arg("--bind=/vendor");
-
-        // Linker config - required for dynamic linker
-        cmd.arg("--bind=/linkerconfig/ld.config.txt");
-        cmd.arg("--bind=/linkerconfig/com.android.art/ld.config.txt");
-    }
-
     /// Start a daemon process (background mode)
     pub async fn start(&mut self) -> Result<u32> {
         // Initialize seccomp filter
@@ -256,9 +241,6 @@ impl ProotEngine {
         cmd.arg("--bind=/dev");
         cmd.arg("--bind=/proc");
         cmd.arg("--bind=/sys");
-
-        // Android/Termux system binds required for dynamic linker
-        Self::add_android_system_binds(&mut cmd, self.config.isolated);
 
         // Environment variables — allow-listed guest env (see execute()).
         cmd.env_clear();
@@ -395,9 +377,6 @@ impl ProotEngine {
         cmd.arg("--bind=/dev");
         cmd.arg("--bind=/proc");
         cmd.arg("--bind=/sys");
-
-        // Android/Termux system binds required for dynamic linker
-        Self::add_android_system_binds(&mut cmd, self.config.isolated);
 
         // Environment variables
         //

@@ -119,6 +119,16 @@ impl RuntimeBackend for ProotBackend {
             .map(|b| b.to_argument())
             .collect::<anyhow::Result<Vec<String>>>()?;
 
+        // The Android bind set: the host directories a guest's dynamic linker
+        // needs, filtered per the reference and withheld from a termux-type
+        // rootfs. proot-core renders `config.bind`, so the decision lives here —
+        // see `android_binds` for each clause and its test.
+        crate::android_binds::extend_binds(
+            &mut engine_guard.config.bind,
+            &container.rootfs_path,
+            container.config.isolated,
+        );
+
         // Synthetic /proc entries and guest runtime directories
         let _ = crate::network::ensure_resolv_conf(&container.rootfs_path);
         if let Some(container_dir) = container.rootfs_path.parent() {

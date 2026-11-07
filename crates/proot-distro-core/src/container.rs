@@ -218,6 +218,14 @@ impl ContainerManager {
                         .extend(crate::guestdirs::bindings(container_dir));
                 }
             }
+            // The Android bind set: same decision as the interactive path (see
+            // `android_binds`), so a started container is not bound differently
+            // from a `login`.
+            crate::android_binds::extend_binds(
+                &mut engine_guard.config.bind,
+                &container.rootfs_path,
+                container.config.isolated,
+            );
             engine_guard.config.cwd = Some(
                 container
                     .config
