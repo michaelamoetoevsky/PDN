@@ -37,6 +37,13 @@ pub struct ProotConfig {
     #[arg(long = "seccomp")]
     pub seccomp: bool,
 
+    /// Run the command under the selective seccomp-interception backend (S1):
+    /// `SECCOMP_RET_TRACE` only a selected syscall set, run the rest native.
+    /// Experimental — the command is executed without PRoot, so there is no
+    /// path translation or isolation, only the interception mechanism.
+    #[arg(long = "seccomp-selective")]
+    pub seccomp_selective: bool,
+
     /// Enable syscall tracing
     #[arg(long = "trace")]
     pub trace: bool,
@@ -84,6 +91,7 @@ impl Default for ProotConfig {
             gid: None,
             env: Vec::new(),
             seccomp: true,
+            seccomp_selective: false,
             trace: false,
             kernel_release: None,
             hostname: None,

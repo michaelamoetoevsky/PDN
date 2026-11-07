@@ -24,6 +24,7 @@ pub mod identity;
 pub mod path;
 pub mod ptrace;
 pub mod seccomp;
+pub mod selective;
 pub mod syscall;
 pub mod tracee;
 pub mod tracee_state;
@@ -319,6 +320,12 @@ impl ProotEngine {
 
     /// Execute a command in the foreground and wait for completion, returning exit code
     pub async fn execute(&mut self) -> Result<i32> {
+        // The opt-in second backend (S1). When selected, the command runs under
+        // the selective-interception filter and tracer instead of PRoot.
+        if self.config.seccomp_selective {
+            return self.execute_selective().await;
+        }
+
         // Initialize seccomp filter
         self.seccomp_filter.lock().install()?;
 
@@ -510,6 +517,28 @@ impl ProotEngine {
         }
 
         Ok(exit_code)
+    }
+
+    /// Run the configured command through the selective-interception backend
+    /// (S1) instead of PRoot.
+    ///
+    /// The command is `execve`'d native: no guest root, no path translation and
+    /// no bind mounts, so this is the interception mechanism, not a drop-in for
+    /// the PRoot path. It exists so the backend can be measured against PRoot on
+    /// the same workload (see `tests/selective_seccomp.rs`).
+    pub async fn execute_selective(&mut self) -> Result<i32> {
+        if self.config.command.is_empty() {
+            return Err(anyhow::anyhow!("No command specified"));
+        }
+        let selected = selective::selected_syscalls();
+        let run = selective::run_selected_cmd(&self.config.command, &selected)?;
+        pn_trace!(
+            "[DEBUG] selective backend: {} intercepted, {} ms, exit {}",
+            run.intercepted(),
+            run.elapsed.as_millis(),
+            run.exit_code
+        );
+        Ok(run.exit_code)
     }
 
     pub fn shutdown(&mut self) -> Result<()> {

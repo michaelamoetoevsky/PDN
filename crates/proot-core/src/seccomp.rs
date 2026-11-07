@@ -33,6 +33,28 @@ const BPF_JEQ: u32 = 0x10;
 const BPF_K: u32 = 0x00;
 const BPF_RET: u32 = 0x06;
 
+/// Per-category cookies for a `SECCOMP_RET_TRACE` decision (S1).
+///
+/// The program stamps one of these into the low 16 bits of the return action;
+/// the tracer reads it back with `PTRACE_GETEVENTMSG` and routes to the handler
+/// for that category, the way shroot's `CONTROL(n, argument, cookie)` does
+/// (`fd_filter_program.c:75-81`). The three categories are the ones PDN's own
+/// syscall table already separates (`syscall.rs`: path, memory, process).
+pub const COOKIE_PATH: u32 = 0x11;
+pub const COOKIE_MEMORY: u32 = 0x12;
+pub const COOKIE_PROCESS: u32 = 0x13;
+
+/// Name the category a `TRACE` cookie selects, or `None` for a cookie this build
+/// does not stamp. Pure, so the dispatch table is testable without a tracee.
+pub fn cookie_category(cookie: u32) -> Option<&'static str> {
+    match cookie {
+        COOKIE_PATH => Some("path"),
+        COOKIE_MEMORY => Some("memory"),
+        COOKIE_PROCESS => Some("process"),
+        _ => None,
+    }
+}
+
 /// Seccomp filter for PRoot
 pub struct SeccompFilter {
     enabled: bool,
@@ -60,32 +82,7 @@ impl SeccompFilter {
         if !self.enabled {
             return Ok(());
         }
-
-        unsafe {
-            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-                return Err(anyhow::anyhow!("prctl(PR_SET_NO_NEW_PRIVS) failed"));
-            }
-        }
-
-        let mut insns = build_filter(&self.denied_syscalls);
-        let prog = libc::sock_fprog {
-            len: insns.len() as libc::c_ushort,
-            filter: insns.as_mut_ptr(),
-        };
-        let rc = unsafe {
-            libc::prctl(
-                libc::PR_SET_SECCOMP,
-                libc::SECCOMP_MODE_FILTER as libc::c_ulong,
-                &prog as *const libc::sock_fprog,
-            )
-        };
-        if rc != 0 {
-            return Err(anyhow::anyhow!(
-                "prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) failed: {}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        Ok(())
+        install_program(build_filter(&self.denied_syscalls))
     }
 
     pub fn add_allowed_syscall(&mut self, syscall: i64) {
@@ -95,6 +92,50 @@ impl SeccompFilter {
     pub fn add_denied_syscall(&mut self, syscall: i64) {
         self.denied_syscalls.push(syscall);
     }
+}
+
+/// Install the selective-interception filter into the calling process (S1).
+///
+/// Unlike `SeccompFilter::install`, a `TRACE` decision is only a stop when the
+/// process is already traced with `PTRACE_O_TRACESECCOMP`; with no tracer the
+/// kernel fails a selected syscall with `ENOSYS`. So this is called in a child
+/// that is already under a tracer (see [`crate::selective`]), never on the
+/// `proot` path, whose own `PTRACE_TRACEME` mechanism the filter would break.
+pub fn install_selected_trace(selected: &[(i64, u32)]) -> Result<()> {
+    if selected.is_empty() {
+        return Err(anyhow::anyhow!(
+            "selective filter selected no syscalls; an empty TRACE set intercepts nothing"
+        ));
+    }
+    install_program(build_trace_filter(selected))
+}
+
+/// Set `PR_SET_NO_NEW_PRIVS` and load a program into the calling process.
+fn install_program(mut insns: Vec<libc::sock_filter>) -> Result<()> {
+    unsafe {
+        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+            return Err(anyhow::anyhow!("prctl(PR_SET_NO_NEW_PRIVS) failed"));
+        }
+    }
+
+    let prog = libc::sock_fprog {
+        len: insns.len() as libc::c_ushort,
+        filter: insns.as_mut_ptr(),
+    };
+    let rc = unsafe {
+        libc::prctl(
+            libc::PR_SET_SECCOMP,
+            libc::SECCOMP_MODE_FILTER as libc::c_ulong,
+            &prog as *const libc::sock_fprog,
+        )
+    };
+    if rc != 0 {
+        return Err(anyhow::anyhow!(
+            "prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 /// The default deny set, resolved through `libc::SYS_*` so the numbers are right
@@ -126,6 +167,34 @@ fn build_filter(denied: &[i64]) -> Vec<libc::sock_filter> {
         insns.push(bpf_stmt(
             BPF_RET | BPF_K,
             libc::SECCOMP_RET_ERRNO | (libc::EPERM as u32 & libc::SECCOMP_RET_DATA),
+        ));
+    }
+    insns.push(bpf_stmt(BPF_RET | BPF_K, libc::SECCOMP_RET_ALLOW));
+    insns
+}
+
+/// Build the selective-interception program: `SECCOMP_RET_TRACE | cookie` for
+/// each `(syscall, cookie)` in `selected`, `SECCOMP_RET_ALLOW` for every other
+/// syscall. Everything not selected therefore runs native, with no stop — which
+/// is the whole point of the backend (S1).
+fn build_trace_filter(selected: &[(i64, u32)]) -> Vec<libc::sock_filter> {
+    let mut insns = Vec::with_capacity(2 + selected.len() * 2);
+    // A = seccomp_data.nr (the first field).
+    insns.push(bpf_stmt(
+        BPF_LD | BPF_W | BPF_ABS,
+        std::mem::offset_of!(libc::seccomp_data, nr) as u32,
+    ));
+    for &(nr, cookie) in selected {
+        // if A == nr: fall through to the TRACE return; else skip it.
+        insns.push(libc::sock_filter {
+            code: (BPF_JMP | BPF_JEQ | BPF_K) as u16,
+            jt: 0,
+            jf: 1,
+            k: nr as u32,
+        });
+        insns.push(bpf_stmt(
+            BPF_RET | BPF_K,
+            libc::SECCOMP_RET_TRACE | (cookie & libc::SECCOMP_RET_DATA),
         ));
     }
     insns.push(bpf_stmt(BPF_RET | BPF_K, libc::SECCOMP_RET_ALLOW));

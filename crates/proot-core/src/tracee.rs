@@ -45,6 +45,10 @@ pub struct Tracee {
     pub fd_table: FdTable,
     pub signal_mask: u64,
     pub ptrace_options: u32,
+    /// One entry per `SECCOMP_RET_TRACE` stop this tracee took, in order: the
+    /// category cookie the filter stamped, read back via `PTRACE_GETEVENTMSG`
+    /// (S1). Empty until the selective backend intercepts something.
+    pub seccomp_intercepts: Vec<u32>,
 }
 
 impl Tracee {
@@ -62,6 +66,7 @@ impl Tracee {
             fd_table: FdTable::new(),
             signal_mask: 0,
             ptrace_options: 0,
+            seccomp_intercepts: Vec::new(),
         }
     }
 
@@ -177,10 +182,40 @@ impl Tracee {
         Ok(())
     }
 
+    /// S1: a `SECCOMP_RET_TRACE` stop. The filter stamps a per-category cookie
+    /// into the low 16 bits of the return action; the tracer reads it back with
+    /// `PTRACE_GETEVENTMSG` and records it. `seccomp::cookie_category` is the
+    /// dispatch table a handler routes through, kept pure so it is testable
+    /// without a live tracee.
     fn handle_seccomp(&mut self) -> Result<()> {
-        // Handle seccomp trap
+        self.seccomp_intercepts.push(read_seccomp_cookie(self.pid)?);
         Ok(())
     }
+}
+
+/// Read the `SECCOMP_RET_TRACE` cookie from a stopped tracee.
+///
+/// `PTRACE_GETEVENTMSG` is the kernel's own read-back of the `SECCOMP_RET_DATA`
+/// the filter returned; nix 0.27 has no wrapper, so it is called directly. The
+/// tracee must be stopped on the `PTRACE_EVENT_SECCOMP` stop when this runs.
+fn read_seccomp_cookie(pid: Pid) -> Result<u32> {
+    let mut msg: libc::c_ulong = 0;
+    let rc = unsafe {
+        libc::ptrace(
+            libc::PTRACE_GETEVENTMSG,
+            pid.as_raw(),
+            0,
+            &mut msg as *mut libc::c_ulong,
+        )
+    };
+    if rc == -1 {
+        return Err(anyhow::anyhow!(
+            "PTRACE_GETEVENTMSG failed on pid {}: {}",
+            pid,
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok((msg & u32::MAX as libc::c_ulong) as u32)
 }
 
 /// Raw syscall data
