@@ -81,15 +81,15 @@ fn ids(json: &str) -> Vec<String> {
 }
 
 /// Kernel start time of `pid` (field 22 of `/proc/<pid>/stat`), read here
-/// independently of the code under test.
+/// independently of the code under test, or `None` when there is no such process.
+fn proc_start_time_opt(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
 fn proc_start_time(pid: u32) -> u64 {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("read /proc stat");
-    let rest = &stat[stat.rfind(')').expect("comm is parenthesised") + 1..];
-    rest.split_whitespace()
-        .nth(19)
-        .expect("field 22")
-        .parse()
-        .expect("start time is numeric")
+    proc_start_time_opt(pid).expect("read /proc stat")
 }
 
 fn proc_state(pid: u32) -> Option<char> {
@@ -611,71 +611,81 @@ fn kill_then_remove_leaves_no_session_files_behind() {
     );
 }
 
-// ===== B13: liveness is (pid, start-time, not a zombie) =====
+// ===== B13/C8: liveness is the inherited descriptor, not the pid =====
 
-/// A zombie kept its PID and its `/proc` entry, so a PID-only probe calls it
-/// alive. It is not running.
+/// (a) A record whose descriptor nobody holds is dead, however alive the pid it
+/// names is. `kill(pid, 0)` calls this session running; the descriptor says it
+/// ended, and the descriptor is the evidence that cannot be transferred to an
+/// unrelated process. The record is pruned, and says why (C8).
 #[test]
-fn a_zombie_is_not_a_running_session() {
+fn a_free_descriptor_is_death_even_when_the_pid_is_alive() {
     let root = TestRoot::new();
     let sessions = root.sessions();
 
-    let child = Command::new("/bin/sh")
-        .args(["-c", "exit 0"])
-        .stdout(Stdio::null())
-        .spawn()
-        .expect("spawn a child that exits");
-    let pid = child.id();
-    // Never `wait()`ed: the child stays a zombie with a live `/proc/<pid>/stat`.
-    let mut state = None;
-    for _ in 0..200 {
-        state = proc_state(pid);
-        if state == Some('Z') {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert_eq!(state, Some('Z'), "the child did not become a zombie");
+    let live = ChildGuard::new(
+        Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn the session process"),
+    );
+    let pid = live.pid;
+    let record = write_record(&sessions, "pdn-sess-freed", pid, proc_start_time(pid));
 
-    let start = proc_start_time(pid);
-    let record = write_record(&sessions, "pdn-sess-liveness", pid, start);
-    let _lock = lock_ex(&record);
+    // The pid is real and running: a pid probe (or the old `process_is_alive`)
+    // would report this session as live.
+    assert!(
+        matches!(proc_state(pid), Some(s) if s != 'Z'),
+        "the stand-in process must be running for this test to mean anything"
+    );
+    // ...and no process holds the descriptor, because the registering process
+    // is gone.
 
-    let out = root.run(&["ps", "-f", "json"]);
+    let out = run(
+        &["ps", "-f", "json"],
+        &[("PN_TEST_ROOT", &root.env()), ("PN_DEBUG", "1")],
+    );
     assert_eq!(code(&out), 0, "ps failed: {}", stderr(&out));
     let listed = ids(&text(&out));
     assert!(
         !listed.contains(&format!("sess-{pid}")),
-        "a zombie was reported as a running session: {listed:?}"
+        "a free descriptor is death, whatever the pid looks like: {listed:?}"
     );
-    let sessions_out = root.run(&["sessions", "-f", "json"]);
     assert!(
-        !text(&sessions_out).contains(&format!("sess-{pid}")),
-        "sessions disagreed with ps about the zombie: {}",
-        text(&sessions_out)
+        !record.exists(),
+        "the stale record was not pruned: {} still exists",
+        record.display()
     );
-
-    let mut child = child;
-    let _ = child.kill();
-    let _ = child.wait();
+    assert!(
+        stderr(&out).contains("the descriptor for") && stderr(&out).contains("lock free"),
+        "pruning must say it was decided by the descriptor: {}",
+        stderr(&out)
+    );
 }
 
-/// A PID the kernel has since reused by another process must not resurrect a
-/// dead session: the recorded start time is what identifies the process, and
-/// the same record with the *right* start time is still listed.
+/// (b) Liveness is the descriptor, not the pid it names. This test holds the
+/// record's `LOCK_EX` - the way the session's own process does - while the
+/// record names pid 1: a real, live process that is *not* the lock holder, with
+/// a start time that is not its own. A pid probe calls that dead. The descriptor
+/// calls it live, and the descriptor is right: a held lock cannot be acquired by
+/// an unrelated process, while a pid is handed out again by the kernel.
+///
+/// The same record is then released and read again: nothing about the record
+/// changed, only the descriptor, and now it is death.
 #[test]
-fn a_reused_pid_does_not_resurrect_a_dead_session() {
+fn a_held_descriptor_decides_liveness_not_the_pid_it_names() {
     let root = TestRoot::new();
     let sessions = root.sessions();
 
-    // The positive control: a live process, recorded with its real start time.
-    let live = Command::new("/bin/sh")
-        .args(["-c", "exec sleep 30"])
-        .stdout(Stdio::null())
-        .spawn()
-        .expect("spawn the live session process");
-    let _live = ChildGuard::new(live);
-    let live_pid = _live.pid;
+    // Positive control: a live process, recorded as itself.
+    let live = ChildGuard::new(
+        Command::new("/bin/sh")
+            .args(["-c", "exec sleep 30"])
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn the live session process"),
+    );
+    let live_pid = live.pid;
     let live_record = write_record(
         &sessions,
         "pdn-sess-live",
@@ -684,11 +694,13 @@ fn a_reused_pid_does_not_resurrect_a_dead_session() {
     );
     let _live_lock = lock_ex(&live_record);
 
-    // The reuse: this test's own pid, live and unrelated, paired with a start
-    // time that is not its own.
-    let me = std::process::id();
-    let reused = write_record(&sessions, "pdn-sess-reused", me, proc_start_time(me) + 1);
-    let _reused_lock = lock_ex(&reused);
+    // The subject: pid 1, alive, and not the process holding this lock. Its
+    // start time is deliberately not pid 1's, so nothing here relies on the pid
+    // naming the recorded process.
+    let foreign = 1u32;
+    let foreign_start = proc_start_time_opt(foreign).map_or(1, |t| t + 1);
+    let record = write_record(&sessions, "pdn-sess-foreign-pid", foreign, foreign_start);
+    let held = lock_ex(&record);
 
     let out = root.run(&["ps", "-f", "json"]);
     assert_eq!(code(&out), 0, "ps failed: {}", stderr(&out));
@@ -698,25 +710,59 @@ fn a_reused_pid_does_not_resurrect_a_dead_session() {
         "a live session with a matching start time must be listed: {listed:?}"
     );
     assert!(
-        !listed.contains(&format!("sess-{me}")),
-        "a recycled pid resurrected a dead session: {listed:?}"
+        listed.contains(&format!("sess-{foreign}")),
+        "a held descriptor is liveness even though pid {foreign} is not the lock holder: \
+         {listed:?}"
+    );
+    assert!(
+        record.exists(),
+        "a record whose descriptor is held must not be pruned: {}",
+        record.display()
+    );
+
+    // Drop the descriptor: same record, same pid, and now it is dead.
+    drop(held);
+    let after = root.run(&["ps", "-f", "json"]);
+    assert_eq!(code(&after), 0);
+    let listed_after = ids(&text(&after));
+    assert!(
+        !listed_after.contains(&format!("sess-{foreign}")),
+        "the session survived the release of its descriptor: {listed_after:?}"
+    );
+    assert!(!record.exists(), "the freed record was not pruned");
+    assert!(
+        listed_after.contains(&format!("sess-{live_pid}")),
+        "the still-held record in this store must be unaffected: {listed_after:?}"
     );
 }
 
-/// A record whose process is simply gone is not a session either, even while
-/// its file is locked.
+/// A record whose pid is gone is still a live session while its descriptor is
+/// held. That is the case the pid probe got exactly backwards: the launcher
+/// exits (or is killed), a descendant that inherited the lock keeps running the
+/// guest, and the old rule pruned the record and lost a running session. The pid
+/// is not evidence, so it is not consulted - and `kill` refuses to signal a pid
+/// that no longer names the registrant rather than hit whoever holds it now.
 #[test]
-fn a_record_for_a_dead_pid_is_not_listed() {
+fn a_record_whose_pid_is_gone_survives_while_the_descriptor_is_held() {
     let root = TestRoot::new();
     let dead = 0x7fff_ffe1u32;
-    let record = write_record(&root.sessions(), "pdn-sess-dead", dead, 12345);
+    let record = write_record(&root.sessions(), "pdn-sess-orphan", dead, 12345);
     let _lock = lock_ex(&record);
 
-    let out = root.run(&["ps"]);
-    assert_eq!(code(&out), 0);
+    let out = root.run(&["ps", "-f", "json"]);
+    assert_eq!(code(&out), 0, "ps failed: {}", stderr(&out));
+    let listed = ids(&text(&out));
     assert!(
-        !text(&out).contains(&dead.to_string()),
-        "a record whose process is gone was listed: {}",
-        text(&out)
+        listed.contains(&format!("sess-{dead}")),
+        "a held descriptor is liveness even when pid {dead} does not exist: {listed:?}"
+    );
+    assert!(record.exists(), "a held record was pruned");
+
+    // The pid cannot be signalled safely: nothing may be sent to that number.
+    let killed = root.run(&["kill", "pdn-sess-orphan"]);
+    assert!(
+        stderr(&killed).contains("nothing can be signalled safely there"),
+        "kill must refuse a pid that is not the registrant: {}",
+        stderr(&killed)
     );
 }

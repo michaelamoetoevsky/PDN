@@ -570,6 +570,18 @@ pub async fn cmd_kill(container: String, signal: Option<String>) -> Result<()> {
             if s.container_name != container && !all {
                 continue;
             }
+            // C8: the registry proved this session live from its inherited
+            // descriptor, so the record's pid is only an address. If the kernel
+            // has since handed that pid to another process, signalling it would
+            // hit a stranger - refuse and say so instead.
+            if proot_distro_core::session::signal_target(&s).is_none() {
+                eprintln!(
+                    "Skipping session PID {} ({}): its pid no longer names the process that \
+                     registered it, so nothing can be signalled safely there.",
+                    s.pid, s.container_name
+                );
+                continue;
+            }
             match requested {
                 Some(sig) => {
                     if proot_distro_core::session::kill_session(s.pid, sig).is_ok() {

@@ -138,6 +138,11 @@ impl ContainerManager {
         if let Ok(active) = crate::session::active_sessions() {
             for s in active {
                 if s.container_name == name || name == "all" || name == "--all" {
+                    // Liveness came from the descriptor (C8); the pid is only an
+                    // address, and a recycled one belongs to someone else.
+                    if crate::session::signal_target(&s).is_none() {
+                        continue;
+                    }
                     let _ = crate::session::kill_session(s.pid, libc::SIGQUIT);
                     found_session = true;
                 }

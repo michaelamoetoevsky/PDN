@@ -21,9 +21,10 @@ pub struct SessionRecord {
     /// Kernel start time of `pid` (field 22 of `/proc/<pid>/stat`, in clock
     /// ticks), read when the record was written.
     ///
-    /// Liveness is `(pid, start-time, not-a-zombie)`, not a bare PID: the kernel
-    /// reuses PIDs, so a recycled PID can make a dead session look live, while a
-    /// PID *plus* its start time cannot (B13, runc's `hasInit()`). `0` in a
+    /// Liveness is *not* decided by `(pid, start_time)`: it is decided by the
+    /// inherited descriptor ([`active_sessions`], C8). These two fields only
+    /// *address* a session - name its socket, and let a signal be refused when
+    /// the pid has since been recycled (B13, runc's `hasInit()`). `0` in a
     /// record written before this field existed means "not recorded" and is
     /// accepted as-is, so an upgrade does not discard live sessions.
     #[serde(default)]
@@ -100,6 +101,17 @@ pub fn process_is_alive(pid: u32, start_time: u64) -> bool {
     // A record written before the field existed (`0`) cannot be checked; the
     // flock probe remains its evidence.
     start_time == 0 || current == start_time
+}
+
+/// The pid to signal for a session that the registry calls live, or `None` when
+/// the record's pid is no longer the process that registered it.
+///
+/// Liveness comes from the inherited descriptor (C8), so a live record can name
+/// a pid that is gone or that the kernel has since given to an unrelated
+/// process. Signalling that number would address whatever holds it *now*, which
+/// is not this session; refusing is the only safe answer.
+pub fn signal_target(record: &SessionRecord) -> Option<u32> {
+    process_is_alive(record.pid, record.start_time).then_some(record.pid)
 }
 
 /// Remove every artifact of `pid`'s session: the record, the rendezvous socket
@@ -294,13 +306,21 @@ fn register_session_in(
     })
 }
 
-/// Query active sessions by probing non-blocking shared locks on session files.
+/// Registry liveness: while some process still holds a record's inherited
+/// `LOCK_EX`, the session is live; the moment that lock is free it is dead,
+/// whatever its recorded pid looks like (C8).
 ///
-/// A record counts as a live session only when both hold: the registering
-/// process still holds its `LOCK_EX`, **and** the recorded `(pid, start_time)`
-/// names that same live, non-zombie process (B13). The lock alone was the old
-/// evidence, and it answers "some process still has this file open" - a PID the
-/// kernel has since reused is not a session, and a zombie is not running.
+/// The descriptor is the one piece of evidence an unrelated process cannot
+/// acquire or be handed. [`register_session`] takes the `LOCK_EX` and clears
+/// `FD_CLOEXEC`, so the lock lives in the open file description that the
+/// registered process and every descendant it spawns share: it is held exactly
+/// while that process *or one of its children* (proot, the guest) is running,
+/// and the kernel releases it when the last of them exits - a zombie included,
+/// since file descriptions are closed at exit. A pid cannot stand in for that:
+/// the kernel recycles pids, and the pid written down is usually the
+/// launcher's, not the descendant still doing the work. So a record is never
+/// checked against its own `pid` here; `pid`/`start_time` are for addressing a
+/// session (its socket, a signal), not for proving it exists.
 pub fn active_sessions() -> Result<Vec<SessionRecord>> {
     let dir = sessions_dir();
     if !dir.exists() {
@@ -333,35 +353,32 @@ pub fn active_sessions() -> Result<Vec<SessionRecord>> {
         let fd = file.as_raw_fd();
         let ret = unsafe { libc::flock(fd, libc::LOCK_SH | libc::LOCK_NB) };
         if ret == 0 {
-            // Lock succeeded: process holding LOCK_EX has terminated. Unlink file.
+            // Lock acquired: no process holds the inherited descriptor, so the
+            // session is over - however alive its recorded pid still looks.
+            // Release and unlink the record.
             unsafe {
                 libc::flock(fd, libc::LOCK_UN);
             }
             drop(file);
+            pn_trace!(
+                "[DEBUG] session liveness: the descriptor for {} is not held by any process \
+                 (lock free), so the session is dead and its record is pruned",
+                path.display()
+            );
             let _ = std::fs::remove_file(&path);
         } else {
             let err = std::io::Error::last_os_error();
             let errno = err.raw_os_error().unwrap_or(0);
             if errno == libc::EWOULDBLOCK || errno == libc::EAGAIN {
-                // A lock is held: the registering process is still alive. The
-                // record must agree that it is the *same* process, and that it
-                // is not a zombie (B13), or it is not a running session.
+                // A process still holds the descriptor: the session is live.
+                // The record's pid is not consulted, and cannot be: it names
+                // the launcher, while the lock may well be held by a
+                // descendant that outlived it.
                 let Ok(content) = std::fs::read_to_string(&path) else {
                     continue;
                 };
-                let Ok(record) = serde_json::from_str::<SessionRecord>(&content) else {
-                    continue;
-                };
-                if process_is_alive(record.pid, record.start_time) {
+                if let Ok(record) = serde_json::from_str::<SessionRecord>(&content) {
                     sessions.push(record);
-                } else {
-                    pn_trace!(
-                        "[DEBUG] session liveness: pid {} start-time {} is not the recorded \
-                         process; dropping the record",
-                        record.pid,
-                        record.start_time
-                    );
-                    let _ = std::fs::remove_file(&path);
                 }
             }
         }
