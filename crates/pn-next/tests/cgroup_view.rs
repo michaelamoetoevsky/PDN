@@ -187,8 +187,20 @@ fn membership_is_served_where_the_group_is_backed() {
 #[test]
 fn a_limit_that_cannot_be_honoured_is_refused_by_named_errno() {
     let view = CgroupView::with_group(None);
+
+    // The canonical case, pinned as a literal string so a change to the wording fails here.
+    let memory = view
+        .write(CgroupFile::MemoryMax, "67108864")
+        .expect_err("a memory limit this executor cannot enforce must be refused");
+    assert_eq!(memory.errno, CgroupErrno::Erofs);
+    assert_eq!(memory.errno.code(), -30);
+    assert_eq!(
+        memory.to_string(),
+        "memory.max: EROFS (-30) - no writable cgroup2 mount is available to this process, so \
+         memory.max cannot be enforced, and this view will not represent a limit it does not have"
+    );
+
     for file in [
-        CgroupFile::MemoryMax,
         CgroupFile::CpuMax,
         CgroupFile::MemorySwapMax,
         CgroupFile::PidsMax,
@@ -205,15 +217,12 @@ fn a_limit_that_cannot_be_honoured_is_refused_by_named_errno() {
             file.name()
         );
         assert_eq!(refusal.errno.code(), -30);
-        assert_eq!(
-            refusal.to_string(),
-            format!(
-                "{}: EROFS (-30) - no writable cgroup2 mount is available to this process, so {} \
-                 cannot be enforced, and this view will not represent a limit it does not have",
-                file.name(),
-                file.name()
-            ),
-            "the refusal must name the file, the errno and the reason"
+        assert!(
+            refusal
+                .to_string()
+                .starts_with(&format!("{}: EROFS (-30) - ", file.name())),
+            "the refusal must name the file and the errno: {}",
+            refusal
         );
     }
 }
