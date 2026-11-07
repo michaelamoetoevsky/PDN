@@ -141,6 +141,24 @@ enabled = false
     }
 }
 
+impl Drop for DaemonTestEnv {
+    /// A25: every test calls `stop_daemon()` at its end, but a `?` that returns early on
+    /// failure never reaches it, and a dropped tokio `Child` does not kill the process.
+    /// The leaked daemon then holds every descriptor this test process inherited - in the
+    /// measured incident that included the shared build lock, and an unrelated build waited
+    /// two hours for it with an empty log as the only symptom. `Drop` cannot await, so this
+    /// is the synchronous SIGKILL path.
+    ///
+    /// Residual, stated rather than hidden: SIGKILL is uncatchable, so a service the daemon
+    /// had started may outlive it here. Those hold no lock, and the normal path still stops
+    /// them through `stop_daemon`.
+    fn drop(&mut self) {
+        if let Some(child) = self.daemon_process.as_mut() {
+            let _ = child.start_kill();
+        }
+    }
+}
+
 struct DaemonClient {
     socket_path: PathBuf,
 }
