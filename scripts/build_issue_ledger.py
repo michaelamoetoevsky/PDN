@@ -133,10 +133,14 @@ CHECKS: list[dict] = [
          cmd="grep -rnF 'test_create_backup_reports_failure_instead_of_ok' crates/pn-next/src/backup_restore/mod.rs",
          needle="test_create_backup_reports_failure_instead_of_ok"),
     dict(issue="13", claim="reset verifies the image BEFORE destroying the container",
-         # -A walks the body, so the order the claim depends on survives the code moving file
-         cmd="grep -rnA 40 'fn cmd_reset' crates/podnext/src | "
-             "grep -nE 'verify_image_available|remove_dir_all' | head -2",
-         needle="verify_image_available"),
+         # The claim is about ORDER, so the predicate proves order instead of mere presence: it
+         # emits the marker only when the FIRST of the two sites is the verification. The window is
+         # wide enough to survive an unrelated insertion - a 40-line window was defeated by C10's
+         # metadata read landing at sync.rs:245, which pushed the verification out of range.
+         cmd="grep -rnA 80 'fn cmd_reset' crates/podnext/src | "
+             "grep -nE 'verify_image_available|remove_dir_all' | head -2 | "
+             "awk 'NR==1 && /verify_image_available/ {print \"RESET-VERIFIES-FIRST\"}'",
+         needle="RESET-VERIFIES-FIRST"),
     dict(issue="14", claim="run sessions are registered so ps can see them",
          cmd="grep -rnF 'register_session' crates/proot-distro-core/src/runtime.rs crates/podnext/src/native.rs",
          needle="register_session"),
