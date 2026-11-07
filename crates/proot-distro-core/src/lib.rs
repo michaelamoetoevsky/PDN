@@ -38,6 +38,7 @@ pub mod names;
 pub mod network;
 pub mod paths;
 pub mod progress;
+pub mod refcount;
 pub mod runtime;
 pub mod security;
 pub mod session;

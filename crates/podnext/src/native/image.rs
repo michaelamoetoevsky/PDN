@@ -8,6 +8,7 @@ use anyhow::{bail, Context, Result};
 use hex;
 use indicatif::{ProgressBar, ProgressStyle};
 use oci_spec::image::ImageManifest;
+use proot_distro_core::refcount::REPLACED_PREFIX;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -174,14 +175,6 @@ pub(crate) async fn smoke_test_rootfs(rootfs: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Prefix of the directory this path builds a container in before it owns the
-/// container's own name. Renamed into place only once the install has succeeded.
-const STAGING_PREFIX: &str = ".tmp-install-";
-
-/// Prefix of the directory holding the container a `--force` reinstall has moved
-/// aside while it swaps in the replacement.
-const REPLACED_PREFIX: &str = ".tmp-replaced-";
-
 /// Sidecar lock path for a staging directory: `<staging dir>.lock`.
 ///
 /// The lock is created and taken *before* the staging tree exists, so a staging
@@ -189,9 +182,7 @@ const REPLACED_PREFIX: &str = ".tmp-replaced-";
 /// a kill before the lock was written) and can be reclaimed. A live install holds
 /// the lock for its whole run, so [`reap_stale_staging`] never touches it.
 fn staging_lock_path(stage_dir: &Path) -> PathBuf {
-    let mut name = stage_dir.as_os_str().to_owned();
-    name.push(".lock");
-    PathBuf::from(name)
+    proot_distro_core::refcount::sidecar_lock_path(stage_dir)
 }
 
 /// Create and take an exclusive `flock` on the staging directory's sidecar file.
@@ -219,54 +210,17 @@ fn hold_staging_lock(stage_dir: &Path) -> Result<fs::File> {
 /// signal: if this process can take a staging tree's lock, its owner is gone and
 /// the tree is residue; if the lock file is absent the tree was never claimed and
 /// is residue too. Called at the start of every install and from `remove`.
+///
+/// The decision now comes from `proot_distro_core::refcount`: every staging unit
+/// carries the count of live references that hold it, and eviction is "delete iff
+/// the count is zero" (WORKLIST C6). A count of one is reported, not evicted, so a
+/// refusal says what held the tree instead of looking like a no-op.
 pub fn reap_stale_staging(containers_dir: &Path) {
-    let Ok(entries) = fs::read_dir(containers_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let Some(name) = file_name.to_str() else {
-            continue;
-        };
-        let path = entry.path();
-
-        if name.starts_with(REPLACED_PREFIX) {
-            // A `--force` reinstall that died after moving the previous container
-            // aside: that container has already been superseded, so nothing can
-            // be using this directory.
-            let _ = fs::remove_dir_all(&path);
-            let _ = fs::remove_file(staging_lock_path(&path));
-            continue;
-        }
-
-        if name.starts_with(STAGING_PREFIX) && !path.is_dir() {
-            // A sidecar lock whose staging tree is already gone: drop it too,
-            // but only once the tree it names is really absent.
-            if let Some(owner) = name.strip_suffix(".lock") {
-                if !containers_dir.join(owner).exists() {
-                    let _ = fs::remove_file(&path);
-                }
-            }
-            continue;
-        }
-
-        if !name.starts_with(STAGING_PREFIX) {
-            continue;
-        }
-
-        // No sidecar lock means no install ever claimed this tree; reclaim it.
-        let lock_path = staging_lock_path(&path);
-        let Ok(lock) = fs::File::open(&lock_path) else {
-            let _ = fs::remove_dir_all(&path);
-            continue;
-        };
-
-        // If the lock can be taken, its owner is gone and the tree is residue.
-        let taken = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
-        if taken {
-            let _ = fs::remove_dir_all(&path);
-            let _ = fs::remove_file(&lock_path);
-            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_UN) };
+    for eviction in proot_distro_core::refcount::sweep(&proot_distro_core::refcount::staging_units(
+        containers_dir,
+    )) {
+        if let Some(line) = eviction.message() {
+            eprintln!("{line}");
         }
     }
 }
