@@ -109,6 +109,26 @@ under load") shows what happens when concurrency evidence is absent:
 | store `list` during `install` | metadata is read only from regular files (`S3`), staging trees are named `.tmp-install-*` (`:899`) | a test that lists under install load and asserts no staging tree is ever listed |
 | session register vs attach | registration takes `LOCK_EX` (`session.rs:314`), liveness is the descriptor (`C8`) | a test that attaches while the record is being created |
 
+## 4d. A29 result — three held under the race, the fourth did not
+
+`crates/proot-distro-core/tests/single_writer_races.rs` races all four rows of 4c. Three
+hold: two processes ingesting one digest leave one correct blob at the content address
+(the temp name's `pid`+counter is what carries the race — make the temp name
+non-unique and the ingest collides), a `refcount::sweep` racing a live install refuses by
+name and never touches the tree, and `scan_store` under install load never lists a
+`.tmp-install-*` tree.
+
+The fourth does **not** hold, and this is a finding, not a failure to find one:
+`register_session_in` (`session.rs:241-251`) **creates the record before it takes
+`LOCK_EX`**, so an attach scan that runs in that window takes `LOCK_SH` on an
+unlocked-but-published file, reads it as dead, and unlinks it (`session.rs:354-368`).
+The registration then returns `Ok` with a guard whose record is already gone — the
+session is invisible to `active_sessions` for its whole life. Measured over repeated
+runs: 10-14 registrations lost per ~3400, every one with its record file unlinked. The
+reproduction is committed as the `#[ignore]`d
+`a_register_publishes_its_record_before_it_locks_it`. The fix is ordering (lock before
+publish), not a new mechanism.
+
 ## 5. What follows for the worklist
 
 - **A28 (defect)**: close the torn read at `container_socket_activation/mod.rs:455-456` and
@@ -116,7 +136,9 @@ under load") shows what happens when concurrency evidence is absent:
   a state without its config, with the base tree quoted failing.
 - **A29 (evidence)**: make the four rows of 4c real tests. The value is not new code — it is turning
   "should hold" into "was raced and held", which is the only form of concurrency claim this project
-  has accepted anywhere else.
+  has accepted anywhere else. **Done, with one change: three raced and held; the session row was
+  raced and did not hold — see 4d, which raises `register_session_in`'s publish-before-lock as a
+  new finding.**
 - **A30 — CLOSED by the check above**: 4b was a test fixture, not a production write. No item.
 
 Explicitly **not** proposed: a lock-free store, an in-process event bus, `Condvar`-based handshakes,
