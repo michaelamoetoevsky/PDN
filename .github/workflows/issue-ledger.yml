@@ -104,7 +104,7 @@ jobs:
               print(f"\n{len(d['skipped_gated'])} gated cargo checks were not run (no verdict); a SKIPPED check is not evidence the fix works.")
           EOF
 
-      - name: Check the v0.1.9 non-goals (scope-creep gate)
+      - name: Check the release non-goals (scope-creep gate)
         # Roadmap section 9.4 promises things this release will not do. A promise with no check is
         # a slogan, so the gate measures the real binary's command list, the recorded line ceilings
         # and the absence of an image store or a TUI. It rides in this workflow because it needs a

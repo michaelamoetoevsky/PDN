@@ -171,7 +171,7 @@ impl DistroSecurityManager {
 /// the compiler reports as *never read*, so not one syscall is denied. The profile *name* is read
 /// only as `.is_some()`, so nothing can be tailored to a distro. Enforcing a profile would need a
 /// BPF program builder (`prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ...)`) and a runtime that
-/// honours it, so v0.1.9 declines: the field refuses instead of being accepted and dropped.
+/// honours it, so this release declines: the field refuses instead of being accepted and dropped.
 pub fn assert_seccomp_profile_supported(profile: &Option<String>) -> anyhow::Result<()> {
     if let Some(name) = profile {
         anyhow::bail!(

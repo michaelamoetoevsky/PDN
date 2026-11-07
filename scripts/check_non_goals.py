@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Check that the v0.1.9 non-goals are still non-goals.
+"""Check that this release's non-goals are still non-goals.
 
-Roadmap section 9.4 lists what v0.1.9 will NOT do: no TUI, no OCI image store, no cluster
+Roadmap section 9.4 lists what the current release will NOT do: no TUI, no OCI image store, no cluster
 scheduler, no expansion of the optional crates, no new top-level command except `doctor`. A list
 of things you promise not to do is worth exactly as much as the check that notices when you do
 one of them - which, until this script existed, was nothing.
@@ -31,6 +31,32 @@ def sh(cmd: list[str]) -> tuple[int, str]:
     env = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, env=env)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _crate_version() -> str:
+    m = re.search(r'^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', (ROOT / "Cargo.toml").read_text(), re.M)
+    if not m:
+        raise SystemExit("check_non_goals: cannot read version from Cargo.toml")
+    return m.group(1)
+
+
+def check_current_version_claims() -> list[str]:
+    """Every `**vX.Y.Z** (current)` in the published docs must name the crate version.
+
+    A version claim with the word "current" next to it is a statement about which release
+    this tree is. The v0.1.9 withdrawal left one behind in roadmap section 10.6 that said
+    v0.1.9 was current while Cargo.toml said 0.2.0 - a reader has no way to tell which of
+    the two is the tree. Dated status blocks are deliberately exempt: their figures are a
+    record of a measurement at a commit, and rewriting them would falsify the record.
+    """
+    version = _crate_version()
+    bad = []
+    for f in sorted((ROOT / "docs" / "src").glob("*.md")):
+        for i, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
+            for m in re.finditer(r"\*\*v?([0-9]+\.[0-9]+\.[0-9]+)\*\*\s*\((current|shipped)\)", line):
+                if m.group(1) != version:
+                    bad.append(f"{f.relative_to(ROOT)}:{i}: says v{m.group(1)} ({m.group(2)}) but Cargo.toml says {version}")
+    return bad
 
 
 def rust_lines(subdir: str) -> int:
@@ -122,14 +148,21 @@ def main() -> int:
         return 0
 
     baseline = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
+    # Runs before the binary check on purpose: a stale version claim is a fact about the tree,
+    # not about whether a podnext binary happened to be buildable.
+    claims = check_current_version_claims()
     if now["commands"] is None:
+        if claims:
+            for c in claims:
+                print(f"  VIOLATION: {c}")
+            return 1
         # Not a violation: a measurement that could not be taken. Reporting it as a crossed
         # non-goal would be the same mistake as reporting an unreadable check as healthy, so it
         # leaves with its own status.
         print(f"cannot measure: no runnable podnext at {args.binary} "
               f"(build it first, or pass --binary)", file=sys.stderr)
         return 2
-    problems = compare(baseline, now)
+    problems = compare(baseline, now) + claims
     if args.json:
         print(json.dumps({"ok": not problems, "problems": problems, "measured": now}, indent=2))
     else:

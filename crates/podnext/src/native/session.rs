@@ -303,7 +303,7 @@ pub async fn run_container_native(
 
 /// Marker telling `attach` to run the supervisor loop instead of reconnecting.
 /// The feature reuses one existing subcommand because a new top-level command is
-/// a v0.1.9 non-goal (`scripts/non_goals.json`).
+/// a non-goal of this release (`scripts/non_goals.json`).
 const SESSION_HOST_ENV: &str = "PODNEXT_SESSION_HOST";
 const SESSION_CMD_ENV: &str = "PODNEXT_SESSION_CMD";
 const SESSION_ISOLATED_ENV: &str = "PODNEXT_SESSION_ISOLATED";

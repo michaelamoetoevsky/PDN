@@ -310,7 +310,7 @@ This roadmap serves as the definitive engineering blueprint for elevating contai
 
 ---
 
-## 9. Roadmap to v0.1.9 — stability, simplicity, and the interactive shell
+## 9. Roadmap to v0.2.0 — stability, simplicity, and the interactive shell
 
 **Status (5 Nov 2026): not complete.** Every figure below names the command that produced it. The
 `v0.1.9` release was withdrawn before it was tagged (`5b479d1`), `Cargo.toml` still reads `0.1.8`,
@@ -322,9 +322,9 @@ Decisions already taken, so they are not reopened here:
 
 - **Licence**: `GPL-2.0-or-later`, declared identically in `LICENSE`, `Cargo.toml` and `README.md`,
   pinned by four ledger predicates (#40, closed).
-- **Image model**: unchanged in v0.1.9. Images are still container directories; the OCI artifact
+- **Image model**: unchanged in v0.2.0. Images are still container directories; the OCI artifact
   store, layers and registry transport are section 4.4 and belong to the next major version.
-- **TUI**: not in v0.1.9. A TUI is a consumer; it is cheap only once a stable machine interface
+- **TUI**: not in v0.2.0. A TUI is a consumer; it is cheap only once a stable machine interface
   exists underneath. section 9.2 builds that interface first.
 
 ### 9.1 Stability and honesty — freeze breadth, deepen the paths people use daily
@@ -333,7 +333,7 @@ Decisions already taken, so they are not reopened here:
 
 The defect pattern of the last three rounds was consistent: a command existed, printed something
 plausible, and could not do what it claimed (`image push`, benchmark reporting, `image inspect`,
-`login --detach`). v0.1.9 removes the pattern rather than more instances of it.
+`login --detach`). v0.2.0 removes the pattern rather than more instances of it.
 
 | Work item | Acceptance criterion |
 |---|---|
@@ -426,7 +426,7 @@ Being able to `login` is not the same as enjoying the shell daily. Ordered by wh
 | Session hygiene: reuse, `ps`/`kill` consistency, no zombie guests after SIGKILL | a soak run leaves no processes behind |
 | `podnext doctor` on the host and inside the guest | reports DNS, `/dev/shm`, `os-release`, cgroup, TMPDIR, proot argv with pass/fail |
 
-### 9.4 Explicit non-goals for v0.1.9
+### 9.4 Explicit non-goals for v0.2.0
 
 **Status (5 Nov 2026): held.** Only `doctor` was added beyond the existing surface (the new top-level command required by section 9.3); `cluster`, `dbus`, `gitops` and `multiarch_build` were not expanded, and there is no TUI (`podnext --help` lists the same command set as before this round).
 
@@ -434,7 +434,7 @@ Being able to `login` is not the same as enjoying the shell daily. Ordered by wh
   Complexity that is not exercised rots, and the project has the receipts: a benchmark target drifted
   through 26 compile errors behind a green check.
 - No new top-level commands beyond `doctor`, which section 9.3 requires: that is the 38th, and it is
-  already labelled and gated. Everything else new waits — v0.1.9 makes the existing 37 honest first.
+  already labelled and gated. Everything else new waits — v0.2.0 makes the existing 37 honest first.
 - No TUI until section 9.2 lands, no OCI store until the next major version (section 4.4).
 
 The audit run that accompanies this section supplies the concrete defect list; its findings are
@@ -516,19 +516,19 @@ section 5. What is taken is the *architecture*, module by module:
 | local archive install | raw rootfs tar and OCI layout, digests verified, reads bounded | `podnext install <archive>` |
 | build engine + layer differ | one layer per instruction, whiteouts, multi-stage with per-stage scopes | replaces the current single-rootfs builder |
 | login option polygon | isolated / shared / bindings / ports / detach / user | widen `login` to section 10.2 |
-| session registry | recorded sessions, consistent `ps`/`kill`, teardown | extend what exists; detach/attach landed in v0.1.9 (#57) |
+| session registry | recorded sessions, consistent `ps`/`kill`, teardown | extend what exists; detach/attach landed in v0.2.0 (#57) |
 | sysdata, shm, l2s, dirfd | /proc stubs, shared memory, hardlink emulation, descriptor VFS | already ported in earlier rounds — verify parity, do not rewrite |
 | state dir + paths | honours `TERMUX__HOME`, `TERMUX__PREFIX`, XDG | replace 12 hard-coded Termux paths |
 | help pages + alias + completions | discoverability | section 10.4 |
 
 ### 10.6 Sequencing
 
-- **v0.1.9** (current): stability, honesty, module split, cached index, env-var paths, and the crash
+- **v0.2.0** (shipped): stability, honesty, module split, cached index, env-var paths, and the crash
   class filed as #41. No new top-level commands; no TUI.
 - **v0.3.0**: section 10.1–10.4. The image store (section 4.4) is the spine, because import/export, push/pull and
   build-with-layers all sit on it; the `login` polygon is the other half and is independent of it, so
   the two can proceed in parallel.
-- Performance is not a later phase: the cached container index and the daemon-owned state are v0.1.9
+- Performance is not a later phase: the cached container index and the daemon-owned state are v0.2.0
   work precisely because they make every v0.3.0 command cheaper by construction.
 
 Acceptance for the whole section: the 13-agent audit findings triaged, the four tables above
