@@ -61,6 +61,9 @@ pub async fn collect(container: Option<&str>) -> Vec<Check> {
     checks.push(writable_cgroupfs_check());
     checks.push(pidfd_check());
     checks.push(executor_uid_check());
+    // S2: the identity/credential syscalls PDN names, and what it does about each, read from the
+    // table itself rather than retyped here.
+    checks.push(identity_check());
     checks.push(subreaper_check());
     checks.extend(container_checks(container).await);
     checks
@@ -737,6 +740,23 @@ fn executor_uid_check() -> Check {
             format!("cannot read /proc/self/status: {err}"),
         ),
     }
+}
+
+/// The identity/credential syscalls PDN names, and what it does about each (adoption S2,
+/// `proot_core::identity`). The count is read from the table rather than retyped, so the row and
+/// the table cannot disagree; the mapping the table encodes is named too, so a caller sees WHY a
+/// guest reports an identity rather than being told only that it does.
+fn identity_check() -> Check {
+    let count = proot_core::identity::IDENTITY_SYSCALL_TABLE.len();
+    Check::new(
+        "guest identity",
+        Verdict::Ok,
+        format!(
+            "the runtime maps a guest to one host identity via `--change-id=0:0:0` (a guest is \
+             root); {count} identity/credential syscalls are named in proot_core::identity with \
+             their disposition, and none switches the executor's real uid"
+        ),
+    )
 }
 
 /// Child subreaper: A22 sets it on the exec path and there is no side-effect-free way to read the

@@ -20,6 +20,7 @@ pub mod arch;
 pub mod cli;
 pub mod compat;
 pub mod extension;
+pub mod identity;
 pub mod path;
 pub mod ptrace;
 pub mod seccomp;
