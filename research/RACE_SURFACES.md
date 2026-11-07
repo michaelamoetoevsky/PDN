@@ -68,16 +68,23 @@ This campaign's fixes are recognisable as exactly this remedy, which is why the 
 defects and one of which is missing evidence. A "concurrency subsystem" (lock-free structures,
 atomics rework, in-process signalling) has no consumer in this tree.
 
-### 4a. One real torn read (defect) — `container_socket_activation/mod.rs:455-456` and `:524-525`
+### 4a. The suspected torn read — CHECKED, WITHDRAWN
+
+An earlier revision of this document reported a torn read at `container_socket_activation/mod.rs:455-456` and
+`:524-525`, on the grounds that two guards are read in sequence. Reading the surrounding block settles it: **both
+read guards are held across both lookups** -
 
 ```rust
+let active_guard = active.read().await;
+let config_guard = configs.read().await;
 if let Some(state) = active_guard.get(&socket_name) {
     if let Some(config) = config_guard.get(&socket_name) {
 ```
 
-Two guards are read in sequence. `configs.remove(socket_name)` exists at `:202`, so a config can be
-removed between the two `get`s, yielding a `state` with no `config`. The fix is small and does not
-need a new mechanism: one lock covering both, or one map holding the pair. **Counted as a finding.**
+- so the (state, config) pair is consistent, and `configs.remove()` at `:202` cannot interleave because a writer
+cannot take the configs write lock while any reader holds a read lock. No defect. The inference was drawn from
+two `get` calls without checking the guards' lifetime, which is the same class of mistake as reading a count out
+of a broken pattern: the evidence for a claim must be the thing that would refute it.
 
 ### 4b. The inconsistent-looking write — CHECKED, not a finding
 
