@@ -249,8 +249,16 @@ pub async fn build_local_image(
             }
             Instr::Workdir(dir) => {
                 let dir = dir.trim_matches('"').to_string();
+                // Docker resolves a relative WORKDIR "relative to whatever the
+                // previous working directory is", so `WORKDIR /app` then
+                // `WORKDIR src` is `/app/src`, not `/src`
+                // (docs.docker.com/reference/build-checks/workdir-relative-path).
+                // That is the scoping the header above claims; before C5 an
+                // unprefixed path was always rooted at `/`.
                 let abs = if dir.starts_with('/') {
                     dir
+                } else if let Some(prev) = &workdir {
+                    format!("{}/{}", prev.trim_end_matches('/'), dir)
                 } else {
                     format!("/{}", dir)
                 };

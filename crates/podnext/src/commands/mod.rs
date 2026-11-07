@@ -484,6 +484,71 @@ mod build_local_tests {
         assert_eq!(meta["working_dir"], "/srv/app");
     }
 
+    // C5/G3: the reference's `do_workdir` "creates the directory on disk ...
+    // so the path still exists when the image is run"; its acceptance is "a
+    // built image's WORKDIR exists at run time". PDN has no layer engine, so
+    // it creates the ancestors directly in `build.rs`. Assert the on-disk half,
+    // which the metadata assertion above does not cover.
+    #[tokio::test]
+    async fn workdir_directory_exists_in_the_built_rootfs() {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::write(
+            ctx.path().join("Dockerfile"),
+            "FROM scratch\nWORKDIR /srv/app/deep\n",
+        )
+        .unwrap();
+        let store = tempfile::tempdir().unwrap();
+
+        let dir = build_local_image(
+            "c5-wd-dir:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            dir.join("rootfs").join("srv/app/deep").is_dir(),
+            "WORKDIR must exist in the built rootfs when the image is run"
+        );
+    }
+
+    // C5/G3, the gap left after the directory is created: a *relative* WORKDIR.
+    // Docker resolves it "relative to whatever the previous working directory
+    // is" (`docs.docker.com/reference/build-checks/workdir-relative-path`), so
+    // `WORKDIR /app` then `WORKDIR src` is `/app/src`. PDN prepended a slash
+    // unconditionally and produced `/src` - not the scoping `build.rs:221`
+    // claims to match.
+    #[tokio::test]
+    async fn relative_workdir_resolves_against_the_previous_workdir() {
+        let ctx = tempfile::tempdir().unwrap();
+        std::fs::write(
+            ctx.path().join("Dockerfile"),
+            "FROM scratch\nWORKDIR /app\nWORKDIR src\n",
+        )
+        .unwrap();
+        let store = tempfile::tempdir().unwrap();
+
+        let dir = build_local_image(
+            "c5-wd-rel:latest",
+            None,
+            ctx.path(),
+            Some(store.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(meta["working_dir"], "/app/src");
+        assert!(
+            dir.join("rootfs").join("app/src").is_dir(),
+            "the chained directory must exist in the built rootfs"
+        );
+    }
+
     // Residual gap 3 (#30), wildcard slice: `COPY src/*.rs` was unsupported.
     /// The glob matcher gained `[...]` classes; `**` stays unsupported but is now
     /// refused with a message instead of silently matching nothing.
