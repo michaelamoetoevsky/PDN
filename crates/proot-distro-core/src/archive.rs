@@ -18,6 +18,7 @@
 //! once it sees the `oci-layout` marker), and the extraction itself is
 //! reimplemented against the OCI/Docker specifications, not transcribed.
 
+use crate::blobstore::{parse_digest, BlobStore};
 use anyhow::{bail, Context, Result};
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
@@ -213,6 +214,8 @@ fn extract_oci_layout(tar: &Path, rootfs: &Path) -> Result<()> {
     let manifest: ImageManifest =
         serde_json::from_slice(&manifest_bytes).context("parsing the OCI archive's manifest")?;
 
+    let store = BlobStore::new()?;
+
     if manifest.layers().is_empty() {
         bail!("OCI archive manifest {manifest_digest} declares no layers to apply");
     }
@@ -226,11 +229,56 @@ fn extract_oci_layout(tar: &Path, rootfs: &Path) -> Result<()> {
                 "OCI archive is missing blob {path} required by manifest {manifest_digest}"
             )
         })?;
-        verify_blob(&file, offset, size, &digest)?;
 
-        let reader = open_blob(&file, offset, size, &media_type)?;
-        crate::untar::extract(reader, rootfs)
-            .with_context(|| format!("applying OCI layer {digest}"))?;
+        // Two-phase ingest: stream the compressed blob into the store, hashing
+        // it as it lands. A blob whose bytes do not match the digest the
+        // manifest declares is refused before it is given a content address.
+        let mut blob = file.try_clone()?;
+        blob.seek(SeekFrom::Start(offset))?;
+        store.put_reader(&digest, blob.take(size)).map_err(|e| {
+            // Keep the refusal's own words in the top-level message: the CLI
+            // prints only the outermost error, and "does not match the digest"
+            // is the line a caller is told to look for.
+            anyhow::anyhow!("ingesting OCI layer {digest}: {e}")
+        })?;
+
+        // Apply from the STORE, not from the archive: the container is
+        // materialised from retained, verified bytes.
+        apply_layer_from_store(&store, &digest, &media_type, rootfs)?;
+    }
+    Ok(())
+}
+
+/// Apply one stored layer blob to `rootfs`, decoding it by the media type the
+/// manifest declares.
+///
+/// This is the materialisation step: the bytes come from the content-addressed
+/// store, so a container can be rebuilt from blobs alone (no archive, no
+/// registry) and two images that share a layer read the same stored file.
+pub fn apply_layer_from_store(
+    store: &BlobStore,
+    digest: &str,
+    media_type: &str,
+    rootfs: &Path,
+) -> Result<()> {
+    let reader = decode_layer(store.open(digest)?, media_type)?;
+    crate::untar::extract(reader, rootfs)
+        .with_context(|| format!("applying OCI layer {digest} from the store"))
+}
+
+/// Materialise a rootfs from layer blobs that are already in the store.
+///
+/// `layers` is `(digest, mediaType)` in application order - the same pairs a
+/// manifest lists. Unlike [`install_from_archive`] this touches no archive: the
+/// container is built from the store, which is what makes the store the source
+/// of truth for an already-pulled image.
+pub fn materialize_from_store(rootfs: &Path, layers: &[(String, String)]) -> Result<()> {
+    if layers.is_empty() {
+        bail!("refusing to materialise a rootfs from no layers");
+    }
+    let store = BlobStore::new()?;
+    for (digest, media_type) in layers {
+        apply_layer_from_store(&store, digest, media_type, rootfs)?;
     }
     Ok(())
 }
@@ -282,16 +330,8 @@ fn oci_arch() -> &'static str {
 /// checked first so a crafted `index.json` cannot route the lookup through a
 /// name containing `..` or `/` (`install_local.py:_oci_blob_path`).
 fn blob_path(digest: &str) -> Result<String> {
-    let ok = digest.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    });
-    if !ok {
-        bail!("refusing OCI digest {digest:?}: expected `sha256:<64 lowercase hex>`");
-    }
-    let (algo, hex) = digest.split_once(':').unwrap();
+    let hex = parse_digest(digest)?;
+    let algo = "sha256";
     Ok(format!("blobs/{algo}/{hex}"))
 }
 
@@ -320,44 +360,16 @@ fn read_member(
     Ok(buf)
 }
 
-/// Verify one blob against its declared digest before it is applied.
-fn verify_blob(file: &File, offset: u64, size: u64, digest: &str) -> Result<()> {
-    let mut reader = file.try_clone()?;
-    reader.seek(SeekFrom::Start(offset))?;
-    let mut limited = reader.take(size);
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 1 << 16];
-    loop {
-        let n = limited.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    let got = hex::encode(hasher.finalize());
-    let want = digest.strip_prefix("sha256:").unwrap_or(digest);
-    if got != want {
-        bail!(
-            "OCI blob {digest} does not match the digest the manifest declares \
-             (read sha256:{got}); the archive is corrupt or tampered with"
-        );
-    }
-    Ok(())
-}
-
-/// Open one layer blob, decoding it by the media type the manifest declares.
-fn open_blob(file: &File, offset: u64, size: u64, media_type: &str) -> Result<Box<dyn Read>> {
-    let mut reader = file.try_clone()?;
-    reader.seek(SeekFrom::Start(offset))?;
-    let limited = reader.take(size);
+/// Decode one stored blob by the media type the manifest declares.
+fn decode_layer(reader: File, media_type: &str) -> Result<Box<dyn Read>> {
     let reader: Box<dyn Read> = if media_type.contains("gzip") {
-        Box::new(GzDecoder::new(limited))
+        Box::new(GzDecoder::new(reader))
     } else if media_type.contains("zstd") {
-        Box::new(zstd::stream::read::Decoder::new(limited).context("decoding a zstd layer")?)
+        Box::new(zstd::stream::read::Decoder::new(reader).context("decoding a zstd layer")?)
     } else if media_type.contains("bzip") {
-        Box::new(BzDecoder::new(limited))
+        Box::new(BzDecoder::new(reader))
     } else {
-        Box::new(limited)
+        Box::new(reader)
     };
     Ok(reader)
 }

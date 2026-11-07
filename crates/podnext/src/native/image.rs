@@ -5,7 +5,6 @@
 
 use super::{digest, retry};
 use anyhow::{bail, Context, Result};
-use flate2::read::GzDecoder;
 use hex;
 use indicatif::{ProgressBar, ProgressStyle};
 use oci_spec::image::ImageManifest;
@@ -854,6 +853,10 @@ async fn download_and_extract_layers(
 ) -> Result<()> {
     let _client = http_client();
     let layers = manifest.layers();
+    // The content-addressed store retains every layer blob under the digest that
+    // names it, so a later image sharing this layer adds no bytes and a container
+    // can be re-materialised from the store without the registry or an archive.
+    let store = proot_distro_core::blobstore::BlobStore::new()?;
     let pb = ProgressBar::new(layers.len() as u64);
     pb.set_style(ProgressStyle::default_bar()
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} layers ({msg})")
@@ -885,8 +888,18 @@ async fn download_and_extract_layers(
             );
         }
 
-        pb.set_message(format!("Extracting {}", &digest_str[..20]));
-        extract_layer(&layer_data, &layer.media_type().to_string(), rootfs)?;
+        pb.set_message(format!("Extracting {short}"));
+        // Retain the verified compressed blob, then apply it from the store: the
+        // same two steps the archive path takes, so both install sources feed one
+        // deduplicating store.
+        let media_type = layer.media_type().to_string();
+        store.put_bytes(&digest_str, &layer_data)?;
+        proot_distro_core::archive::apply_layer_from_store(
+            &store,
+            &digest_str,
+            &media_type,
+            rootfs,
+        )?;
 
         pb.inc(1);
     }
@@ -988,13 +1001,6 @@ async fn download_layer(name: &str, digest: &str, token: &str) -> Result<Vec<u8>
             }
         }
     }
-}
-
-fn extract_layer(data: &[u8], _media_type: &str, rootfs: &Path) -> Result<()> {
-    // Not `archive.unpack()`: this device denies `link(2)`, so layers carrying
-    // hard links (Debian's perl, for one) abort the install. See the module
-    // docs in proot_distro_core::untar.
-    proot_distro_core::untar::extract(GzDecoder::new(data), rootfs)
 }
 
 fn save_container_metadata(

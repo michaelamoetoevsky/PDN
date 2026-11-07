@@ -16,6 +16,7 @@ macro_rules! pn_trace {
 pub mod android_binds;
 pub mod archive;
 pub mod bindings;
+pub mod blobstore;
 pub mod compress;
 pub mod config;
 pub mod constants;
