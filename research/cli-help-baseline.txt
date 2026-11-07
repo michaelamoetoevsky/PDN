@@ -60,7 +60,7 @@ podnext -b /host/dir:/guest/dir -- ls      # Directly bind mount host directory
 Usage: podnext [OPTIONS] [COMMAND]
 
 Commands:
-  install     [experimental] [Core] Install distribution from OCI image
+  install     [experimental] [Core] Install a distribution from an image, archive or URL
   list        [stable] [Core] List created containers [alias: ls]
   login       [experimental] [Core] Start interactive shell inside a container
   run         [experimental] [Core] Run command in container
@@ -2276,25 +2276,34 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext install --help =====
-Download and unpack an OCI/Docker container image into a clean, isolated rootfs.
+Unpack a rootfs into a clean, isolated container. The source is a Docker/OCI
+image reference, a local archive (a plain rootfs tarball or an OCI image-layout
+tar), or an http(s) URL to one of those. A local archive and a URL are unpacked
+offline; the container name is derived from the source's last component unless
+--name is given.
 
 EXAMPLES:
   podnext install debian:13
   podnext install ubuntu:22.04 --name my-ubuntu
-  podnext install alpine:latest --force
+  podnext install ./rootfs.tar.gz
+  podnext install ./image.oci.tar --name deb
+  podnext install https://example.org/rootfs.tar.xz --checksum sha256:<hex>
 
 Usage: podnext install [OPTIONS] <IMAGE>
 
 Arguments:
   <IMAGE>
-          Image reference (e.g., ubuntu:22.04, debian:12, alpine:latest)
+          Image reference (ubuntu:22.04), local archive (./rootfs.tar.gz), or http(s) URL
 
 Options:
   -n, --name <NAME>
-          Container name (defaults to image name without tag)
+          Container name (defaults to the source's derived alias)
 
   -f, --force
           Force reinstall if container exists
+
+      --checksum <SHA256>
+          Verify the archive against this sha256 (as `sha256:<hex>` or bare hex)
 
   -r, --rootfs <ROOTFS>
           Use PATH as guest root filesystem
