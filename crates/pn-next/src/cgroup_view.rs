@@ -53,6 +53,8 @@ pub enum CgroupFile {
     DevicesAllow,
     /// `io.max` - an I/O bandwidth or IOPS limit.
     IoMax,
+    /// `cpu.weight` - a relative CPU share.
+    CpuWeight,
 }
 
 impl CgroupFile {
@@ -70,6 +72,7 @@ impl CgroupFile {
             CgroupFile::CpusetCpus => "cpuset.cpus",
             CgroupFile::DevicesAllow => "devices.allow",
             CgroupFile::IoMax => "io.max",
+            CgroupFile::CpuWeight => "cpu.weight",
         }
     }
 
@@ -90,6 +93,7 @@ impl CgroupFile {
                 | CgroupFile::CpusetCpus
                 | CgroupFile::DevicesAllow
                 | CgroupFile::IoMax
+                | CgroupFile::CpuWeight
         )
     }
 }

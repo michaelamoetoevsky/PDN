@@ -3,10 +3,10 @@
 //! Provides a complete service layer for container lifecycle management
 //! with a CRI-compatible runtime API.
 
+use crate::cgroup_view::{CgroupFile, CgroupView};
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use pn_gateway::PnGateway;
-use proot_compat::cgroup_v2::{cgroup_v2_available, setup_cgroup_v2};
 use proot_distro_core::{
     Container as ProotContainer, ContainerConfig, ContainerInfo as ProotContainerInfo,
     ContainerManager, ContainerStatus, GpuConfig, GpuDevice, GpuDeviceType, LoginOptions,
@@ -104,6 +104,37 @@ impl From<ProotResourceLimits> for ResourceLimits {
             memory_swap_limit: None,
             oom_score_adj: None,
         }
+    }
+}
+
+impl ResourceLimits {
+    /// The cgroup2 policy files this limit set would have to write, with their values.
+    ///
+    /// These are the knobs the runtime used to write into the container rootfs as ordinary
+    /// files (WORKLIST A27). The cgroupfs view refuses every one of them where the kernel
+    /// cannot enforce it, so this is the list a caller is told was not applied.
+    fn cgroup_policies(&self) -> Vec<(CgroupFile, String)> {
+        let mut out = Vec::new();
+        if let Some(cpu) = self.cpu_limit {
+            // cpu.max is "<quota> <period>"; the period is 100000us, as the old write assumed.
+            out.push((
+                CgroupFile::CpuMax,
+                format!("{} 100000", (cpu * 100_000.0) as i64),
+            ));
+        }
+        if let Some(mem) = self.memory_limit {
+            out.push((CgroupFile::MemoryMax, mem.to_string()));
+        }
+        if let Some(swap) = self.memory_swap_limit {
+            out.push((CgroupFile::MemorySwapMax, swap.to_string()));
+        }
+        if let Some(pids) = self.pids_limit {
+            out.push((CgroupFile::PidsMax, pids.to_string()));
+        }
+        if let Some(weight) = self.cpu_shares {
+            out.push((CgroupFile::CpuWeight, weight.to_string()));
+        }
+        out
     }
 }
 
@@ -743,65 +774,27 @@ impl Runtime {
         Ok(())
     }
 
-    /// Apply resource limits to a container using cgroup v2
+    /// Apply resource limits to a container through the private cgroupfs view.
+    ///
+    /// A limit takes effect only inside a group backed by a real, writable cgroup2 mount
+    /// ([`crate::supervisor::writable_cgroupfs`]). Where there is none - Android/Termux and the
+    /// CI runner - the code here used to `create_dir_all` `rootfs/sys/fs/cgroup/container_<id>`
+    /// and write `cpu.max`/`memory.max`/`pids.max` into it as ordinary files: the writes
+    /// succeeded and a caller believed a limit was in force when nothing enforced it (WORKLIST
+    /// A27, the last site of the class A20 and S8 fixed one and two layers up). The view refuses
+    /// every resource policy it cannot enforce by name, so a limit is either applied by a
+    /// mechanism or reported as refused - never faked.
     pub async fn apply_resource_limits(&self, container_id: &str) -> Result<()> {
         let container = self.get_container(container_id).await?;
-        let rootfs = container.base.rootfs_path.clone();
 
-        // Setup cgroup v2 in the container's rootfs if not already available
-        if !cgroup_v2_available(&rootfs) {
-            setup_cgroup_v2(&rootfs).map_err(|e| anyhow::anyhow!(e))?;
+        let group = format!("container_{}", &container_id[..8.min(container_id.len())]);
+        let view = CgroupView::for_group(crate::supervisor::writable_cgroupfs().as_deref(), &group);
+
+        for (file, value) in container.resources.cgroup_policies() {
+            if let Err(refusal) = view.write(file, &value) {
+                tracing::warn!("cgroup limit for container '{container_id}': {refusal}");
+            }
         }
-
-        let cgroup_path = rootfs.join("sys/fs/cgroup");
-        let container_cgroup = cgroup_path.join(format!(
-            "container_{}",
-            &container_id[..8.min(container_id.len())]
-        ));
-
-        // Create container cgroup directory
-        std::fs::create_dir_all(&container_cgroup)?;
-
-        // Apply CPU limit
-        if let Some(cpu_limit) = container.resources.cpu_limit {
-            let quota = (cpu_limit * 100000.0) as i64; // cpu_period is typically 100000
-            std::fs::write(
-                container_cgroup.join("cpu.max"),
-                format!("{} 100000", quota),
-            )?;
-        }
-
-        // Apply memory limit
-        if let Some(memory_limit) = container.resources.memory_limit {
-            std::fs::write(
-                container_cgroup.join("memory.max"),
-                memory_limit.to_string(),
-            )?;
-        }
-
-        // Apply memory swap limit
-        if let Some(swap_limit) = container.resources.memory_swap_limit {
-            std::fs::write(
-                container_cgroup.join("memory.swap.max"),
-                swap_limit.to_string(),
-            )?;
-        }
-
-        // Apply PIDs limit
-        if let Some(pids_limit) = container.resources.pids_limit {
-            std::fs::write(container_cgroup.join("pids.max"), pids_limit.to_string())?;
-        }
-
-        // Apply CPU shares (weight)
-        if let Some(cpu_shares) = container.resources.cpu_shares {
-            std::fs::write(container_cgroup.join("cpu.weight"), cpu_shares.to_string())?;
-        }
-
-        tracing::info!(
-            "Applied resource limits to container {}: {:?}",
-            container_id,
-            container.resources
-        );
         Ok(())
     }
 
