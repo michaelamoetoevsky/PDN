@@ -1,6 +1,7 @@
 //! Resource Quota Module
 //! Enforces resource limits independent of container limits via supervisor
 
+use crate::cgroup_view::{CgroupFile, CgroupView};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -588,57 +589,54 @@ impl ResourceQuotaManager {
         Ok(())
     }
 
-    /// Apply throttling via cgroups
+    /// Apply throttling through the private cgroupfs view.
+    ///
+    /// This used to write `cpu.max`/`memory.max`/`io.max`/`pids.max` into
+    /// `<cgroups_mount>/pdn/<service>` as ordinary files and return `Ok()` (WORKLIST A20):
+    /// the caller saw a successful write and a limit that did not exist. The view refuses a
+    /// resource policy it cannot enforce by name, so a throttle is either applied by a
+    /// mechanism or reported as refused - never faked.
     async fn apply_throttle(&self, service: &str, resource: ResourceType) -> Result<()> {
         if !self.config.use_cgroups {
             return Ok(());
         }
 
-        let cgroup_path = format!("{}/pdn/{}", self.config.cgroups_mount, service);
+        let view = CgroupView::for_group(
+            Some(std::path::Path::new(&self.config.cgroups_mount)),
+            service,
+        );
+        let quotas = self.get_quotas(service);
+        let (file, value) = match resource {
+            ResourceType::Cpu => (
+                CgroupFile::CpuMax,
+                format!(
+                    "{} {}",
+                    quotas.cpu_quota.unwrap_or(0),
+                    quotas.cpu_period.unwrap_or(0)
+                ),
+            ),
+            ResourceType::Memory => (
+                CgroupFile::MemoryMax,
+                quotas.memory_limit.unwrap_or(0).to_string(),
+            ),
+            ResourceType::Pids => (
+                CgroupFile::PidsMax,
+                quotas.pids_max.unwrap_or(0).to_string(),
+            ),
+            ResourceType::IoReadBps => (
+                CgroupFile::IoMax,
+                format!("8:0 rbps={}", quotas.io_read_bps.unwrap_or(0)),
+            ),
+            ResourceType::IoWriteBps => (
+                CgroupFile::IoMax,
+                format!("8:0 wbps={}", quotas.io_write_bps.unwrap_or(0)),
+            ),
+            _ => return Ok(()),
+        };
 
-        match resource {
-            ResourceType::Cpu => {
-                // Write cpu.max
-                let quotas = self.get_quotas(service);
-                if let Some(quota) = quotas.cpu_quota {
-                    if let Some(period) = quotas.cpu_period {
-                        let content = format!("{} {}", quota, period);
-                        tokio::fs::write(format!("{}/cpu.max", cgroup_path), content).await?;
-                    }
-                }
-            }
-            ResourceType::Memory => {
-                // Write memory.max
-                if let Some(limit) = self.get_quotas(service).memory_limit {
-                    tokio::fs::write(format!("{}/memory.max", cgroup_path), limit.to_string())
-                        .await?;
-                }
-            }
-            ResourceType::IoReadBps | ResourceType::IoWriteBps => {
-                // Write io.max (simplified)
-                let quotas = self.get_quotas(service);
-                let device = "8:0"; // Default block device, would need detection
-                if let Some(read_bps) = quotas.io_read_bps {
-                    let content = format!("{} rbps={}", device, read_bps);
-                    tokio::fs::write(format!("{}/io.max", cgroup_path), content).await?;
-                }
-                if let Some(write_bps) = quotas.io_write_bps {
-                    let content = format!("{} wbps={}", device, write_bps);
-                    tokio::fs::write(format!("{}/io.max", cgroup_path), content).await?;
-                }
-            }
-            ResourceType::Pids => {
-                // Write pids.max
-                if let Some(limit) = self.get_quotas(service).pids_max {
-                    tokio::fs::write(format!("{}/pids.max", cgroup_path), limit.to_string())
-                        .await?;
-                }
-            }
-            _ => {
-                // Other resources handled differently
-            }
+        if let Err(refusal) = view.write(file, &value) {
+            warn!("quota throttle for '{}': {}", service, refusal);
         }
-
         Ok(())
     }
 

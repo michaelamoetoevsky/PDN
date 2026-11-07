@@ -9,6 +9,7 @@
 
 pub mod api;
 pub mod backup_restore;
+pub mod cgroup_view;
 pub mod cluster;
 pub mod container_socket_activation;
 #[cfg(feature = "cri")]
@@ -41,6 +42,7 @@ pub use backup_restore::{
     BackupConfig, BackupEvent, BackupManager, BackupManifest, BackupMetadata, BackupProgress,
     BackupStatus, BackupType, RestoreOptions,
 };
+pub use cgroup_view::{CgroupErrno, CgroupFile, CgroupRefusal, CgroupView};
 pub use cluster::{
     ClusterConfig, ClusterEvent, ClusterManager, ClusterStateInfo, GossipConfig, NodeInfo,
     NodeResources, NodeRole, NodeStatus, PodSpec, SchedulerConfig as ClusterSchedulerConfig,

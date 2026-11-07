@@ -16,6 +16,7 @@ macro_rules! pn_trace {
         }
     };
 }
+use crate::cgroup_view::{CgroupFile, CgroupView};
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::future::poll_fn;
@@ -1619,13 +1620,19 @@ impl ServiceSupervisor {
         // honesty by breaking the feature. The invariant kept here is the one
         // that matters: nothing is written that pretends to bind a limit, and the
         // warning below names the operations that were not applied.
-        let cgroup_root = if self.config.enable_cgroups {
-            writable_cgroupfs()
+        // S8: a private cgroupfs view decides per knob. Membership is served where the
+        // platform has a writable cgroup2 subtree; a resource policy is refused by name
+        // with an errno. Nothing is written into a plain directory that would accept
+        // `cpu.max`/`memory.max` as ordinary files and enforce nothing (WORKLIST A20).
+        let mut cgroup_view = if self.config.enable_cgroups {
+            Some(CgroupView::for_group(None, name))
         } else {
             None
         };
-        if self.config.enable_cgroups && cgroup_root.is_none() {
-            warn!("{}", cgroup_unavailable(name));
+        if let Some(view) = &cgroup_view {
+            if view.group().is_none() {
+                warn!("{}", cgroup_unavailable(name));
+            }
         }
 
         // Execute pre-start script
@@ -1777,9 +1784,12 @@ impl ServiceSupervisor {
             }
         }
 
-        // Bind the service to the real cgroup probed above, if cgroups are on.
-        if let Some(root) = &cgroup_root {
-            self.setup_cgroup(root, name, pid).await?;
+        // Bind the service through the view, if cgroups are on: the pid joins the group
+        // where a real subtree exists, and every limit the view cannot honour is refused
+        // by name (WORKLIST A20, adoption S8 of `research/DISSECTION_SHROOT.md`).
+        if let Some(view) = &mut cgroup_view {
+            view.add_pid(pid);
+            self.bind_cgroup(view, name).await?;
         }
 
         // Start health check task
@@ -1797,43 +1807,61 @@ impl ServiceSupervisor {
         Ok(())
     }
 
-    /// Setup cgroup for service under a real cgroupfs `root`.
+    /// Bind a service to its group through the private cgroupfs view.
     ///
-    /// `root` is a probed, writable cgroup v2 mount (see [`writable_cgroupfs`]);
-    /// it is never `runtime_dir`. A plain directory accepts `cpu.max`/`memory.max`
-    /// as ordinary files — the write succeeds and enforces nothing, which is
-    /// precisely the limit that must not be reported as applied (WORKLIST A20).
-    async fn setup_cgroup(&self, root: &Path, name: &str, pid: u32) -> Result<()> {
-        let cgroup_path = root.join("pn-next").join(name);
-        fs::create_dir_all(&cgroup_path)?;
+    /// `view` answers each knob: membership is written where the group is a real, writable
+    /// cgroup2 subtree, and every resource limit the view cannot honour is refused by name
+    /// and logged, rather than written as an ordinary file that enforces nothing. A refused
+    /// limit never fails the start - skipping is honest, refusing the service is not - and
+    /// the refusal is what the caller sees instead of a false claim (WORKLIST A20, adoption
+    /// S8 of `research/DISSECTION_SHROOT.md`).
+    async fn bind_cgroup(&self, view: &CgroupView, name: &str) -> Result<()> {
+        let (limits, pid) = {
+            let services = self.services.read().await;
+            let Some(managed) = services.get(name) else {
+                return Ok(());
+            };
+            (managed.config.resources.clone(), managed.status.pid)
+        };
 
-        // Add PID to cgroup
-        fs::write(cgroup_path.join("cgroup.procs"), pid.to_string())?;
+        let mut refused = Vec::new();
 
-        // Apply resource limits
-        let services = self.services.read().await;
-        if let Some(managed) = services.get(name) {
-            let limits = &managed.config.resources;
-
-            if let Some(cpu) = limits.cpu_limit {
-                let quota = (cpu * 100000.0) as u64;
-                fs::write(cgroup_path.join("cpu.max"), format!("{} 100000", quota))?;
+        // Membership: served only where the group is backed by a real cgroup2 subtree.
+        let procs = pid.map(|p| p.to_string()).unwrap_or_default();
+        if let Err(refusal) = view.write(CgroupFile::Procs, &procs) {
+            refused.push(refusal);
+        }
+        if let Some(cpu) = limits.cpu_limit {
+            let quota = (cpu * 100000.0) as u64;
+            if let Err(r) = view.write(CgroupFile::CpuMax, &format!("{quota} 100000")) {
+                refused.push(r);
             }
-
-            if let Some(mem) = limits.memory_limit {
-                fs::write(cgroup_path.join("memory.max"), mem.to_string())?;
+        }
+        if let Some(mem) = limits.memory_limit {
+            if let Err(r) = view.write(CgroupFile::MemoryMax, &mem.to_string()) {
+                refused.push(r);
             }
-
-            if let Some(pids) = limits.pids_limit {
-                fs::write(cgroup_path.join("pids.max"), pids.to_string())?;
+        }
+        if let Some(swap) = limits.memory_swap_limit {
+            if let Err(r) = view.write(CgroupFile::MemorySwapMax, &swap.to_string()) {
+                refused.push(r);
             }
-
-            // Store cgroup path
-            drop(services);
-            let mut services = self.services.write().await;
-            if let Some(managed) = services.get_mut(name) {
-                managed.cgroup_path = Some(cgroup_path);
+        }
+        if let Some(pids) = limits.pids_limit {
+            if let Err(r) = view.write(CgroupFile::PidsMax, &pids.to_string()) {
+                refused.push(r);
             }
+        }
+
+        for refusal in &refused {
+            warn!("service '{}': {}", name, refusal);
+        }
+
+        // Record the group only when the view really has one, so cleanup never removes a
+        // directory that was not a cgroup.
+        let mut services = self.services.write().await;
+        if let Some(managed) = services.get_mut(name) {
+            managed.cgroup_path = view.group().map(Path::to_path_buf);
         }
 
         Ok(())
