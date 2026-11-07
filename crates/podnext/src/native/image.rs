@@ -12,6 +12,7 @@ use oci_spec::image::ImageManifest;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use urlencoding::encode;
@@ -336,14 +337,146 @@ fn is_not_empty(e: &std::io::Error) -> bool {
     matches!(e.raw_os_error(), Some(libc::ENOTEMPTY) | Some(libc::EEXIST))
 }
 
+/// Where an install takes its rootfs from.
+enum Source {
+    /// An OCI/Docker registry reference, pulled over the network.
+    Registry(String),
+    /// A local archive, or a URL already downloaded to `path`.
+    Archive { label: String, path: PathBuf },
+}
+
 pub async fn install_image_native(
     image_ref: &str,
     container_name: &str,
     force: bool,
     rootfs_path: Option<PathBuf>,
 ) -> Result<PathBuf, anyhow::Error> {
-    // Parse image reference (e.g., "ubuntu:22.04")
-    let (name, tag) = parse_image_ref(image_ref)?;
+    install_source(
+        Source::Registry(image_ref.to_string()),
+        container_name,
+        force,
+        rootfs_path,
+    )
+    .await
+}
+
+/// Install from a local archive (`./rootfs.tar.gz`, `./image.oci.tar`) or an
+/// http(s) URL to one, verified against a sha256 checksum when one is given.
+///
+/// The checksum is bare lowercase hex, already normalised by the caller. When it
+/// is absent the archive is used unverified and one named line says so; the
+/// reference verifies nothing for an install (only a declared body length), so a
+/// checksum is where podnext does better. A mismatch removes the download and
+/// refuses, naming both digests.
+pub async fn install_archive_native(
+    source: &str,
+    container_name: &str,
+    force: bool,
+    checksum: Option<&str>,
+) -> Result<PathBuf, anyhow::Error> {
+    let label = source.to_string();
+
+    // A URL is downloaded first, so the checksum covers what was actually
+    // received; a local path is used where it lies. The download lives in a
+    // temporary that is dropped - and so removed - when this function returns.
+    let downloaded = if proot_distro_core::names::is_url_source(source) {
+        Some(download_to_temp(source).await?)
+    } else {
+        None
+    };
+    let path = match &downloaded {
+        Some(tmp) => tmp.path().to_path_buf(),
+        None => expand_home_source(source),
+    };
+
+    match checksum {
+        Some(expected) => {
+            let got = proot_distro_core::archive::sha256_file(&path)?;
+            if got != expected {
+                bail!(
+                    "checksum mismatch for '{source}': expected sha256:{expected}, \
+                     got sha256:{got}"
+                );
+            }
+            eprintln!("Checksum verified: sha256:{got}");
+        }
+        None => eprintln!(
+            "Warning: no --checksum given for '{source}'; the archive is used \
+             unverified. Pass --checksum sha256:<hex> to verify it."
+        ),
+    }
+
+    install_source(Source::Archive { label, path }, container_name, force, None).await
+}
+
+/// Download `url` into a temporary file, checking the declared body length.
+///
+/// The body is streamed to disk rather than buffered: a rootfs archive is large,
+/// and only the length the server declared is checked here (the reference's
+/// `require_complete_body`), the optional `--checksum` covering the rest.
+async fn download_to_temp(url: &str) -> Result<tempfile::NamedTempFile> {
+    let client = http_client();
+    let mut resp = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("requesting {url}"))?;
+    if !resp.status().is_success() {
+        bail!(
+            "failed to download archive: {url} returned {}",
+            resp.status()
+        );
+    }
+
+    let declared = resp.content_length();
+    let mut tmp = tempfile::Builder::new()
+        .prefix("pdn-download-")
+        .tempfile()
+        .context("creating a temporary file for the download")?;
+    let mut received = 0u64;
+    while let Some(chunk) = resp.chunk().await? {
+        tmp.write_all(&chunk)?;
+        received += chunk.len() as u64;
+    }
+    retry::ensure_complete_body(declared, received)
+        .with_context(|| format!("downloading {url}"))?;
+    tmp.flush()?;
+    Ok(tmp)
+}
+
+/// Expand a leading `~`/`~/` against `$HOME` (the reference's `os.path.expanduser`).
+fn expand_home_source(source: &str) -> PathBuf {
+    if let Some(rest) = source.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    } else if source == "~" {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home);
+        }
+    }
+    PathBuf::from(source)
+}
+
+/// The one install path: acquire the name lock, staging tree, fill the rootfs
+/// from `source`, configure it, and commit it atomically.
+async fn install_source(
+    source: Source,
+    container_name: &str,
+    force: bool,
+    rootfs_path: Option<PathBuf>,
+) -> Result<PathBuf, anyhow::Error> {
+    // Parse a registry reference up front - before the lock or any staging tree,
+    // as the registry path always did - so an unparsable reference refuses with
+    // no side effect. An archive carries no reference.
+    let registry = match &source {
+        Source::Registry(image_ref) => Some(parse_image_ref(image_ref)?),
+        Source::Archive { .. } => None,
+    };
+    let label = match &source {
+        Source::Registry(image_ref) => image_ref.clone(),
+        Source::Archive { label, .. } => label.clone(),
+    };
 
     let container_name = container_name.to_string();
 
@@ -357,7 +490,7 @@ pub async fn install_image_native(
     let mut name_lock = proot_distro_core::locking::ContainerLock::new(&container_name, true);
     name_lock.acquire()?;
 
-    println!("Installing '{}' as '{}'...", image_ref, container_name);
+    println!("Installing '{}' as '{}'...", label, container_name);
 
     // `_staging_lock` holds an exclusive flock on the staging tree for as long as
     // this install runs. It must stay bound until this function returns:
@@ -414,20 +547,42 @@ pub async fn install_image_native(
         };
 
     let install_work = async {
-        // Step 1: Get auth token from Docker Hub
-        eprintln!("[1/4] Authenticating with Docker Hub registry...");
-        let token = get_docker_hub_token(&name).await?;
+        // Fill the staging rootfs, then configure it the same way whatever the
+        // source was: a registry pull and a local archive end in one place.
+        let (image_name, image_tag) = match &source {
+            Source::Registry(_) => {
+                let (name, tag) = registry.clone().expect("parsed before the lock was taken");
 
-        // Step 2: Get manifest list to find correct platform
-        eprintln!(
-            "[2/4] Fetching image manifest (linux/{})...",
-            std::env::consts::ARCH
-        );
-        let manifest = get_manifest(&name, &tag, &token).await?;
+                // Step 1: Get auth token from Docker Hub
+                eprintln!("[1/4] Authenticating with Docker Hub registry...");
+                let token = get_docker_hub_token(&name).await?;
 
-        // Step 3: Download and extract layers
-        eprintln!("[3/4] Downloading and extracting OCI layers (Android-safe)...");
-        download_and_extract_layers(&name, &manifest, &token, &staging_rootfs).await?;
+                // Step 2: Get manifest list to find correct platform
+                eprintln!(
+                    "[2/4] Fetching image manifest (linux/{})...",
+                    std::env::consts::ARCH
+                );
+                let manifest = get_manifest(&name, &tag, &token).await?;
+
+                // Step 3: Download and extract layers
+                eprintln!("[3/4] Downloading and extracting OCI layers (Android-safe)...");
+                download_and_extract_layers(&name, &manifest, &token, &staging_rootfs).await?;
+
+                (name, tag)
+            }
+            Source::Archive { path, .. } => {
+                // A local archive or a downloaded URL: a plain rootfs tarball or
+                // an OCI image layout, unpacked and (for the layout) verified
+                // against the digests its own manifest declares.
+                eprintln!("Extracting rootfs from '{}'...", path.display());
+                proot_distro_core::archive::install_from_archive(path, &staging_rootfs)?;
+                // A plain tarball records no image reference; an OCI archive's
+                // reference lives in its manifest, which the container's own
+                // metadata does not carry either. Both list from the guest's
+                // os-release, so an empty reference here is honest, not a gap.
+                (String::new(), String::new())
+            }
+        };
 
         // Step 4: Apply proot-compat patches
         eprintln!("[4/4] Configuring guest environment, DNS, and /dev/shm...");
@@ -444,7 +599,7 @@ pub async fn install_image_native(
         smoke_test_rootfs(&staging_rootfs).await?;
 
         // Step 5: Save container metadata
-        save_container_metadata(&container_name, &name, &tag, &staging_rootfs)?;
+        save_container_metadata(&container_name, &image_name, &image_tag, &staging_rootfs)?;
 
         Ok::<(), anyhow::Error>(())
     }

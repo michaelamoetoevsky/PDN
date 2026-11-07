@@ -302,23 +302,32 @@ pub(crate) enum Commands {
     // ------------------------------------------------------------------------
     // TIER 1: CORE DISTRO COMMANDS (Simple & Daily Usage - proot-distro parity)
     // ------------------------------------------------------------------------
-    /// [experimental] [Core] Install distribution from OCI image
+    /// [experimental] [Core] Install a distribution from an image, archive or URL
     #[command(
-        long_about = "Download and unpack an OCI/Docker container image into a clean, isolated rootfs.\n\n\
+        long_about = "Unpack a rootfs into a clean, isolated container. The source is a Docker/OCI\n\
+        image reference, a local archive (a plain rootfs tarball or an OCI image-layout\n\
+        tar), or an http(s) URL to one of those. A local archive and a URL are unpacked\n\
+        offline; the container name is derived from the source's last component unless\n\
+        --name is given.\n\n\
         EXAMPLES:\n  \
         podnext install debian:13\n  \
         podnext install ubuntu:22.04 --name my-ubuntu\n  \
-        podnext install alpine:latest --force"
+        podnext install ./rootfs.tar.gz\n  \
+        podnext install ./image.oci.tar --name deb\n  \
+        podnext install https://example.org/rootfs.tar.xz --checksum sha256:<hex>"
     )]
     Install {
-        /// Image reference (e.g., ubuntu:22.04, debian:12, alpine:latest)
+        /// Image reference (ubuntu:22.04), local archive (./rootfs.tar.gz), or http(s) URL
         image: String,
-        /// Container name (defaults to image name without tag)
+        /// Container name (defaults to the source's derived alias)
         #[arg(short, long)]
         name: Option<String>,
         /// Force reinstall if container exists
         #[arg(short, long)]
         force: bool,
+        /// Verify the archive against this sha256 (as `sha256:<hex>` or bare hex)
+        #[arg(long, value_name = "SHA256")]
+        checksum: Option<String>,
     },
 
     /// [stable] [Core] List created containers

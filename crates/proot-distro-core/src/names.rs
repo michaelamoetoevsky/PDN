@@ -127,6 +127,116 @@ pub fn escape_name(s: &str) -> String {
     s.chars().flat_map(|c| c.escape_default()).collect()
 }
 
+/// True when `source` is a path on disk rather than an image reference.
+///
+/// The reference's rule (`install.py:_is_local_path`): a source is local only
+/// when it carries explicit path syntax - a leading `/`, `./`, `../`, or `~`. A
+/// bare token like `ubuntu` stays a registry reference even when a file of that
+/// name exists in the working directory.
+pub fn is_local_source(source: &str) -> bool {
+    source.starts_with('/')
+        || source.starts_with("./")
+        || source.starts_with("../")
+        || source.starts_with('~')
+}
+
+/// True when `source` is an `http://` or `https://` URL (the reference's `_is_url`).
+pub fn is_url_source(source: &str) -> bool {
+    source.starts_with("http://") || source.starts_with("https://")
+}
+
+/// Archive extensions stripped when deriving a name from a filename.
+///
+/// The reference's `_ARCHIVE_EXTS`, in its order - the first suffix that matches
+/// wins, so a compound extension listed earlier is stripped whole.
+const ARCHIVE_EXTS: &[&str] = &[
+    ".tar.gz",
+    ".tgz",
+    ".tar.bz2",
+    ".tbz2",
+    ".tar.xz",
+    ".txz",
+    ".oci.tar.xz",
+    ".oci.tar.gz",
+    ".oci.tar.zst",
+    ".oci.tar",
+    ".tar.lzma",
+    ".tlzma",
+    ".tar.zst",
+    ".tzst",
+    ".tar",
+];
+
+/// Derive a container name from an archive filename or URL path.
+///
+/// The reference's `_derive_local_name`: take the basename, strip one archive
+/// extension, lowercase, replace every character outside `[a-z0-9_.-]` with `-`,
+/// drop leading non-alphanumerics, collapse `--` runs and trim `-`. Returns the
+/// empty string when nothing usable remains, so the caller can refuse by name.
+pub fn derive_local_name(path: &str) -> String {
+    let base = path.rsplit_once('/').map(|(_, b)| b).unwrap_or(path);
+    let lower = base.to_ascii_lowercase();
+    let stem = ARCHIVE_EXTS
+        .iter()
+        .find_map(|ext| {
+            lower
+                .strip_suffix(ext)
+                .map(|_| &base[..base.len() - ext.len()])
+        })
+        .unwrap_or(base);
+
+    let mapped: String = stem
+        .chars()
+        .map(|c| {
+            let c = c.to_ascii_lowercase();
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    let mut collapsed = String::with_capacity(mapped.len());
+    let mut prev_dash = false;
+    for c in mapped
+        .trim_start_matches(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit()))
+        .chars()
+    {
+        if c == '-' {
+            if prev_dash {
+                continue;
+            }
+            prev_dash = true;
+        } else {
+            prev_dash = false;
+        }
+        collapsed.push(c);
+    }
+    collapsed.trim_matches('-').to_string()
+}
+
+/// Derive a short local alias from an image reference.
+///
+/// The reference's `derive_alias` (via `parse_image_ref`): drop a digest pin,
+/// drop the registry host when the first component is one (it carries a `.`, a
+/// `:`, or is `localhost`), then take the last path component and drop its tag.
+/// So `ghcr.io:5000/acme/web:1.2` is `web`, not `ghcr.io`, and a port is never
+/// mistaken for the tag.
+pub fn derive_alias(reference: &str) -> String {
+    let without_digest = reference.split('@').next().unwrap_or(reference);
+    let path = match without_digest.split_once('/') {
+        Some((first, rest))
+            if first.contains('.') || first.contains(':') || first == "localhost" =>
+        {
+            rest
+        }
+        _ => without_digest,
+    };
+    let last = path.rsplit('/').next().unwrap_or(path);
+    last.split(':').next().unwrap_or(last).to_string()
+}
+
 #[cfg(test)]
 mod store_key_tests {
     use super::store_key;
@@ -213,5 +323,76 @@ mod store_key_tests {
         assert_eq!(super::escape_name("a\x01b"), "a\\u{1}b");
         assert_eq!(super::escape_name("\x1b[31mred"), "\\u{1b}[31mred");
         assert_eq!(super::escape_name("line\nbreak"), "line\\nbreak");
+    }
+}
+
+#[cfg(test)]
+mod source_name_tests {
+    //! The reference's name-derivation rules, asserted against its own doc
+    //! examples: `helpers/docker/refs.py:derive_alias` and
+    //! `commands/install.py:_derive_local_name`.
+
+    use super::{derive_alias, derive_local_name, is_local_source, is_url_source};
+
+    #[test]
+    fn a_bare_token_is_an_image_but_explicit_path_syntax_is_local() {
+        for local in [
+            "./rootfs.tar.gz",
+            "/abs/rootfs.tar",
+            "../up.tar.xz",
+            "~/x.tar",
+        ] {
+            assert!(
+                is_local_source(local),
+                "{local:?} must be read as a local path"
+            );
+        }
+        for image in ["ubuntu", "alpine:3.20", "ghcr.io/a/b:c", "rootfs.tar.gz"] {
+            assert!(
+                !is_local_source(image),
+                "{image:?} must stay a registry reference"
+            );
+        }
+        assert!(is_url_source("https://host/rootfs.tar.xz"));
+        assert!(is_url_source("http://127.0.0.1:1/x"));
+        assert!(!is_url_source("ftp://host/x"));
+        assert!(!is_url_source("./https://x"));
+    }
+
+    #[test]
+    fn derive_alias_matches_the_reference() {
+        // The exact doc examples from refs.py:derive_alias.
+        assert_eq!(derive_alias("ubuntu:24.04"), "ubuntu");
+        assert_eq!(derive_alias("myuser/img:tag"), "img");
+        assert_eq!(derive_alias("ghcr.io/foo/bar:tag"), "bar");
+        // A port in the registry host is not the tag.
+        assert_eq!(derive_alias("localhost:5000/foo:tag"), "foo");
+        assert_eq!(derive_alias("ghcr.io:5000/acme/web:1.2"), "web");
+        // A digest pin is dropped, not mistaken for a tag.
+        assert_eq!(derive_alias("debian@sha256:0123456789abcdef"), "debian");
+        assert_eq!(derive_alias("docker.io/library/ubuntu:24.04"), "ubuntu");
+        assert_eq!(derive_alias("alpine"), "alpine");
+    }
+
+    #[test]
+    fn derive_local_name_matches_the_reference() {
+        assert_eq!(derive_local_name("./rootfs.tar.gz"), "rootfs");
+        assert_eq!(
+            derive_local_name("/a/b/alpine-rootfs.tar.xz"),
+            "alpine-rootfs"
+        );
+        assert_eq!(derive_local_name("debian.oci.tar"), "debian");
+        assert_eq!(derive_local_name("alpine-latest.tgz"), "alpine-latest");
+        // Uppercase is lowered; every other byte becomes a single `-`.
+        assert_eq!(derive_local_name("./My Rootfs (1).tar.gz"), "my-rootfs-1");
+        // A URL path answers like a filename: query and fragment are the caller's
+        // to strip, and the basename is what remains.
+        assert_eq!(
+            derive_local_name("/dl/Ubuntu_24.04.tar.zst"),
+            "ubuntu_24.04"
+        );
+        // Nothing usable left -> the empty string, so the caller refuses by name.
+        assert_eq!(derive_local_name("./.tar.gz"), "");
+        assert_eq!(derive_local_name("./***"), "");
     }
 }

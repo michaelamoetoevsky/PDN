@@ -7,7 +7,12 @@ pub(crate) async fn execute_command(cmd: Commands, global_binds: Vec<String>) ->
     pn_trace!("DEBUG execute_command: START {:?}", cmd);
     match cmd {
         // Container commands
-        Commands::Install { image, name, force } => cmd_install(image, name, force).await,
+        Commands::Install {
+            image,
+            name,
+            force,
+            checksum,
+        } => cmd_install(image, name, force, checksum).await,
         Commands::List {
             all,
             no_all,

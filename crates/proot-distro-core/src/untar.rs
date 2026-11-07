@@ -55,12 +55,33 @@ thread_local! {
 
 /// Unpack a tar stream into `dest`, creating it if needed.
 pub fn extract<R: Read>(reader: R, dest: &Path) -> Result<()> {
+    extract_with_strip(reader, dest, 0)
+}
+
+/// Unpack a tar stream into `dest`, dropping the first `strip` path components
+/// of every member.
+///
+/// A rootfs tarball often carries one wrapping directory (`rootfs/usr`, or a
+/// project name), so the components that land at `dest` are one or more levels
+/// down; `detect_strip_count` in `crate::archive` scores that depth. A member
+/// with no components left after stripping is skipped, exactly as the reference
+/// skips the wrapper directory itself.
+pub fn extract_with_strip<R: Read>(reader: R, dest: &Path, strip: usize) -> Result<()> {
     let mut archive = Archive::new(reader);
-    extract_entries(&mut archive, dest)
+    extract_entries_stripped(&mut archive, dest, strip)
 }
 
 /// Unpack an already-open archive, for callers that need to inspect it first.
 pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result<()> {
+    extract_entries_stripped(archive, dest, 0)
+}
+
+/// `extract_entries` with a strip count (see [`extract_with_strip`]).
+pub fn extract_entries_stripped<R: Read>(
+    archive: &mut Archive<R>,
+    dest: &Path,
+    strip: usize,
+) -> Result<()> {
     fs::create_dir_all(dest)?;
     // Directories already known to exist this run. Without it every entry
     // re-walks its whole ancestor chain through `create_dir_all` (a `mkdir`
@@ -73,6 +94,11 @@ pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
         let kind = entry.header().entry_type();
+        // Drop the wrapping components first, so both `is_inside` and the
+        // symlink walk below judge the path that actually lands in `dest`.
+        let Some(path) = strip_components(&path, strip) else {
+            continue;
+        };
         let target = dest.join(&path);
 
         // Archive paths are attacker-controlled in the general case; refuse to
@@ -216,6 +242,27 @@ fn remove_whiteouted(
         Err(_) => {}
     }
     Ok(())
+}
+
+/// Drop the first `strip` path components, or `None` when nothing is left.
+///
+/// Components are taken the way the reference does: a leading `/` is ignored and
+/// the remainder is split on `/`, so `./etc/hosts` at depth 1 yields `etc/hosts`.
+fn strip_components(path: &Path, strip: usize) -> Option<PathBuf> {
+    if strip == 0 {
+        return Some(path.to_path_buf());
+    }
+    let text = path.to_string_lossy();
+    let parts: Vec<&str> = text.trim_start_matches('/').split('/').collect();
+    if parts.len() <= strip {
+        return None;
+    }
+    let rest = parts[strip..].join("/");
+    if rest.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(rest))
+    }
 }
 
 /// True when `path` stays within `root` once `..` is resolved.

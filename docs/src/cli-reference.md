@@ -76,26 +76,31 @@ podnext [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [-- <CMD_ARGS>...]
 
 ### `podnext install`
 
-Install a distribution from OCI image.
+Install a container from an OCI/Docker image reference, a local rootfs archive
+(a plain tarball or an OCI image-layout tar), or an http(s) URL to one.
 
 ```bash
-podnext install <IMAGE_REF> [OPTIONS]
+podnext install <SOURCE> [OPTIONS]
 ```
 
 **Arguments:**
-- `IMAGE_REF` - OCI image reference (e.g., `ubuntu:22.04`, `docker.io/library/alpine:latest`)
+- `SOURCE` - One of: an OCI image reference (`ubuntu:22.04`, `docker.io/library/alpine:latest`); a local archive with explicit path syntax (`./rootfs.tar.gz`, `/path/image.oci.tar`, `~/x.tar.xz`); or an `http://`/`https://` URL. A local OCI image-layout tar has every blob verified against the digest its own manifest declares.
 
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `-n, --name <NAME>` | Custom container name |
+| `-n, --name <NAME>` | Custom container name (defaults to the derived alias) |
 | `-f, --force` | Force reinstall if container exists |
+| `--checksum <SHA256>` | Verify a local or downloaded archive against `sha256:<hex>` (or bare hex). Refused for a registry reference, which is already content-addressed |
 
 **Examples:**
 ```bash
 podnext install ubuntu:22.04
 podnext install alpine:latest --name my-alpine
 podnext install docker.io/library/debian:bookworm --force
+podnext install ./rootfs.tar.gz
+podnext install ./image.oci.tar --name deb
+podnext install https://example.org/rootfs.tar.xz --checksum sha256:<hex>
 ```
 
 ### `podnext list`

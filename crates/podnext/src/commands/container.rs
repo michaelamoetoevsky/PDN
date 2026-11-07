@@ -10,18 +10,20 @@ use std::path::PathBuf;
 use tabled::Tabled;
 
 use crate::native::{
-    install_image_native, kill_container_native, list_containers_native, list_sessions_native,
-    list_sessions_native_full, parse_mount_specs, remove_container_native, run_container_native,
-    search_docker_hub, verify_image_available,
+    install_archive_native, install_image_native, kill_container_native, list_containers_native,
+    list_sessions_native, list_sessions_native_full, parse_mount_specs, remove_container_native,
+    run_container_native, search_docker_hub, verify_image_available,
 };
 use crate::utils::format_size;
 use crate::{output_json, output_table, output_yaml, OutputFormat, SystemInfo};
 
-pub async fn cmd_install(image: String, name: Option<String>, force: bool) -> Result<()> {
-    let container_name = match &name {
-        Some(explicit) => explicit.clone(),
-        None => default_container_name(&image),
-    };
+pub async fn cmd_install(
+    image: String,
+    name: Option<String>,
+    force: bool,
+    checksum: Option<String>,
+) -> Result<()> {
+    let container_name = resolve_install_name(&image, name.as_deref())?;
 
     // An explicit `--name ""` used to be accepted: the container directory then
     // collapsed onto the containers root itself, creating an orphan that `list`
@@ -29,8 +31,107 @@ pub async fn cmd_install(image: String, name: Option<String>, force: bool) -> Re
     // validated too, so no install can create an unusable path.
     proot_distro_core::NameValidator::new().validate_container_name(&container_name)?;
 
-    let _rootfs: PathBuf = install_image_native(&image, &container_name, force, None).await?;
+    let checksum = checksum.as_deref().map(parse_checksum).transpose()?;
+
+    if proot_distro_core::names::is_local_source(&image)
+        || proot_distro_core::names::is_url_source(&image)
+    {
+        install_archive_native(&image, &container_name, force, checksum.as_deref()).await?;
+    } else {
+        // A checksum pins an archive's bytes; a registry reference is already
+        // content-addressed by its manifest, so the option does not apply here.
+        if checksum.is_some() {
+            bail!(
+                "--checksum applies to a local archive or a URL, not to the registry \
+                 reference '{image}'"
+            );
+        }
+        install_image_native(&image, &container_name, force, None).await?;
+    }
     Ok(())
+}
+
+/// Decide the container name from the source, following the reference's rules.
+///
+/// An explicit `--name` always wins. Otherwise a local path or URL derives its
+/// name from the filename (`_derive_local_name`), and a registry reference from
+/// its alias (`derive_alias`). Every refusal names the reason: the source that
+/// could not be read, or the basename a valid name could not be derived from.
+fn resolve_install_name(source: &str, custom: Option<&str>) -> Result<String> {
+    if proot_distro_core::names::is_local_source(source) {
+        let path = expand_home(source);
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => {}
+            _ => bail!(
+                "cannot install '{source}': local file '{}' does not exist or is not a \
+                 regular file",
+                path.display()
+            ),
+        }
+        if let Some(name) = custom {
+            return Ok(name.to_string());
+        }
+        let derived = proot_distro_core::names::derive_local_name(&path.to_string_lossy());
+        if derived.is_empty() {
+            bail!(
+                "cannot determine a valid container name from '{}'. Specify the name \
+                 with '--name NAME'",
+                path.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| source.to_string())
+            );
+        }
+        return Ok(derived);
+    }
+
+    if proot_distro_core::names::is_url_source(source) {
+        if let Some(name) = custom {
+            return Ok(name.to_string());
+        }
+        // The query string and fragment are not part of the filename.
+        let url_path = source.split(['?', '#']).next().unwrap_or(source);
+        let derived = proot_distro_core::names::derive_local_name(url_path);
+        if derived.is_empty() {
+            bail!(
+                "cannot determine a valid container name from '{source}'. Specify \
+                 the name with '--name NAME'"
+            );
+        }
+        return Ok(derived);
+    }
+
+    Ok(match custom {
+        Some(name) => name.to_string(),
+        None => default_container_name(source),
+    })
+}
+
+/// Expand a leading `~`/`~/` against `$HOME` (the reference's `os.path.expanduser`).
+fn expand_home(source: &str) -> PathBuf {
+    if let Some(rest) = source.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    } else if source == "~" {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home);
+        }
+    }
+    PathBuf::from(source)
+}
+
+/// Normalise a `--checksum` value to bare lowercase hex, or refuse it by name.
+fn parse_checksum(value: &str) -> Result<String> {
+    let hex = value.strip_prefix("sha256:").unwrap_or(value);
+    let well_formed = hex.len() == 64
+        && hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if well_formed {
+        Ok(hex.to_string())
+    } else {
+        bail!("invalid --checksum '{value}': expected sha256:<64 lowercase hex>")
+    }
 }
 
 /// Derive a container name from an image reference.
@@ -39,10 +140,11 @@ pub async fn cmd_install(image: String, name: Option<String>, force: bool) -> Re
 /// (`debian`, `web`): a registry host, port, or namespace must never become a
 /// directory component under `~/.podnext/containers/`.
 pub fn default_container_name(image: &str) -> String {
-    // The rule lives in proot-distro-core so build, run and install agree on it;
-    // a divergence here is exactly how `build local` ended up naming a directory
-    // `c2env:latest` and losing /dev/shm (#35).
-    proot_distro_core::names::store_key(image)
+    // The reference's `derive_alias`: the last path component with its tag - and
+    // any `@digest` pin - dropped. For every tagged reference it is the same
+    // string `store_key` produces for `build` and `run`, which is what keeps
+    // `build local`, `run` and `install` naming one directory the same way (#35).
+    proot_distro_core::names::derive_alias(image)
 }
 
 /// Ask the running daemon for a read-only metadata query (roadmap section 9.2).
