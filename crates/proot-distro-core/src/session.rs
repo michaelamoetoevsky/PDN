@@ -238,12 +238,23 @@ fn register_session_in(
     std::fs::create_dir_all(dir)?;
 
     let path = dir.join(format!("{}.json", pid));
+    // `flock` can only be taken on a file that already exists, so a record
+    // created *at* `{pid}.json` is visible to the registry scan - its lock
+    // free - for the whole window between `open` and `flock`. A pruner that
+    // scans in that window reads the free lock as "the session is over" and
+    // unlinks a session that is still registering (`active_sessions`, the
+    // free-lock prune). So the lock is taken first, on a temp name the scan
+    // cannot see (`active_sessions` reads only `*.json`), and the record is
+    // then renamed into place: `rename` is atomic and keeps the inode, so the
+    // held `LOCK_EX` survives it and no scan can ever observe the final name
+    // with a free lock.
+    let tmp_path = dir.join(format!("{}.json.tmp", pid));
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&path)?;
+        .open(&tmp_path)?;
 
     let fd = file.as_raw_fd();
 
@@ -251,7 +262,7 @@ fn register_session_in(
     let ret = unsafe { libc::flock(fd, libc::LOCK_EX) };
     if ret != 0 {
         let err = std::io::Error::last_os_error();
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&tmp_path);
         return Err(anyhow::anyhow!(
             "Failed to acquire LOCK_EX on session file '{}': {}",
             path.display(),
@@ -296,6 +307,11 @@ fn register_session_in(
     let data = serde_json::to_vec_pretty(&record)?;
     (&file).write_all(&data)?;
     (&file).flush()?;
+
+    // Atomic publish, with `LOCK_EX` already held: the record is complete and
+    // locked the instant it acquires its final name, so a concurrent scan sees
+    // only a live session, never a half-published one.
+    std::fs::rename(&tmp_path, &path)?;
 
     let meta = file.metadata()?;
     Ok(SessionGuard {

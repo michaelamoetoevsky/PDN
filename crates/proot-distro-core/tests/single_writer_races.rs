@@ -424,20 +424,22 @@ fn an_attach_racing_a_register_never_loses_a_live_session() {
     );
 }
 
-/// A29 FINDING (the fourth mechanism does NOT hold): `register_session_in`
-/// opens/creates the record - publishing it in the registry directory - and
-/// *then* takes `LOCK_EX` (`session.rs:241-251`). An attach scan that runs in
-/// that window takes `LOCK_SH`, reads the free lock as "the session is over",
-/// and unlinks the record (`session.rs:354-368`). `register_session` then
-/// returns `Ok` with a guard whose record is already gone: the session is
-/// invisible to `active_sessions` for its whole life.
+/// A29 FINDING, FIXED (A30): `register_session_in` used to open/create the
+/// record at its *final* name - publishing it in the registry directory - and
+/// only *then* take `LOCK_EX` (`session.rs`, the `open` .. `flock` window). An
+/// attach scan that ran in that window took `LOCK_SH`, read the free lock as
+/// "the session is over", and unlinked the record (the free-lock prune in
+/// `active_sessions`). `register_session` then returned `Ok` with a guard whose
+/// record was already gone: the session was invisible to `active_sessions` for
+/// its whole life.
 ///
-/// `#[ignore]`d because it is a *reproduction of a defect this tree still has*,
-/// not a passing guarantee - it is committed so the claim above is backed by a
-/// test that races the two operations, and run with
-/// `cargo test -p proot-distro-core --test single_writer_races -- --ignored`.
+/// A30 fixes the ordering: the lock is taken first, on a `{pid}.json.tmp` name
+/// the scan cannot see, and the record is renamed to `{pid}.json` once locked
+/// (`rename` is atomic and keeps the inode, so the held `LOCK_EX` survives).
+/// This test is therefore **not** `#[ignore]`d: it runs in the normal suite and
+/// is the proof that a registration is attachable for the whole life of its
+/// `LOCK_EX` guard, however heavy the concurrent scan churn.
 #[test]
-#[ignore = "reproduces an open defect (publish-before-lock in register_session_in); see RACE_SURFACES A29"]
 fn a_register_publishes_its_record_before_it_locks_it() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = tmp.path().join("run");
