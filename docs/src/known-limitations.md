@@ -214,6 +214,28 @@ to stderr and nothing to stdout.
   start without a usable devices cgroup (`daemon/daemon.go:1130-1132` in the upstream reference;
   no cgroup emulation exists in proot), so the daemon never gets past its own startup check.
 
+## The one comparative number where this design loses
+
+Publishing a runtime's wins without its loss would be a comparison in one direction only. The one
+workload where the proot-free design this project draws from (shroot) is *slower* than PRoot is process
+creation, and the number is not small. Source: `research/DISSECTION_SHROOT.md:75` — shroot's own
+published benchmark (`docs/shroot-benchmarks.md`, Alpine, one Android phone, 2026-10-26; the three
+columns are a chroot baseline / PRoot / shroot):
+
+- **128 `fork/exec/wait`: 131.37 ms (chroot) / 718.45 ms (PRoot) / 1,100.13 ms (shroot) = 1.53x SLOWER**
+  than PRoot. The SQLite CLI + shared-library build on the same run is within about 5%.
+
+The metadata workloads win by the same design choice that loses here: stopping per *selected* syscall is
+cheap, while the per-process supervisor/worker setup is not (`research/DISSECTION_SHROOT.md:78-80`). A
+reimplementation should adopt the win and budget for the cost rather than claim a uniform speedup.
+
+**What it means for a user choosing PDN.** PDN delegates execution to PRoot, so this workload currently
+costs PDN PRoot's 718.45 ms, not shroot's 1,100.13 ms — the 1.53x loss is not PDN's yet, and PDN is not
+slower than PRoot here. It *becomes* relevant the moment a proot-free backend is adopted: expect
+metadata-heavy work (`stat`, `open`/`close`, create/rename/unlink) to speed up sharply and
+`fork`/`exec`/`wait`-heavy work (builds, shell pipelines, process-per-job scripts) to run up to **1.53x
+slower than PRoot**. Do not advertise a uniform speedup on the strength of the metadata rows alone.
+
 ## Not measured yet
 
 These are claims the project cannot currently make, listed so that the absence is visible:

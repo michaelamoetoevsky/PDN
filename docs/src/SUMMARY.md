@@ -3,6 +3,7 @@
 - [Introduction](README.md)
 - [Getting Started](getting-started.md)
 - [Architecture](architecture.md)
+- [ARM64 syscall-gate trap (x7 vs x9)](arm64-syscall-gate.md)
 - [CLI Reference](cli-reference.md)
 - [Known Limitations](known-limitations.md)
 - [Configuration](configuration.md)

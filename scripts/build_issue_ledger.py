@@ -479,6 +479,27 @@ CHECKS: list[dict] = [
              "| grep -vF 'crates/proot-distro-core/src/locking.rs:' "
              "| grep -vE ':[0-9]+:[[:space:]]*//'",
          mode="absent", needle="dirs::home_dir()"),
+
+    # ── S7/S6: the shroot-dissection documentation adoptions ──────────────────
+    # These are not GitHub issues, so the issue key is a stable string label rather than a number
+    # (the ledger tolerates it; coverage counting skips non-numeric keys). The trap lives in the
+    # BOOK (docs/src), not only in research/, because research/ is the evidence base and the next
+    # implementer reads the architecture pages.
+    dict(issue="S7", claim="the ARM64 x7-restore trap and its x9 remedy are written where the next implementer reads",
+         cmd="grep -rnF 'x9, not x7' docs/src/arm64-syscall-gate.md",
+         needle="x9, not x7"),
+    dict(issue="S7", claim="the trap names the kernel behaviour that causes it and states PDN installs a filter, not a gate",
+         cmd="grep -rnF 'kernel restores x7' docs/src/arm64-syscall-gate.md "
+             "&& grep -rnF 'installs a real BPF filter' docs/src/arm64-syscall-gate.md",
+         needle="installs a real BPF filter"),
+    dict(issue="S6", claim="the number PDN loses on is the same in the book and in the dissection, so a future edit of one cannot silently contradict the other",
+         cmd="d=$(grep -oE '[0-9],[0-9]{3}\\.[0-9]{2} ms' research/DISSECTION_SHROOT.md | grep '^1,100' | head -1); "
+             "k=$(grep -oE '[0-9],[0-9]{3}\\.[0-9]{2} ms' docs/src/known-limitations.md | grep '^1,100' | head -1); "
+             "[ -n \"$d\" ] && [ \"$d\" = \"$k\" ] && echo S6-NUMBER-EQUALS-DISSECTION",
+         needle="S6-NUMBER-EQUALS-DISSECTION"),
+    dict(issue="S6", claim="the worse-result ratio is stated in the book, not only the absolute number",
+         cmd="grep -rnF '1.53x SLOWER' docs/src/known-limitations.md",
+         needle="1.53x SLOWER"),
 ]
 
 # Issues with no honest automated check, and why. Every key is an issue that exists.
@@ -719,7 +740,9 @@ def main() -> int:
     per_issue: dict[str, list] = {}
     for r in results:
         per_issue.setdefault(r["issue"], []).append(r)
-    checked = {int(n) for n in per_issue}
+    # Issue keys are usually GitHub numbers, but the S7/S6 documentation checks carry a string
+    # label; coverage is counted only over the numeric ones.
+    checked = {int(n) for n in per_issue if str(n).isdigit()}
 
     def is_wayfinder(n: int) -> bool:
         """Wayfinder tickets are work items, not audit findings: their acceptance criteria live in
@@ -741,7 +764,7 @@ def main() -> int:
     nfail += len(missing_reasons) + len(thin_reasons)
 
     def issue_line(n: str) -> str:
-        i = by_num.get(int(n))
+        i = by_num.get(int(n)) if str(n).isdigit() else None
         if not i:
             return f"#{n} (not in the fetched list)"
         labs = ", ".join(l["name"] for l in i["labels"])
@@ -815,7 +838,7 @@ def main() -> int:
         lines += ["None.", ""]
 
     lines += ["## Per-issue detail", ""]
-    for n in sorted(per_issue, key=lambda x: int(x)):
+    for n in sorted(per_issue, key=lambda x: (0, int(x), "") if str(x).isdigit() else (1, 0, str(x))):
         lines += [issue_line(n), ""]
         for r in per_issue[n]:
             lines += [f"- [{r['verdict']}] {r['claim']}", f"  - `{r['cmd']}`", f"  - → `{r['out']}`"]

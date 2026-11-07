@@ -84,6 +84,7 @@ Core PRoot implementation providing:
 - **Syscall Interception**: Handle guest syscalls, translate to host
 - **VFS Manager**: Virtual filesystem overlay for path translation
 - **Tracee Manager**: Manage traced processes lifecycle
+- **Syscall-gate pitfall (arm64)**: a ptrace/seccomp dispatch gate carries policy in `x9`, not `x7` — the kernel restores `x7` across an ARM64 syscall stop. See [the ARM64 syscall-gate trap](arm64-syscall-gate.md); PDN installs a deny-list BPF filter today, not a gate.
 
 Key types:
 ```rust
