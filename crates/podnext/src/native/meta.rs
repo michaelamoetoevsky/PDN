@@ -87,7 +87,9 @@ pub(crate) fn apply_image_runtime_config(container: &mut proot_distro_core::Cont
     let Some(dir) = container.rootfs_path.parent() else {
         return;
     };
-    let Ok(text) = std::fs::read_to_string(dir.join("metadata.json")) else {
+    // The one store read: a FIFO/socket/device at the metadata path is refused
+    // by name and never opened, so `run` cannot block in `openat` (C10/S3).
+    let Ok(Some(text)) = proot_distro_core::container::read_metadata_text(dir) else {
         return;
     };
     let Ok(meta) = serde_json::from_str::<serde_json::Value>(&text) else {

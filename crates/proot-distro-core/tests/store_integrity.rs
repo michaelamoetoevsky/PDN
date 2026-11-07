@@ -9,7 +9,7 @@
 
 use proot_distro_core::container::{is_container_dir, metadata_kind, scan_store, MetadataKind};
 use proot_distro_core::locking::ContainerLock;
-use proot_distro_core::{ContainerInfo, ContainerStatus};
+use proot_distro_core::ContainerInfo;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -73,10 +73,12 @@ fn list_via_manager(home: &Path) -> (anyhow::Result<Vec<ContainerInfo>>, Duratio
 
 // ---------------------------------------------------------------------------
 // A1 - a hostile metadata.json must not block, and must be reported by type.
+// S3 - and it is a store ERROR, not a listed container: the store reads metadata
+//      only from a regular file and refuses the operation by path and type.
 // ---------------------------------------------------------------------------
 
-/// (a) FIFO: the listing returns inside the budget and the container is reported
-/// corrupt with the offending file TYPE named.
+/// (a) FIFO: the store refuses in a bounded time, naming the path and the file
+/// TYPE, and never opens the FIFO.
 #[test]
 fn a_fifo_metadata_json_is_bounded_and_reported_as_a_fifo() {
     let tmp = tempdir().unwrap();
@@ -90,29 +92,31 @@ fn a_fifo_metadata_json_is_bounded_and_reported_as_a_fifo() {
 
     // The core scan is the listing's body; it must return inside the budget.
     let t0 = Instant::now();
-    let scanned = scan_store(&store).expect("scan");
+    let scanned = scan_store(&store);
     assert!(
         t0.elapsed() < BUDGET,
         "scan blocked on the FIFO: {:?}",
         t0.elapsed()
     );
-
-    let c = scanned
-        .iter()
-        .find(|c| c.name == "hostile")
-        .expect("listed");
-    let reason = c.corrupt.as_deref().expect("flagged corrupt");
-    assert!(reason.contains("fifo"), "type not named: {reason}");
-    assert_eq!(c.status, ContainerStatus::Error);
+    let err = format!(
+        "{}",
+        scanned.expect_err("a FIFO metadata path is a store error, not a container")
+    );
+    let path = dir.join("metadata.json").display().to_string();
+    assert!(err.contains(&path), "the path is not named: {err}");
+    assert!(err.contains("fifo"), "type not named: {err}");
 
     // And the end-to-end listing path (`ContainerManager::new` + `list`) is
-    // bounded too: that construction is where the process used to hang.
+    // bounded too, and carries the same named refusal: that construction is
+    // where the process used to hang.
     let _g = ENV_LOCK.lock().unwrap();
     let (listed, elapsed) = list_via_manager(&home);
-    let listed = listed.expect("listing must not fail");
+    let err = format!(
+        "{}",
+        listed.expect_err("listing a store with a FIFO metadata path must fail by name")
+    );
     assert!(elapsed < BUDGET, "listing blocked on the FIFO: {elapsed:?}");
-    let c = listed.iter().find(|c| c.name == "hostile").expect("listed");
-    assert!(c.corrupt.as_deref().unwrap_or("").contains("fifo"));
+    assert!(err.contains(&path) && err.contains("fifo"), "{err}");
 }
 
 /// (a) A symlinked `metadata.json` is refused for the same reason, named `symlink`.
@@ -129,10 +133,14 @@ fn a_symlinked_metadata_json_is_reported_as_a_symlink() {
     assert_eq!(metadata_kind(&dir), MetadataKind::Hostile("symlink"));
 
     let t0 = Instant::now();
-    let scanned = scan_store(&store).expect("scan");
+    let scanned = scan_store(&store);
     assert!(t0.elapsed() < BUDGET, "scan blocked: {:?}", t0.elapsed());
-    let c = scanned.iter().find(|c| c.name == "linked").expect("listed");
-    assert!(c.corrupt.as_deref().unwrap_or("").contains("symlink"));
+    let err = format!("{}", scanned.expect_err("symlink is refused"));
+    assert!(err.contains("symlink"), "type not named: {err}");
+    assert!(
+        err.contains(&dir.join("metadata.json").display().to_string()),
+        "path not named: {err}"
+    );
 }
 
 /// (a) A DIRECTORY at `metadata.json` is refused, named `directory`.
@@ -147,24 +155,22 @@ fn a_directory_at_metadata_json_is_reported_as_a_directory() {
     assert_eq!(metadata_kind(&dir), MetadataKind::Hostile("directory"));
 
     let t0 = Instant::now();
-    let scanned = scan_store(&store).expect("scan");
+    let scanned = scan_store(&store);
     assert!(t0.elapsed() < BUDGET, "scan blocked: {:?}", t0.elapsed());
-    let c = scanned.iter().find(|c| c.name == "dir").expect("listed");
-    assert!(c.corrupt.as_deref().unwrap_or("").contains("directory"));
+    let err = format!("{}", scanned.expect_err("a directory is refused"));
+    assert!(err.contains("directory"), "type not named: {err}");
 }
 
 // ---------------------------------------------------------------------------
-// A1 - remove --force must clear a container it cannot read.
+// A1/S3 - clearing the poison is an operator step the error makes actionable.
 // ---------------------------------------------------------------------------
 
-/// (b) `remove --force` on a FIFO container succeeds instead of hanging.
-///
-/// The hang lived in `ContainerManager::new` (the store scan); the delete itself
-/// is `remove_dir_all`. Both halves are exercised here: the manager must see the
-/// container (so `get` succeeds and `remove` does not bail "not found"), and the
-/// directory must actually go away.
+/// The refusal names the path, so clearing it is actionable - and the store is
+/// usable again once it is gone. (A1's listed-as-corrupt entry is what S3
+/// replaced: a pseudo-container in the listing could be mistaken for a real one,
+/// while a named refusal cannot.)
 #[test]
-fn remove_force_clears_a_container_whose_metadata_is_a_fifo() {
+fn clearing_the_fifo_metadata_path_restores_the_store() {
     let tmp = tempdir().unwrap();
     let (home, store) = fake_store(tmp.path());
     let dir = plant_container(&store, "stuck");
@@ -173,26 +179,28 @@ fn remove_force_clears_a_container_whose_metadata_is_a_fifo() {
 
     let _g = ENV_LOCK.lock().unwrap();
     let (listed, elapsed) = list_via_manager(&home);
-    let listed = listed.expect("listing must not block");
-    assert!(
-        elapsed < BUDGET,
-        "remove blocked before deleting: {elapsed:?}"
+    let err = format!(
+        "{}",
+        listed.expect_err("the poisoned store must be refused by name")
     );
-    let seen = listed
-        .iter()
-        .find(|c| c.name == "stuck")
-        .expect("the target must be visible to remove");
+    assert!(elapsed < BUDGET, "the refusal must not block: {elapsed:?}");
+    assert!(
+        err.contains(&dir.join("metadata.json").display().to_string()),
+        "the refusal must name the path to clear: {err}"
+    );
 
-    // The CLI's remove path: delete the container directory. A FIFO inside it is
-    // unlinked like any other entry.
+    // The named path is the fix: unlink the FIFO, and the store scans again.
     let t0 = Instant::now();
-    fs::remove_dir_all(&dir).expect("remove_dir_all must clear the FIFO container");
-    assert!(t0.elapsed() < BUDGET, "delete blocked: {:?}", t0.elapsed());
-    assert!(!dir.exists(), "directory must be gone");
+    fs::remove_file(dir.join("metadata.json")).expect("unlink the FIFO");
     assert!(
-        seen.corrupt.is_some(),
-        "was reported corrupt before deletion"
+        t0.elapsed() < BUDGET,
+        "unlinking blocked: {:?}",
+        t0.elapsed()
     );
+    let (listed, elapsed) = list_via_manager(&home);
+    let listed = listed.expect("the store is usable once the FIFO is gone");
+    assert!(elapsed < BUDGET, "listing after the fix: {elapsed:?}");
+    assert!(listed.iter().any(|c| c.name == "stuck"), "listed again");
 }
 
 // ---------------------------------------------------------------------------

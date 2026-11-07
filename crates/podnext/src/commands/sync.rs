@@ -42,7 +42,7 @@ pub async fn cmd_rename(oldname: String, newname: String) -> Result<()> {
     // metadata.json embeds both the name and the rootfs path; a stale copy makes
     // `list` disagree with the directory on disk.
     let meta_path = dst_dir.join("metadata.json");
-    if let Ok(raw) = std::fs::read_to_string(&meta_path) {
+    if let Ok(Some(raw)) = proot_distro_core::container::read_metadata_text(&dst_dir) {
         if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) {
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("name".into(), serde_json::json!(newname));
@@ -242,8 +242,14 @@ pub async fn cmd_reset(name: String) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("unexpected rootfs layout"))?
         .to_path_buf();
 
-    let meta_path = container_dir.join("metadata.json");
-    let meta: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&meta_path)?)?;
+    let Some(raw) = proot_distro_core::container::read_metadata_text(&container_dir)? else {
+        anyhow::bail!(
+            "Container '{}' has no metadata.json, so there is no recorded source image. \
+             Reinstall it manually.",
+            name
+        );
+    };
+    let meta: serde_json::Value = serde_json::from_str(&raw)?;
     let image = meta["image"].as_str().unwrap_or_default().to_string();
     if image.is_empty() {
         anyhow::bail!(

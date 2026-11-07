@@ -52,6 +52,7 @@ fn service_config(name: &str) -> ServiceConfig {
         user: None,
         stdio: StdioConfig::default(),
         sockets: vec![],
+        readiness_timeout_ms: None,
     }
 }
 

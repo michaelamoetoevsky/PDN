@@ -8,15 +8,14 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use tabled::Tabled;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use super::{get_supervisor, output_json, output_table, output_yaml};
 use pn_next::{
-    DaemonEvent, DaemonRuntime, DaemonRuntimeConfig, ServiceState, ServiceSupervisor,
-    TermuxBootConfig, TermuxBootManager,
+    DaemonEvent, DaemonRuntime, DaemonRuntimeConfig, ServiceSupervisor, TermuxBootConfig,
+    TermuxBootManager,
 };
 
 /// The daemon socket, resolved from the environment rather than hard-coded: a home that
@@ -91,25 +90,15 @@ pub async fn cmd_service_start(name: String) -> Result<()> {
         return Ok(());
     }
 
-    // Fallback to local supervisor
+    // Fallback to local supervisor. `start_service` returns when the service is
+    // up: a service configured with a readiness bound has already had its
+    // readiness byte read by then, and one without is `Running` as soon as it
+    // was spawned (WORKLIST C10). The poll loop that used to sit here waited up
+    // to 15 s for a state change and exited 0 without ever seeing one.
     let supervisor = get_supervisor().await?;
     supervisor.start_service(&name).await?;
-
-    // Wait for service to reach Running state
-    for _ in 0..30 {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let status = supervisor.get_status(&name).await?;
-        if status.state == ServiceState::Running {
-            println!("Service '{}' started (PID: {:?})", name, status.pid);
-            return Ok(());
-        }
-    }
-
     let status = supervisor.get_status(&name).await?;
-    println!(
-        "Service '{}' start initiated (current state: {:?})",
-        name, status.state
-    );
+    println!("Service '{}' started (PID: {:?})", name, status.pid);
     Ok(())
 }
 

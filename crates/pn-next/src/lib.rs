@@ -20,6 +20,7 @@ pub mod multiarch_build;
 pub mod network;
 pub mod plugin;
 pub mod policy_engine;
+pub mod readiness;
 pub mod resource_quota;
 pub mod restart_policy;
 pub mod runtime;

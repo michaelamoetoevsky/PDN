@@ -55,8 +55,11 @@ pub async fn cmd_build_local(
     if has_sh {
         println!("  Run it with: {bin_name} run {key}");
     } else {
-        let meta_cmd: Vec<String> = std::fs::read_to_string(image_dir.join("metadata.json"))
+        // The store's single metadata reader: a FIFO/socket at the path is
+        // refused by name and never opened, so this cannot block (S3).
+        let meta_cmd: Vec<String> = proot_distro_core::container::read_metadata_text(&image_dir)
             .ok()
+            .flatten()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
             .and_then(|v| v.get("cmd").cloned())
             .and_then(|v| serde_json::from_value(v).ok())
@@ -175,8 +178,9 @@ pub async fn build_local_image(
         // thing: clearing it would destroy an image the user still refers to by
         // another name (`app:v1` then `app:v2`). The recorded tag is what tells the
         // two cases apart, so refuse when they disagree instead of deleting.
-        let recorded = std::fs::read_to_string(container_dir.join("metadata.json"))
+        let recorded = proot_distro_core::container::read_metadata_text(&container_dir)
             .ok()
+            .flatten()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
             .and_then(|meta| {
                 meta.get("name")

@@ -86,6 +86,16 @@ pub struct ServiceConfig {
     /// Socket activation config
     #[serde(default)]
     pub sockets: Vec<SocketConfig>,
+
+    /// Readiness handshake (WORKLIST C10).
+    ///
+    /// `Some(ms)`: the child inherits a pipe write end as `$PN_READY_FD` and
+    /// writes one byte to it when it is ready; `start_service` returns only once
+    /// that byte has arrived, and a bound that elapses first is a named failure.
+    /// `None` keeps the historical meaning of a start: the process is `Running`
+    /// as soon as it was spawned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness_timeout_ms: Option<u64>,
 }
 
 /// Service metadata
@@ -1701,11 +1711,45 @@ impl ServiceSupervisor {
             cmd.stderr(Stdio::piped());
         }
 
+        // Set up the readiness handshake before the spawn: the child inherits
+        // the pipe's write end as `$PN_READY_FD` and signals with one byte, and
+        // this start does not report a Running service until that byte arrives
+        // (WORKLIST C10, runc's `fifoFile.Write([]byte("0"))`).
+        let readiness = match config.readiness_timeout_ms {
+            Some(ms) => {
+                let pipe = crate::readiness::ReadinessPipe::new()
+                    .context("Failed to create the readiness pipe")?;
+                pipe.install(&mut cmd);
+                Some((pipe, Duration::from_millis(ms.max(1))))
+            }
+            None => None,
+        };
+
         // Spawn process
         let mut child = cmd
             .stdin(Stdio::null())
             .spawn()
             .context("Failed to spawn service process")?;
+
+        if let Some((mut pipe, timeout)) = readiness {
+            // The parent's copy of the write end goes now, so a child that dies
+            // without signalling closes the pipe instead of leaving this wait
+            // running out its whole bound.
+            pipe.close_child_end();
+            if let Err(e) = pipe.wait(timeout) {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let mut services = self.services.write().await;
+                if let Some(managed) = services.get_mut(name) {
+                    managed.status.state = ServiceState::Failed;
+                    managed.status.state_changed_at = Utc::now();
+                    managed.status.pid = None;
+                }
+                // A readiness failure is never a start: the named error is the
+                // whole report (`readiness timeout after ...`).
+                bail!("service '{}': {}", name, e);
+            }
+        }
 
         let pid = child
             .id()
@@ -2713,6 +2757,7 @@ mod compose_export_tests {
             user: None,
             stdio: StdioConfig::default(),
             sockets: vec![],
+            readiness_timeout_ms: None,
         }
     }
 

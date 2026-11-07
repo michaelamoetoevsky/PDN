@@ -496,10 +496,6 @@ pub struct Container {
     pub status: ContainerStatus,
     pub pid: Option<u32>,
     pub rootfs_path: PathBuf,
-    /// Set when the directory is present but its `metadata.json` is not a regular
-    /// file that can be read; the value names the offending file type (WORKLIST A1).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub corrupt: Option<String>,
 }
 
 impl Container {
@@ -522,7 +518,6 @@ impl Container {
             status: ContainerStatus::Stopped,
             pid: None,
             rootfs_path,
-            corrupt: None,
         })
     }
 }
@@ -536,7 +531,6 @@ impl Default for Container {
             status: ContainerStatus::Stopped,
             pid: None,
             rootfs_path: PathBuf::new(),
-            corrupt: None,
         }
     }
 }
@@ -551,7 +545,6 @@ impl Container {
             status: self.status,
             created_at: self.created_at,
             rootfs_path: self.rootfs_path.clone(),
-            corrupt: self.corrupt.clone(),
         }
     }
 }
@@ -566,9 +559,6 @@ pub struct ContainerInfo {
     pub status: ContainerStatus,
     pub created_at: DateTime<Utc>,
     pub rootfs_path: PathBuf,
-    /// See [`Container::corrupt`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub corrupt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -843,44 +833,28 @@ pub fn scan_store(containers_dir: &Path) -> Result<Vec<Container>> {
         let mut meta_distro = None;
         let mut meta_version = None;
         let mut created_at = None;
-        let mut corrupt = None;
 
-        // Classify before reading: a `metadata.json` that is not a regular file
-        // is reported, never opened, so it can never block this scan (WORKLIST A1).
-        let (mut metadata_file, kind) = open_metadata(&entry.path());
-        match kind {
-            MetadataKind::Regular => {
-                let mut metadata_str = String::new();
-                if let Some(file) = metadata_file.as_mut() {
-                    if std::io::Read::read_to_string(file, &mut metadata_str).is_ok() {
-                        if let Ok(metadata) =
-                            serde_json::from_str::<serde_json::Value>(&metadata_str)
-                        {
-                            meta_distro = metadata
-                                .get("image")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-                            meta_version = metadata
-                                .get("tag")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-                            if let Some(ts_str) =
-                                metadata.get("created_at").and_then(|v| v.as_str())
-                            {
-                                if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
-                                    created_at = Some(dt.with_timezone(&Utc));
-                                }
-                            }
-                        }
+        // Metadata is store metadata only when it is a REGULAR file. Anything
+        // else at that path is a store error naming the path and the file type,
+        // raised before any read: `openat` on a FIFO blocks until a writer
+        // appears, which is how the campaign's planted FIFO froze `list` and
+        // `remove` for 45-50 minutes (WORKLIST S3).
+        if let Some(metadata_str) = read_metadata_text(&entry.path())? {
+            if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
+                meta_distro = metadata
+                    .get("image")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                meta_version = metadata
+                    .get("tag")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if let Some(ts_str) = metadata.get("created_at").and_then(|v| v.as_str()) {
+                    if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str) {
+                        created_at = Some(dt.with_timezone(&Utc));
                     }
                 }
             }
-            MetadataKind::Hostile(kind) => {
-                corrupt = Some(format!(
-                    "metadata.json is not a regular file (found: {kind})"
-                ));
-            }
-            MetadataKind::Absent => {}
         }
 
         // Inspect /etc/os-release in rootfs so DISTRO matches the real Linux distribution
@@ -911,12 +885,6 @@ pub fn scan_store(containers_dir: &Path) -> Result<Vec<Container>> {
                     container.created_at = DateTime::<Utc>::from(ctime);
                 }
             }
-            // A corrupt entry is still a container in the store: it is listed
-            // (so `remove` can find and clear it) but flagged, never hidden.
-            if corrupt.is_some() {
-                container.status = ContainerStatus::Error;
-            }
-            container.corrupt = corrupt;
             out.push(container);
         }
     }
@@ -949,9 +917,44 @@ pub enum MetadataKind {
 /// blocks in `openat` waiting for a writer, and that wait outlived its caller
 /// (two `podnext list` orphans were still alive at PPID 1 after >2700 s). The
 /// file is opened with `O_NONBLOCK | O_NOFOLLOW` and the descriptor is then
-/// `fstat`ed, so any non-regular file is named and skipped without a read.
+/// `fstat`ed, so any non-regular file is named without a read.
+///
+/// A non-regular file is not merely skipped, it is a store error: the caller of
+/// [`read_metadata_text`] refuses the operation and names the path (WORKLIST S3).
 pub fn metadata_kind(dir: &Path) -> MetadataKind {
     open_metadata(dir).1
+}
+
+/// The store's one metadata read: the text of `<dir>/metadata.json` when — and
+/// only when — that path holds a regular file.
+///
+/// `Ok(None)` is a legacy container without metadata, which the store allows.
+/// A FIFO, socket, device, directory or symlink at the path is a store error
+/// naming the path and the file type; nothing is opened for reading, so the call
+/// cannot block behind a FIFO's writer (WORKLIST S3 - the structural form of the
+/// A1 refusal, which only bounded the symptom).
+pub fn read_metadata_text(dir: &Path) -> Result<Option<String>> {
+    match open_metadata(dir) {
+        (Some(mut file), MetadataKind::Regular) => {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut file, &mut text)?;
+            Ok(Some(text))
+        }
+        (_, MetadataKind::Absent) => Ok(None),
+        (_, MetadataKind::Hostile(kind)) => Err(store_metadata_error(dir, kind)),
+        // `open_metadata` never reports a missing descriptor for a regular file;
+        // if it ever did, refusing beats silently reporting "no metadata".
+        (None, MetadataKind::Regular) => Err(store_metadata_error(dir, "unreadable")),
+    }
+}
+
+/// The named store error for a `metadata.json` that is not a regular file.
+fn store_metadata_error(dir: &Path, kind: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "store error: '{}' is not a regular file (found: {kind}); the store reads metadata only \
+         from regular files, so the path was never opened",
+        dir.join("metadata.json").display()
+    )
 }
 
 /// Open `<dir>/metadata.json` if — and only if — it is a regular file, returning
@@ -1015,7 +1018,8 @@ fn open_metadata(dir: &Path) -> (Option<std::fs::File>, MetadataKind) {
 ///
 /// Two exclusions: a staging directory ([`STAGING_PREFIX`]) is never a container,
 /// and a `metadata.json` that exists but is not a regular file still marks the
-/// directory — as a corrupt container to be reported and cleared, not read.
+/// directory — so the store reaches it and refuses it by name rather than
+/// treating the entry as a legacy container with no metadata (S3).
 pub fn is_container_dir(dir: &std::path::Path) -> bool {
     if dir
         .file_name()

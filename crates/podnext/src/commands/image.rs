@@ -363,7 +363,9 @@ pub(crate) fn read_store_metadata(
             continue;
         }
         let dir = containers_dir.join(&candidate);
-        let Ok(text) = std::fs::read_to_string(dir.join("metadata.json")) else {
+        // Never opened unless it is a regular file: a planted FIFO is refused by
+        // name instead of blocking `image inspect` (S3).
+        let Ok(Some(text)) = proot_distro_core::container::read_metadata_text(&dir) else {
             continue;
         };
         let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
