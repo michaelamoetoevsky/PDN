@@ -117,27 +117,28 @@ to stderr and nothing to stdout.
   writable: proot 5.1.107.101 has no read-only bind form, and a `:ro` suffix would become part of the
   guest path name (`GUEST:ro`), leaving the requested path unmounted. Restrict access inside the guest
   instead, or use a PRoot that supports read-only binds.
-- **Storage and the host home are not mounted into a guest by default.** PDN binds `/dev`,
-  `/proc`, `/sys`, the Android system directories, and a per-container `/tmp` and `/dev/shm`; it
-  binds no `/sdcard` and no `/storage`. A guest sees the documented storage paths as **empty
-  directories from its own rootfs**, not the phone's storage. Measured inside `alpine`
-  (`podnext run alpine -- ls -ld /sdcard /storage/emulated/0 /storage/self/primary /storage`):
+- **Storage is mounted; the host home is not.** PDN binds `/dev`, `/proc`, `/sys`, the Android system
+  directories, a per-container `/tmp` and `/dev/shm`, and — like the reference implementation — the
+  phone's storage. When the host grants read access to `/storage`, that tree is bound and the primary
+  volume is mapped onto `/sdcard` and `/mnt/sdcard`; when it does not, the first readable of
+  `/storage/self/primary`, `/storage/emulated/0`, `/sdcard` is mapped onto all four documented guest
+  paths (`/mnt/sdcard`, `/sdcard`, `/storage/emulated/0`, `/storage/self/primary`). The clause lives in
+  `crates/proot-distro-core/src/android_binds.rs` and mirrors the reference's `storage_bindings()`
+  decision, including its order, its read-access gate and its two different shapes.
 
-  ```text
-  d---------    2 root     root          3452 Nov  4 00:30 /sdcard
-  drwx------    4 root     root          3452 Nov  4 00:30 /storage
-  d---------    2 root     root          3452 Nov  4 00:30 /storage/emulated/0
-  d---------    2 root     root          3452 Nov  4 00:30 /storage/self/primary
-  ```
+  Two things this deliberately changes, recorded here rather than left to disagree with the code:
+  ticket #66 used to pin the opposite envelope — the documented storage paths were **empty directories
+  from the guest's own rootfs**, `/proc/mounts` carried no storage bind, and `/mnt/sdcard` was a negative
+  control. `scripts/check_bindings.py` and the ledger predicate that greps this section moved with the
+  change, in the same commit.
 
-  All four are on the rootfs device (`stat -c %d` matches `/`), while on the host `/sdcard` is a
-  symlink to `/storage/self/primary` -> `/storage/emulated/0` on a different filesystem. The guest's
-  `/proc/mounts` lists only `rootfs`, `proc`, `sysfs`, `devtmpfs /dev`, `tmpfs /dev/shm` and
-  `tmpfs /tmp`. The host home is not visible either: a file written on the host under
-  `/data/data/com.termux/files/home` does not appear at that path in the guest, though a directory of
-  that name exists in the rootfs. Reach the phone's storage with an explicit mount —
-  `podnext run alpine --volume /sdcard:/mnt/sdcard -- ls /mnt/sdcard` — and note that without it
-  `/mnt/sdcard` is absent (it is the negative control in `scripts/check_bindings.py`).
+  What is **not** mounted is the host home: a file written on the host under
+  `/data/data/com.termux/files/home` does not appear at that path in the guest, even though a directory of
+  that name exists in the rootfs. `--isolated` withholds the whole Android set, storage included, and a
+  termux-type rootfs gets none of it either — it is a Termux of its own.
+
+  The measured form of all of this is `scripts/check_bindings.py`, which runs inside a real guest and is
+  therefore skipped when no container is reachable; a skip there is not a pass.
 - **`/tmp` and `/dev/shm` are per-container, and the guest `$HOME` is not the Termux home.** The
   guest's `/tmp` is `$HOME/.podnext/containers/<name>/tmp` and its `/dev/shm` is
   `.../<name>/shm`; neither is the host's `$PREFIX/tmp`. A file written in the guest at `/tmp/x` is

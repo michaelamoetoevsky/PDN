@@ -46,6 +46,22 @@ pub const SYSTEM_PATHS: &[&str] = &[
     "/property_contexts",
 ];
 
+/// The reference's `storage_bindings()` fallbacks, in its order: the first readable
+/// one is mapped onto all four documented guest paths.
+pub const STORAGE_FALLBACKS: &[&str] = &["/storage/self/primary", "/storage/emulated/0", "/sdcard"];
+
+/// The four guest paths the reference maps storage onto (reference order).
+pub const STORAGE_GUEST_PATHS: &[&str] = &[
+    "/mnt/sdcard",
+    "/sdcard",
+    "/storage/emulated/0",
+    "/storage/self/primary",
+];
+
+/// Emitted when the host grants no readable Android storage at all.
+pub const SKIP_STORAGE: &str =
+    "android bind set skipped: no readable Android storage (/storage, /sdcard) on this host";
+
 /// The guest-relative path whose presence marks a rootfs as termux-type.
 const TERMUX_LOGIN: &str = "data/data/com.termux/files/usr/bin/login";
 
@@ -82,6 +98,10 @@ pub trait HostFs {
     fn canonical(&self, path: &Path) -> PathBuf;
     /// `open(p)` and read one byte.
     fn reads_one_byte(&self, path: &Path) -> bool;
+    /// Read access to a directory — the reference asks `os.access(p, os.R_OK)`; from Rust the
+    /// faithful equivalent for a directory is whether it can be listed. A directory that cannot
+    /// be listed is treated as unreadable, which is what the reference means by it.
+    fn lists_dir(&self, path: &Path) -> bool;
 }
 
 /// The real host filesystem.
@@ -99,6 +119,10 @@ impl HostFs for RealFs {
 
     fn canonical(&self, path: &Path) -> PathBuf {
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    fn lists_dir(&self, path: &Path) -> bool {
+        std::fs::read_dir(path).is_ok()
     }
 
     fn reads_one_byte(&self, path: &Path) -> bool {
@@ -167,6 +191,33 @@ pub fn plan(fs: &dyn HostFs, dist_type: DistType, isolated: bool) -> Plan {
                 ));
             }
         }
+    }
+
+    // Storage, mirroring the reference's `storage_bindings()`: when `/storage` is readable it
+    // binds the tree and maps the primary volume onto `/sdcard` and `/mnt/sdcard`; otherwise it
+    // takes the FIRST readable fallback and maps it onto all four documented guest paths. The
+    // shapes differ on purpose - they are the reference's, not a tidier invention.
+    let storage: Option<Vec<String>> = if fs.lists_dir(Path::new("/storage")) {
+        let mut v = vec!["/storage".to_string()];
+        if fs.lists_dir(Path::new("/storage/emulated/0")) {
+            v.push("/storage/emulated/0:/sdcard".to_string());
+            v.push("/storage/emulated/0:/mnt/sdcard".to_string());
+        }
+        Some(v)
+    } else {
+        STORAGE_FALLBACKS
+            .iter()
+            .find(|p| fs.lists_dir(Path::new(p)))
+            .map(|p| {
+                STORAGE_GUEST_PATHS
+                    .iter()
+                    .map(|target| format!("{p}:{target}"))
+                    .collect()
+            })
+    };
+    match storage {
+        Some(binds) => plan.args.extend(binds),
+        None => plan.skipped.push(SKIP_STORAGE.to_string()),
     }
 
     plan
@@ -262,6 +313,13 @@ mod tests {
     }
 
     impl FakeFs {
+        /// A directory the host grants read access to: the reference's `os.access(p, R_OK)`.
+        fn readable_dir(mut self, p: &str, mode: u32) -> Self {
+            self = self.dir(p, mode);
+            self.readable.insert(PathBuf::from(p));
+            self
+        }
+
         fn dir(mut self, p: &str, mode: u32) -> Self {
             self.entries.insert(
                 PathBuf::from(p),
@@ -308,6 +366,11 @@ mod tests {
         fn reads_one_byte(&self, path: &Path) -> bool {
             self.readable.contains(path)
         }
+        /// The reference asks `os.access(p, R_OK)` for directories too, so the fake answers with
+        /// the same set it uses for files: readable there means listable here.
+        fn lists_dir(&self, path: &Path) -> bool {
+            self.readable.contains(path)
+        }
     }
 
     /// The device's answer, as the reference measured it: six world-searchable
@@ -342,10 +405,10 @@ mod tests {
             ],
             "a normal session gets exactly the reachable Android paths"
         );
-        assert!(
-            plan.skipped.is_empty(),
-            "nothing withheld when every candidate qualifies: {:?}",
-            plan.skipped
+        assert_eq!(
+            plan.skipped,
+            vec![SKIP_STORAGE.to_string()],
+            "no system path is withheld; the storage clause is the only note here"
         );
     }
 
@@ -360,9 +423,16 @@ mod tests {
             plan.args
         );
         assert!(
-            plan.skipped.is_empty(),
+            !plan.skipped.iter().any(|n| n.contains("property_contexts")),
             "and it is dropped without a note, as the reference does: {:?}",
             plan.skipped
+        );
+        // device_fs() models the reference's measured SYSTEM facts and grants no storage, so the
+        // only note left is the storage clause - which has its own fixtures below.
+        assert_eq!(
+            plan.skipped,
+            vec![SKIP_STORAGE.to_string()],
+            "the only note is the storage clause device_fs() cannot satisfy"
         );
     }
 
@@ -381,7 +451,8 @@ mod tests {
             vec![
                 "android bind /apex skipped: mode 0700 is not world-searchable \
                  (last digit 0, need 1, 5 or 7)"
-                    .to_string()
+                    .to_string(),
+                SKIP_STORAGE.to_string()
             ],
             "the mode-digit clause emits exactly this"
         );
@@ -412,7 +483,8 @@ mod tests {
             plan.skipped,
             vec![
                 "android bind /linkerconfig/ld.config.txt skipped: the 1-byte read failed"
-                    .to_string()
+                    .to_string(),
+                SKIP_STORAGE.to_string()
             ],
             "the readability clause emits exactly this"
         );
@@ -502,5 +574,80 @@ mod tests {
         std::fs::create_dir_all(bin.join("login")).unwrap();
         assert_eq!(detect_dist_type(&r), DistType::Normal);
         let _ = std::fs::remove_dir_all(&r);
+    }
+    #[test]
+    fn a_readable_storage_tree_is_bound_with_the_primary_volume_mapped() {
+        let fs = device_fs()
+            .readable_dir("/storage", 0o40755)
+            .readable_dir("/storage/emulated/0", 0o40755);
+        let plan = plan(&fs, DistType::Normal, false);
+        assert!(
+            plan.args.contains(&"/storage".to_string()),
+            "a readable /storage is bound: {:?}",
+            plan.args
+        );
+        assert!(
+            plan.args
+                .contains(&"/storage/emulated/0:/sdcard".to_string())
+                && plan
+                    .args
+                    .contains(&"/storage/emulated/0:/mnt/sdcard".to_string()),
+            "and the primary volume is mapped onto /sdcard and /mnt/sdcard: {:?}",
+            plan.args
+        );
+        assert!(
+            !plan.skipped.iter().any(|n| n == SKIP_STORAGE),
+            "storage was readable, so it must not be reported as unavailable"
+        );
+    }
+
+    #[test]
+    fn the_first_readable_fallback_is_mapped_onto_all_four_guest_paths() {
+        let fs = device_fs().readable_dir("/storage/emulated/0", 0o40755);
+        let plan = plan(&fs, DistType::Normal, false);
+        for target in STORAGE_GUEST_PATHS {
+            let want = format!("/storage/emulated/0:{target}");
+            assert!(
+                plan.args.contains(&want),
+                "the reference maps the first readable fallback onto {target}: {:?}",
+                plan.args
+            );
+        }
+        assert!(
+            !plan.args.contains(&"/storage".to_string()),
+            "/storage itself was not readable, so only the fallback is bound"
+        );
+    }
+
+    #[test]
+    fn no_readable_storage_prints_one_named_skip() {
+        let fs = device_fs();
+        let plan = plan(&fs, DistType::Normal, false);
+        assert!(
+            plan.skipped.iter().any(|n| n == SKIP_STORAGE),
+            "an unreadable host says so by name: {:?}",
+            plan.skipped
+        );
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|a| a.contains("sdcard") || a.contains("/storage")),
+            "and binds no storage at all: {:?}",
+            plan.args
+        );
+    }
+
+    #[test]
+    fn a_termux_type_rootfs_gets_no_storage_either() {
+        let fs = device_fs()
+            .readable_dir("/storage", 0o40755)
+            .readable_dir("/storage/emulated/0", 0o40755);
+        let plan = plan(&fs, DistType::Termux, false);
+        assert!(
+            plan.args.is_empty(),
+            "the exclusion withholds storage too: {:?}",
+            plan.args
+        );
     }
 }

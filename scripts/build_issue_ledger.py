@@ -323,9 +323,13 @@ CHECKS: list[dict] = [
     # ── #66: bindings and the USER story are measured, not assumed ────────────
     dict(issue="66", claim="the bindings check can tell a mapped path from an unmapped one",
          cmd="grep -nF 'ABSENT' scripts/check_bindings.py", needle="ABSENT"),
-    dict(issue="66", claim="the documentation states that storage and the host home are not mounted",
-         cmd="grep -nF 'Storage and the host home are not mounted into a guest by default' docs/src/known-limitations.md",
-         needle="not mounted into a guest by default"),
+    # Re-recorded with the storage clause in android_binds.rs: the old envelope (storage not mounted)
+    # was the opposite of what the code now does, and a predicate that pins a stale truth reports a
+    # regression when the change is intentional. The claim keeps its discrimination - one sentence about
+    # storage, one about the host home - while stating what is actually true now.
+    dict(issue="66", claim="the documentation states storage is mounted and the host home is not",
+         cmd="grep -nF 'Storage is mounted; the host home is not.' docs/src/known-limitations.md",
+         needle="Storage is mounted; the host home is not."),
     # These are NOT pinned to a file: a symbol move is not a regression, and three rounds
     # have now had predicates die because a refactor relocated what they grep for. The needles
     # are specific enough to keep the discrimination the file path used to provide.
