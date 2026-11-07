@@ -40,7 +40,9 @@
     "wakelock",
     "watchdog"
   ],
-  "image_store_files": [],
+  "image_store_files": [
+    "crates/proot-distro-core/src/blobstore.rs"
+  ],
   "line_budgets": {
     "crates/pn-next/src": 23235,
     "crates/pn-next/src/cluster": 889,

@@ -70,7 +70,10 @@ def measure(binary: str) -> dict:
         "crates/pn-next/src/cluster": rust_lines("crates/pn-next/src/cluster"),
         "crates/pn-next/src/multiarch_build": rust_lines("crates/pn-next/src/multiarch_build"),
     }
-    # The image store is the v0.2.0 milestone; a type by that name means someone started it.
+    # The image store WAS the v0.2.0 non-goal; v0.3.0 defines itself by building it (C1, roadmap 4.4), so
+    # the appearance of this type is now a RECORDED milestone rather than a violation: the baseline in
+    # scripts/non_goals.json carries these files. The check still works - a store type appearing somewhere
+    # the baseline does not list is still a new, unreviewed appearance.
     rc, out = sh(["grep", "-rlE", r"struct ImageStore|trait ImageStore|struct BlobStore", "crates"])
     m["image_store_files"] = [l for l in out.splitlines() if l.strip()] if rc == 0 else []
     # A TUI is not a thing this project has: no target, no module, no command.
