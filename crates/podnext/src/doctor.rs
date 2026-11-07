@@ -54,6 +54,14 @@ pub async fn collect(container: Option<&str>) -> Vec<Check> {
     checks.push(dns_check());
     checks.push(kernel_check());
     checks.push(cgroups_check());
+    // S5/C7: the capabilities PDN's own claims rest on. Each is a READ - none changes the state it
+    // measures - and each answers `Unknown` when it cannot measure, never `Ok`.
+    checks.push(namespace_check());
+    checks.push(seccomp_actions_check());
+    checks.push(writable_cgroupfs_check());
+    checks.push(pidfd_check());
+    checks.push(executor_uid_check());
+    checks.push(subreaper_check());
     checks.extend(container_checks(container).await);
     checks
 }
@@ -430,6 +438,40 @@ pub fn worst_verdict(checks: &[Check]) -> Verdict {
 
 #[cfg(test)]
 mod tests {
+    /// The Docker refusal cites this line, so a probe missing from it is a measurement the message
+    /// quietly drops. Asserted as a count as well as by name: the count is what catches an entry
+    /// that was added to `collect` and forgotten here.
+    #[test]
+    fn capability_line_names_every_probe_it_renders() {
+        let line = super::capability_line();
+        let names = [
+            "namespaces",
+            "seccomp",
+            "cgroupfs",
+            "pidfd",
+            "executor uid",
+            "subreaper",
+        ];
+        for name in names {
+            assert!(
+                line.contains(name),
+                "capability_line must name '{name}': {line}"
+            );
+        }
+        assert_eq!(
+            line.matches(',').count(),
+            names.len() - 1,
+            "one entry per probe and no more: {line}"
+        );
+        assert!(
+            line.contains(":ok")
+                || line.contains(":warn")
+                || line.contains(":fail")
+                || line.contains(":unknown"),
+            "every entry must carry its verdict, not just its name: {line}"
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -517,4 +559,211 @@ mod tests {
         ];
         assert_eq!(worst_verdict(&failed), Verdict::Fail);
     }
+}
+/// Namespaces: which ones this process is actually in, read from the per-process links, plus the
+/// sysctl when the sandbox exposes it. `/proc/sys/user/max_user_namespaces` is denied to an app uid
+/// on Android, so it is a detail rather than the measurement - a probe that answered from it alone
+/// would report `unknown` on every Android device and be blind exactly where it matters.
+fn namespace_check() -> Check {
+    let mut seen: Vec<String> = Vec::new();
+    for (label, path) in [
+        ("mnt", "/proc/self/ns/mnt"),
+        ("pid", "/proc/self/ns/pid"),
+        ("net", "/proc/self/ns/net"),
+        ("user", "/proc/self/ns/user"),
+    ] {
+        if let Ok(target) = std::fs::read_link(path) {
+            seen.push(format!("{label}={}", target.display()));
+        }
+    }
+    let sysctl = match std::fs::read_to_string("/proc/sys/user/max_user_namespaces") {
+        Ok(raw) => format!("max_user_namespaces={}", raw.trim()),
+        Err(err) => format!("max_user_namespaces unreadable ({err})"),
+    };
+    if seen.is_empty() {
+        return Check::new(
+            "namespaces",
+            Verdict::Unknown,
+            format!("no /proc/self/ns/* link could be read; {sysctl}"),
+        );
+    }
+    // Being IN namespaces is not being able to CREATE them: the executor's uid decides that, which
+    // is why the fact is reported with the sysctl beside it instead of as a bare `ok`.
+    Check::new(
+        "namespaces",
+        Verdict::Warn,
+        format!(
+            "this process is in {} namespace(s) [{}]; {sysctl} - creating mount/pid/net namespaces additionally needs privileges this executor's uid may not have",
+            seen.len(),
+            seen.join(" ")
+        ),
+    )
+}
+
+/// Seccomp: the mode this process is in, read from `/proc/self/status` (which the sandbox does
+/// expose, unlike `actions_avail`). Mode 0 means no filter is installed - the state PDN was in when
+/// `seccomp.rs` promised a boundary it never built (A21).
+fn seccomp_actions_check() -> Check {
+    let status = match std::fs::read_to_string("/proc/self/status") {
+        Ok(text) => text,
+        Err(err) => {
+            return Check::new(
+                "seccomp",
+                Verdict::Unknown,
+                format!("cannot read /proc/self/status: {err}"),
+            )
+        }
+    };
+    let mode = status
+        .lines()
+        .find_map(|l| l.strip_prefix("Seccomp:"))
+        .map(|rest| rest.trim().to_string());
+    let avail = std::fs::read_to_string("/proc/sys/kernel/seccomp/actions_avail")
+        .map(|raw| format!("actions_avail: {}", raw.trim()))
+        .unwrap_or_else(|err| format!("actions_avail unreadable ({err})"));
+    match mode.as_deref() {
+        Some("0") => Check::new(
+            "seccomp",
+            Verdict::Warn,
+            format!("no seccomp filter is installed on this process (mode 0); {avail}"),
+        ),
+        Some(mode) if !mode.is_empty() => Check::new(
+            "seccomp",
+            Verdict::Ok,
+            format!("a seccomp filter is installed (mode {mode}); {avail}"),
+        ),
+        _ => Check::new(
+            "seccomp",
+            Verdict::Unknown,
+            format!("no Seccomp: line in /proc/self/status; {avail}"),
+        ),
+    }
+}
+
+/// cgroupfs writability - the difference between a limit that is enforced and a number that is only
+/// written down. Reuses the supervisor's own helper, so the check and the start path cannot
+/// disagree about which mount is in play.
+fn writable_cgroupfs_check() -> Check {
+    match pn_next::writable_cgroupfs() {
+        Some(path) => Check::new(
+            "cgroupfs",
+            Verdict::Ok,
+            format!(
+                "{} is writable: cgroup limits can be enforced",
+                path.display()
+            ),
+        ),
+        None => Check::new(
+            "cgroupfs",
+            Verdict::Warn,
+            "no writable cgroupfs: CPU/memory/pids limits cannot be enforced here, and the honest view refuses them by name instead of writing them down",
+        ),
+    }
+}
+
+/// pidfd needs kernel 5.3. The release comes from `uname -r`, because `/proc/version` is not
+/// readable by an app uid on Android (the same reason `kernel_check` uses `uname`).
+fn pidfd_check() -> Check {
+    let out = match std::process::Command::new("uname").arg("-r").output() {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        Ok(out) => {
+            return Check::new(
+                "pidfd",
+                Verdict::Unknown,
+                format!("uname -r exited {:?}", out.status.code()),
+            )
+        }
+        Err(err) => {
+            return Check::new(
+                "pidfd",
+                Verdict::Unknown,
+                format!("uname unavailable: {err}"),
+            )
+        }
+    };
+    match parse_kernel_release(&out) {
+        Some((major, minor)) if (major, minor) >= (5, 3) => Check::new(
+            "pidfd",
+            Verdict::Ok,
+            format!("kernel {out} supports pidfd_open (>= 5.3)"),
+        ),
+        Some((major, minor)) => Check::new(
+            "pidfd",
+            Verdict::Fail,
+            format!("kernel {out} ({major}.{minor}) is older than 5.3: pidfd_open is unavailable"),
+        ),
+        None => Check::new(
+            "pidfd",
+            Verdict::Unknown,
+            format!("cannot parse a kernel version out of {out:?}"),
+        ),
+    }
+}
+
+/// `6.6.30-android15-8-gabc` -> `(6, 6)`; anything else is `None`, which the caller reports as
+/// `Unknown` rather than guessing a capability from an unparsable string.
+fn parse_kernel_release(release: &str) -> Option<(u32, u32)> {
+    let mut parts = release
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// Effective uid: which namespace and cgroup paths can exist at all depends on it, so it is
+/// reported as a measurement rather than left implicit.
+fn executor_uid_check() -> Check {
+    match std::fs::read_to_string("/proc/self/status") {
+        Ok(status) => match status
+            .lines()
+            .find_map(|l| l.strip_prefix("Uid:"))
+            .and_then(|rest| rest.split_whitespace().next())
+        {
+            Some(uid) => Check::new(
+                "executor uid",
+                Verdict::Ok,
+                format!("effective uid {uid}; namespace and cgroup writes depend on it"),
+            ),
+            None => Check::new(
+                "executor uid",
+                Verdict::Unknown,
+                "Uid: line absent from /proc/self/status",
+            ),
+        },
+        Err(err) => Check::new(
+            "executor uid",
+            Verdict::Unknown,
+            format!("cannot read /proc/self/status: {err}"),
+        ),
+    }
+}
+
+/// Child subreaper: A22 sets it on the exec path and there is no side-effect-free way to read the
+/// flag back from here. `Unknown` with the reason is the honest answer - `Ok` would assert a
+/// capability this check never measured.
+fn subreaper_check() -> Check {
+    Check::new(
+        "subreaper",
+        Verdict::Unknown,
+        "not measurable without changing process state (PR_SET_CHILD_SUBREAPER has no read-only form); the exec path sets it (A22) and orphan reaping has its own tests",
+    )
+}
+/// The capability probes rendered as one line, for callers that must name WHY a capability is
+/// missing rather than asserting that it is. Reads the same functions `collect` pushes, so a probe
+/// and every message that cites it cannot disagree.
+pub(crate) fn capability_line() -> String {
+    let probes = [
+        namespace_check(),
+        seccomp_actions_check(),
+        writable_cgroupfs_check(),
+        pidfd_check(),
+        executor_uid_check(),
+        subreaper_check(),
+    ];
+    probes
+        .iter()
+        .map(|c| format!("{}:{}", c.name, c.verdict.label()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

@@ -454,9 +454,11 @@ pub async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Re
         anyhow::bail!(
             "The configured runtime backend '{}' does not support kernel features required by Docker.\n\
              Reason: Docker requires namespaces (mount, pid, net) and cgroups v2, which PRoot cannot provide.\n\
+             Measured here by 'podnext doctor' (S5): {}\n\
              Gated at dockerd's daemon/daemon.go:1130-1132 (the Devices-cgroup check), which refuses to start without them.\n\
              Resolution: Start the UML backend with 'uml4termux up' and use '--runtime uml'.",
-            format!("{:?}", backend.kind()).to_lowercase()
+            format!("{:?}", backend.kind()).to_lowercase(),
+            crate::doctor::capability_line()
         );
     }
 
