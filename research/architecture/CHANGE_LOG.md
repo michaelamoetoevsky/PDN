@@ -447,6 +447,40 @@ was the opposite: `tail -1` shows only the **last** test target's summary, and t
 scrolled past. The corrected run (`--lib`, all summary lines read) shows 105 passing. The lesson matches
 one already in this repo's memory - read every `test result` line, never a single one.
 
+---
+
+## SUPPLY-10 / issue #74 (release integrity) - half one: the release publishes checksums
+
+**Found (measured 2026-11-08).** The installer downloads at **four** sites and verifies none of them:
+`install.sh:84` (`curl -fsSL -o "$TEMP_DEB" "$DEB_URL"`) then `:87` (`dpkg -i "$TEMP_DEB"`), the binary
+fallback at `:100-102` (`curl` -> `chmod +x` -> `mv`), the `podnext-daemon`/`pn-gateway` loop right after
+it, and `install-short.sh:21-37`. Behind that, the release itself published **no checksums**: `v0.2.0`'s
+assets are `install-short.sh`, `install.sh`, `podnext-aarch64-linux-android`,
+`podnext-x86_64-linux-android` and nothing else (no `.sha256`, and no `.deb` either - so the `dpkg` path
+targets an asset the release never ships), and `git grep sha256 .github/workflows/` was empty.
+
+**Change (2026-11-08), half one only.** `Combine artifacts` in `.github/workflows/release.yml` now writes
+`<asset>.sha256` for each of the four shipped assets from the artefact that is actually shipped, refuses
+when one is missing (`ERROR: release-artifacts/<f> is missing; refusing to publish a partial asset set`),
+prints the checksums, and refuses when it did not write exactly four. The release step's `files:` list
+gained the four `.sha256` paths, so they are uploaded beside the assets.
+
+**Deliberately not done in the same change.** The installer half - a verify-or-refuse helper called at all
+four download sites - is not started, because a partial installer edit would leave the other paths
+unverified while looking fixed. It is the next block, with its shape recorded: refuse on a mismatched
+checksum with no escape hatch; refuse when no checksum is published unless `PDN_ALLOW_UNVERIFIED=1` is set
+explicitly (and print that it is installing unverified); verify locally by stubbing **only** `curl` in
+`PATH`, never by blanking `PATH`, which would also remove `sha256sum` and make every case look the same.
+
+**Verification.** The workflow's own `run:` block was extracted from the YAML and executed with `bash` in a
+fixture holding four fake assets: `rc=0` and all four `sha256sum -c` report `OK`. Negative control, and it
+had to be corrected once: deleting only the combined copy proved nothing (`rc=0`) because the step re-copies
+from the per-target directories - removing `install.sh` from **both** sources gives `rc=1` with the refusal
+message, and restoring it returns `rc=0` with four `OK`s. A detail stated rather than hidden: when it
+refuses, the two checksums written before the missing asset are left on disk; harmless because the step
+exits non-zero and nothing is published, but a reader should not have to infer that.
+
+
 
 
 

@@ -326,6 +326,27 @@ jobs:
           cp release-artifacts-aarch64/* release-artifacts/ 2>/dev/null || true
           cp release-artifacts-x86_64/* release-artifacts/ 2>/dev/null || true
 
+          # Publish a checksum beside every asset. v0.2.0 shipped four assets and no checksums at all,
+          # so the installer had nothing to verify a download against (ASEC3-SUPPLY-01 / TC-SUPPLY-01,
+          # issue #74). Each checksum is written from the file that is actually shipped, and a missing
+          # asset refuses here rather than producing a checksum for something nobody can download.
+          for f in podnext-aarch64-linux-android podnext-x86_64-linux-android install.sh install-short.sh; do
+            if [ ! -f "release-artifacts/$f" ]; then
+              echo "ERROR: release-artifacts/$f is missing; refusing to publish a partial asset set"
+              exit 1
+            fi
+            sha256sum "release-artifacts/$f" > "release-artifacts/$f.sha256"
+          done
+
+          # Show what was written, so a run that produces an empty or misnamed checksum is visible in
+          # the log instead of being discovered by a user whose install refuses to proceed.
+          cat release-artifacts/*.sha256
+          count=$(ls release-artifacts/*.sha256 | wc -l)
+          if [ "$count" -ne 4 ]; then
+            echo "ERROR: expected 4 checksum files, wrote $count"
+            exit 1
+          fi
+
       - name: List downloaded artifacts
         run: |
           find release-artifacts -type f | sort
@@ -387,6 +408,10 @@ jobs:
             release-artifacts/podnext-x86_64-linux-android
             release-artifacts/install.sh
             release-artifacts/install-short.sh
+            release-artifacts/podnext-aarch64-linux-android.sha256
+            release-artifacts/podnext-x86_64-linux-android.sha256
+            release-artifacts/install.sh.sha256
+            release-artifacts/install-short.sh.sha256
           draft: false
           prerelease: ${{ contains(steps.changelog.outputs.version, 'alpha') || contains(steps.changelog.outputs.version, 'beta') || contains(steps.changelog.outputs.version, 'rc') }}
 
