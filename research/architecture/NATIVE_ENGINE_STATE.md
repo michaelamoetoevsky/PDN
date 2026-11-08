@@ -50,3 +50,37 @@ verifiable increment is not "build a tracer" but:
 
 This order is what keeps the block measurable: each step has an observable that can fail, and step 2's
 negative control is the difference between "we read a register" and "we read the right register".
+
+---
+
+## Measured later the same day (2026-11-08): steps 1 and 2 landed, step 3 re-scoped
+
+**Step 1 - done and CI-proven (`771b817`).** `Tracee::read_registers()` reads `PTRACE_GETREGSET` with
+`NT_PRSTATUS`; aarch64 takes the number from x8 and the result from x0, x86_64 from `orig_rax`/`rax`. Three
+platform facts cost a compile cycle each and are recorded in the code: nix 0.27 has no aarch64
+`ptrace::getregs`; libc does not export `NT_PRSTATUS` for this target; and Android's `libc::ptrace` takes
+`request: c_int` and is variadic while the Linux runner's takes `c_uint`, so the cast is `as _`.
+
+**Step 2 - done and CI-proven (`6977c6b`, `40c8cf6`).** The number reaches the handler table
+(`Tracee::handle_syscall_entry` now uses its `handler` argument instead of ignoring it), `SyscallHandler`
+gained `pub fn register`, and `tests/native_dispatch.rs` asserts both directions: a handler registered for
+`SYS_getpid` runs, and one registered for `SYS_getppid` does not while `syscall_info` still records
+`SYS_getpid` - which separates a broken dispatch from a broken read. `SyscallHandlerFn` requires
+`Send + Sync`, so the flag is an `Arc<AtomicBool>`.
+
+**Step 3 - re-scoped by measurement, not by plan.** `ProotEngine::run()` (lib.rs:173-184) installs the
+seccomp filter and calls `ptrace_ctrl.run_loop(...)` with **no spawn and no `TRACEME` child**, so it can
+never see a tracee. The code that builds a command line is `ProotEngine::start()` (:186 onward), and it
+spawns the **external** `proot` binary with `--kill-on-exit --link2symlink --sysvipc -L
+--change-id=0:0:0 --kernel-release ... --rootfs=.`. So production runs external proot and the internal
+tracer has no child of its own. "Run containers without the proot binary" is therefore a subsystem with
+three parts: a spawn path (`fork` -> `PTRACE_TRACEME` -> `execve`), emulation of those six argv features,
+and `execve` interception with path translation - the last being the hardest.
+
+**Next increment (`p4-3a`), smallest honest unit.** Add a spawn+trace entry point that forks, `TRACEME`s and
+execs a command **as given**, drives the loop over it, and returns the exit status together with the
+syscall numbers it saw but could not translate - refusing **by name** instead of pretending to have run the
+workload. Prove it with `/bin/true` (exit 0, at least one syscall observed) and a control (`/nonexistent`,
+which must report the exec failure rather than a zero exit). Do **not** swap the production callers
+(`native/image.rs:130-131`, `proot-core/src/lib.rs:194-195` and `:336-337`) before parity is measured on the
+same workload: swapping early turns `podnext run` into a regression.
