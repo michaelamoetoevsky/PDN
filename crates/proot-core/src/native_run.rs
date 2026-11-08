@@ -890,6 +890,27 @@ fn parent_loop(
                 };
                 let is_execve = number == nix::libc::SYS_execve as i64;
 
+                // IDENTITY MAPPING, exit side (2026-11-09, p7 gap 3). podnext tells the operator,
+                // for BOTH engines, "the guest runs as root (uid 0): PRoot maps every guest id to the
+                // single host uid via `--change-id=0:0:0`, so there is no privilege separation"
+                // (podnext/src/commands/container.rs:247-271) and the runtime really does hard-code
+                // that flag for proot. The native path printed the same sentence while passing the
+                // HOST ids straight through - measured uid=0/euid=0 under proot against
+                // uid=10396/euid=10396 under native - i.e. it claimed a mapping it never performed.
+                //
+                // Rewriting the RESULT of the id-reporting syscalls makes the claim true: the guest
+                // sees 0, exactly as it does under proot. The rewrite happens at the EXIT stop, after
+                // the kernel has produced the host value, so no syscall is skipped and no privilege is
+                // granted - this is a report of identity and nothing else. Named gaps, not silent ones:
+                // getresuid/getresgid/getgroups write through a POINTER into guest memory and are not
+                // covered here, and `st_uid`/`st_gid` inside stat() results are not rewritten either.
+                if !slots[idx].at_entry && id_reporting(number) {
+                    if let Err(e) = override_id_result(pid) {
+                        let _ = ptrace::kill(pid);
+                        return Err(e);
+                    }
+                }
+
                 if slots[idx].at_entry {
                     report.entries += 1;
                     // The child writes its self-report after its opening `read()` returns, i.e.
@@ -1189,6 +1210,42 @@ const NT_PRSTATUS: nix::libc::c_uint = 1;
 
 /// Read the tracee's register file through `PTRACE_GETREGSET`/`NT_PRSTATUS`. The struct is
 /// per-architecture (`tracee.rs` reads the same one); only the two supported targets are used.
+/// Syscalls whose entire result IS the caller's identity (p7 gap 3, 2026-11-09). Only these four can
+/// be mapped by rewriting the return register; the `getres*`/`getgroups` family writes through a guest
+/// pointer and is deliberately left out rather than silently half-done.
+fn id_reporting(number: i64) -> bool {
+    number == nix::libc::SYS_getuid as i64
+        || number == nix::libc::SYS_geteuid as i64
+        || number == nix::libc::SYS_getgid as i64
+        || number == nix::libc::SYS_getegid as i64
+}
+
+/// Make an id-reporting syscall answer 0, the fake root proot presents via `--change-id=0:0:0`.
+/// `PDN_NATIVE_NO_ID_MAP=1` disables it; that is the negative control the tests use to prove the
+/// rewrite - and not something else - is what changes the guest's answer.
+fn override_id_result(pid: Pid) -> Result<()> {
+    if std::env::var_os("PDN_NATIVE_NO_ID_MAP").is_some() {
+        return Ok(());
+    }
+    let mut regs = get_regs(pid)?;
+    set_id_result(&mut regs);
+    set_regs(pid, regs)
+}
+
+/// The result register: x0 on aarch64, rax on x86_64 (the two hosts this crate is built for).
+#[cfg(target_arch = "aarch64")]
+fn set_id_result(regs: &mut nix::libc::user_regs_struct) {
+    regs.regs[0] = 0;
+}
+
+#[cfg(target_arch = "x86_64")]
+fn set_id_result(regs: &mut nix::libc::user_regs_struct) {
+    regs.rax = 0;
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+fn set_id_result(_regs: &mut nix::libc::user_regs_struct) {}
+
 fn get_regs(pid: Pid) -> Result<nix::libc::user_regs_struct> {
     let mut raw: nix::libc::user_regs_struct = unsafe { std::mem::zeroed() };
     let mut iov = nix::libc::iovec {

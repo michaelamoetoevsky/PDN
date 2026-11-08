@@ -84,6 +84,8 @@ int main(int argc, char **argv) {
         else { printf("sysopen=err%d\n", errno); }
     }
     printf("uid=%d\n", (int)getuid());
+    printf("gid=%d\n", (int)getgid());
+    printf("egid=%d\n", (int)getegid());
     printf("euid=%d\n", (int)geteuid());
     /* A RELATIVE path: where it lands is the starting directory's effect, without needing
      * getcwd() virtualisation - proot shows the guest "/" while the native engine shows the

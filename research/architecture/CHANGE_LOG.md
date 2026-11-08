@@ -1541,4 +1541,50 @@ of lines - `uid=0`/`euid=0` under proot against `uid=10396`/`euid=10396` under n
 So the parity inventory is down to ONE real gap (identity mapping: proot fakes `uid`/`gid` 0 via
 `--change-id=0:0:0`, the native engine passes the host ids through), plus the documented engine-model
 differences above, plus the items still never measured: hostname, kernel release, bind readonly semantics,
-namespaces/clone flags, and signal/ptrace behaviour inside the guest.
+namespaces/clone flags, and signal/ptrace behaviour inside the guest.## p7 gap 3 closed: the native engine now performs the identity mapping it was already claiming (2026-11-09 06:20 WIB)
+
+**Finding (a false claim, not only a parity gap).** `podnext` tells the operator, for BOTH engines,
+"the guest runs as root (uid 0): PRoot maps every guest id to the single host uid via
+`--change-id=0:0:0`, so there is no privilege separation"
+(`crates/podnext/src/commands/container.rs:247-271`), and `proot-core`'s runtime really does hard-code
+that flag for the proot argv. The native path printed the same sentence and passed the HOST ids straight
+through - measured `uid=0`/`euid=0` under proot against `uid=10396`/`euid=10396` under native. The
+engine's own documentation was therefore describing behaviour the engine did not have.
+
+**Action.** `crates/proot-core/src/native_run.rs`:
+- `id_reporting(number)` (`:1216`) names the four syscalls whose entire result is the caller's identity:
+  `getuid`, `geteuid`, `getgid`, `getegid`.
+- `override_id_result(pid)` (`:1226`) rewrites that result to 0, using `set_id_result` (`:1237` aarch64
+  `x0`, `:1242` x86_64 `rax`, `:1247` no-op elsewhere) through the existing `get_regs`/`set_regs`.
+- the hook at `:907` runs on EXIT stops only (`!slots[idx].at_entry`), after the kernel produced the
+  host value: no syscall is skipped and no privilege is granted - this changes a report, nothing else.
+- `PDN_NATIVE_NO_ID_MAP=1` disables it. That exists so the mechanism has an executed negative control.
+
+**Named gaps, so they are not mistaken for silence:** `getresuid`/`getresgid`/`getgroups` write through a
+pointer into guest memory and are NOT mapped; `st_uid`/`st_gid` inside `stat()` results are NOT rewritten
+either. Both are recorded here and in the code comment rather than left to be discovered.
+
+**Verification, all executed:**
+1. `scripts/engine_differential.py` default run (the guest now also prints `gid`/`egid`), 3 runs per arm:
+   `rc=0`, verbatim verdict `DIFFERENTIAL: EQUAL on exit, stdout and file effects for this guest.` with
+   `uid/euid/gid/egid` all reading `same proot='0' native='0'`.
+2. Negative control, same harness with `PDN_NATIVE_NO_ID_MAP=1`: `rc=1`, all four fields `DIFFERS
+   proot='0' native='10396'` - the rewrite, not something else, is what changes the guest's answer.
+3. `cargo test -p proot-core --test native_exec_translation the_guest_sees_the_mapped_root_identity`
+   (`tests/native_exec_translation.rs:1086`): `1 passed`, `[idmap] exit=0`.
+4. The same test with the mapping disabled: `test result: FAILED`, `exit_code=101`,
+   `[idmap] exit=0 ids=uid=10396 euid=10396 gid=10396 egid=10396`, assertion quoting
+   `left: "uid=10396 ..." right: "uid=0 ..."`. A test that cannot go red proves nothing; this one does.
+
+**Where this leaves the parity inventory.** Every field the differential harness measures is now EQUAL:
+`exit`, `stdout*`, `marker`, `relmarker`, `argc`, `argv`, `envp`, `proc`, `devnull`, `sysstat`, and the
+four identity fields. The two documented engine-model differences remain deliberately informational (`cwd`
+virtualisation, `/sys` `open` emulation), and the never-measured items stay named: hostname, kernel
+release, readonly bind semantics, namespaces/clone, signals.
+
+**What must happen BEFORE the default flips.** The acceptance harness still reports the proot path as the
+default, and flipping today would be wrong for a reason unrelated to parity: the native guest's environment
+is EMPTY (`envp` is a declared gap in `native_run.rs`), so a real container would start without `PATH` or
+`HOME` even though the differential's toy guest - which reads no environment - cannot see the difference.
+The environment is therefore the next increment, and the differential harness will grow an `env` field so
+that claim is measured rather than assumed.

@@ -1071,3 +1071,67 @@ int main(int argc, char **argv) {
         "the refusal must name the byte limit; got {msg}"
     );
 }
+
+/// p7 gap 3 (2026-11-09). podnext prints, for BOTH engines, "the guest runs as root (uid 0): PRoot
+/// maps every guest id to the single host uid via `--change-id=0:0:0`" - and the native path used to
+/// print that sentence while handing the HOST ids straight through (measured uid=0 under proot
+/// against uid=10396 under native). This locks the claim to the behaviour, and it is the reason
+/// `id_reporting`/`override_id_result` exist in the engine.
+///
+/// The executed negative control for this mechanism is NOT in this test, because flipping an
+/// environment variable in-process would race the sibling tests: it is `PDN_NATIVE_NO_ID_MAP=1`
+/// against `scripts/engine_differential.py`, measured as `uid=0/10396 uid differs` with rc=1 while the
+/// default run is `EQUAL` with rc=0. Both runs are quoted in research/architecture/CHANGE_LOG.md.
+#[test]
+fn the_guest_sees_the_mapped_root_identity() {
+    let root = fixture_root("idmap");
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-idmap");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    compile_c(
+        &rootfs.join("bin").join("idmap"),
+        r#"#include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
+int main(void) {
+    char buf[128];
+    int n = snprintf(buf, sizeof buf, "uid=%d euid=%d gid=%d egid=%d\n",
+                     (int)getuid(), (int)geteuid(), (int)getgid(), (int)getegid());
+    int fd = open("/probe/ids", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 61; }
+    if (write(fd, buf, (unsigned)n) < 0) { return 62; }
+    close(fd);
+    return 0;
+}
+"#,
+    );
+
+    let argv = vec!["/bin/idmap".to_string()];
+    let mut binds = vec![("/probe".to_string(), probe.clone())];
+    binds.extend(host_runtime_binds());
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+    };
+
+    let run = run_native(&argv, &plan, false).expect("traced run of the identity fixture");
+    let report = std::fs::read_to_string(probe.join("ids"))
+        .unwrap_or_else(|e| panic!("the guest did not report its ids: {e}"));
+    eprintln!("[idmap] exit={} ids={}", run.exit_code, report.trim());
+
+    assert_eq!(
+        run.exit_code, 0,
+        "the fixture must run to completion (61/62 mean it could not write its report)"
+    );
+    assert_eq!(
+        report.trim(),
+        "uid=0 euid=0 gid=0 egid=0",
+        "the guest must see the mapped root identity that the note promised it for every engine"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
