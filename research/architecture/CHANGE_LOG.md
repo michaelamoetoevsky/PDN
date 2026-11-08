@@ -578,6 +578,48 @@ true of those three symbols; `ptrace` itself is used, see `NATIVE_ENGINE_STATE.m
 in any binary, and `syscall.rs`'s handlers still have no dispatch wired to the number this now reads.
 Steps 2-3 of the p4 plan are untouched.
 
+---
+
+## Incident: master went CI-red at 2999c9e, and the cause was p4 step 1 (fixed in 163a242)
+
+**What happened.** Pushing the p4 step 1 change turned five checks red on `2999c9e`: `Rust Host Build`,
+`Relocated HOME and prefix`, `PRoot Distro Integration Test` (all in run 42449343351), `Run Benchmarks`
+(run 42449343311) and `Issue ledger` (run 42449343320). The local gate for the same tree was **green**
+(`p4-gate1`, exit 0, 371 s) and `cargo fmt --all -- --check` was clean, which is exactly the gap the
+verification lesson names: a local gate says nothing about the targets and environments it does not run.
+
+**Cause, quoted from CI's own log.** `Run Benchmarks`, step "Verify benchmark targets exist and compile":
+`error[E0308]: mismatched types --> crates/proot-core/src/tracee.rs:149:17`, on
+`nix::libc::PTRACE_GETREGSET as nix::libc::c_int`. Android's libc declares `ptrace` variadic with
+`request: c_int`; the Linux x86_64 runner's libc takes `request: c_uint` and is not variadic. One line
+compiled on the device and broke every runner job - the other three build-failing checks build the same
+crate. `Issue ledger` failed for the same reason and shows it as per-predicate lines: `#25 the benchmark
+targets compile (the false-green defect)` FAIL, `#18 the sparse-copy unit test`, `#16 the deep-recursion
+test`, `#31 the abnormal-restart test`, `#41 both regression tests`, `#60 the guard is unit tested` - every
+predicate that runs tests - and `#42 every documented command and option exists in the real CLI`, which
+builds the binary. A workspace that does not compile fails all of them.
+
+**Diagnostic notes worth keeping.** The check-run annotations were empty apart from "Process completed with
+exit code 101/1"; `gh run view <id> --log-failed` answered "run ... is still in progress; logs will be
+available when it is complete", and the two-stage fetch (read the `Location` from
+`gh api -i .../actions/jobs/<id>/logs`, then `curl` it with no auth header) returned no Location at all,
+because an unfinished job has no log blob. The ledger's own failure text is a `grep FAIL` over its step
+output, not the check summary.
+
+**Fix (2026-11-08, 163a242).** `as _` instead of a concrete integer type, so the parameter's own type
+decides, with a comment recording the asymmetry and the run that measured it.
+
+**Verification status.** Local: `cargo fmt --all -- --check` clean and
+`cargo test -p proot-core --test native_syscall_read` -> 1 passed. CI: 13 checks for `163a242`, all
+pending except one, **zero failures** at the time of writing - so the fix is **not confirmed** yet, and
+this entry will be wrong if those checks do not go green. The previous run for `2999c9e` is now complete
+and its log matches what is quoted above.
+
+**Rule this incident adds.** Every commit that touches `crates/**` must have its CI verdict read, not only
+its local gate: the device builds one libc and the runner another, and this is the second time in this
+session that a green local result hid a red reality.
+
+
 
 
 
