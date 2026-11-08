@@ -72,10 +72,10 @@ impl Tracee {
 
     pub fn handle_syscall_entry(
         &mut self,
-        _handler: &mut crate::syscall::SyscallHandler,
+        handler: &mut crate::syscall::SyscallHandler,
         translator: &mut crate::path::PathTranslator,
-        _tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
-        _vfs_mgr: &mut crate::vfs::VfsManager,
+        tracee_mgr: &mut crate::tracee_state::TraceeStateManager,
+        vfs_mgr: &mut crate::vfs::VfsManager,
     ) -> Result<()> {
         let syscall = self.read_syscall()?;
         self.syscall_info = Some(SyscallInfo {
@@ -88,6 +88,23 @@ impl Tracee {
             &mut self.syscall_info.as_mut().unwrap().args,
             &self.path_info,
         )?;
+
+        // Hand the number that `read_syscall` really read to the handler table. Measured
+        // 2026-11-08 (p4 step 2): this parameter used to be `_handler` - deliberately
+        // unused - so `syscall.rs`'s 150 registrations could be selected by nothing at all,
+        // even after step 1 made the number real. The table is a `HashMap<i64, closure>`
+        // keyed by the syscall number, and an unregistered number passes through without a
+        // handler, which is right for a proot-style engine but is now an explicit choice
+        // rather than an accident of the wiring.
+        if let Some(info) = self.syscall_info.as_mut() {
+            handler.handle_entry(
+                &mut self.state,
+                info,
+                &mut self.path_info,
+                tracee_mgr,
+                vfs_mgr,
+            )?;
+        }
 
         Ok(())
     }
