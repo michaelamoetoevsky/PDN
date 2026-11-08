@@ -195,4 +195,41 @@ safety guard can drift, so folding it onto `pdn_fixture_guard` is a follow-up. T
 (`scripts/casino_chaos_report.json` is a tracked file) means a run rewrites a tracked artifact; that was
 reverted after the test run and is a harness-hygiene item outside these findings.
 
+---
+
+## WITHDRAWN, 8 Nov 2026 — the `kill` change in commit `6a9cd2a` is reverted, and ASEC3-PROC2-01 is open again
+
+CI on `6a9cd2a` reported `Rust Host Build` failed with one test failing
+(job 128590332193; the other 14 checks were green, including PRoot Distro Integration Test and Issue ledger):
+
+```
+test a_guest_ignoring_term_is_escalated_term_quit_kill ... FAILED
+thread 'a_guest_ignoring_term_is_escalated_term_quit_kill' panicked at crates/podnext/tests/image_config_env.rs:497:5:
+assertion `left == right` failed: kill failed: Error: session PID 7049 (pdn-kill-escalation) survived the
+full ladder (SIGTERM, SIGQUIT, SIGKILL) and still holds its session descriptor, ...
+```
+
+That test states a deliberate contract: it starts `trap '' TERM QUIT; exec sleep 60`, registers that pid as a
+live session, and asserts that a completed ladder prints `Container 'x' killed.` with exit 0. Its
+`live_session()` helper **holds the session file's lock itself**, which is exactly what `active_sessions()`
+probes, so the guard added in `6a9cd2a` saw a live session no matter what the ladder did. The CI log shows
+the same shape in the wild: `Terminate orphan process: pid (4638) (sleep)`.
+
+What this proves: the registry's descriptor rule answers "is anything still holding the session record",
+which is **not** the same question as "is the guest still running". The change conflated the two, so it is
+withdrawn rather than patched in place. `crates/podnext/src/commands/container.rs` is restored to its
+`18523ea` state in the commit that carries this note.
+
+Why the local gate missed it: no check in `scripts/local_gate.sh` runs the `image_config_env` target, so only
+CI executed it. The target is runnable here - after the revert,
+`cargo test -p podnext --test image_config_env -- a_guest_ignoring_term_is_escalated_term_quit_kill` reports
+`1 passed; 0 failed` (heavy label `killtest`, 36 s) - which is how the withdrawal was verified rather than
+assumed.
+
+The in-vitro reproduction recorded above still stands: the pre-fix binary printed `Container 'fixt' killed.`
+with rc=0 while a descriptor holder was alive. What does not stand is that remedy. ASEC3-PROC2-01 returns to
+open with sharper evidence: the remedy has to distinguish the guest from other descriptor holders (the
+guest's own pid, or its process group), because refusing on any holder breaks the ladder's contract.
+
+
 
