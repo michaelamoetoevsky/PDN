@@ -220,11 +220,14 @@ which is **not** the same question as "is the guest still running". The change c
 withdrawn rather than patched in place. `crates/podnext/src/commands/container.rs` is restored to its
 `18523ea` state in the commit that carries this note.
 
-Why the local gate missed it: no check in `scripts/local_gate.sh` runs the `image_config_env` target, so only
-CI executed it. The target is runnable here - after the revert,
-`cargo test -p podnext --test image_config_env -- a_guest_ignoring_term_is_escalated_term_quit_kill` reports
-`1 passed; 0 failed` (heavy label `killtest`, 36 s) - which is how the withdrawal was verified rather than
-assumed.
+Why the local gate missed it: the gate deliberately excludes test suites, and says so in its own header -
+"No builds or test suites. Those belong in CI (and on this device they need the memory guard), so a local
+gate that ran them would be skipped rather than respected" (`scripts/local_gate.sh:14-15`). So the remedy is
+not to widen the gate: it is to run the target that owns the changed code before claiming the fix. For this
+change that is
+`cargo test -p podnext --test image_config_env -- a_guest_ignoring_term_is_escalated_term_quit_kill`, which
+after the revert reports `1 passed; 0 failed` (heavy label `killtest`, 36 s). A gate widened against its own
+stated rationale is a decision, not a cleanup, and it is not taken here.
 
 The in-vitro reproduction recorded above still stands: the pre-fix binary printed `Container 'fixt' killed.`
 with rc=0 while a descriptor holder was alive. What does not stand is that remedy. ASEC3-PROC2-01 returns to
