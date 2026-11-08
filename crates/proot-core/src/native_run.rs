@@ -329,7 +329,13 @@ fn child_main(page: *mut u8, guest_path: &str, argv: &[String], pipe_r: nix::lib
             if n >= 0 {
                 break;
             }
-            if *nix::libc::__errno() != nix::libc::EINTR {
+            // `std::io::Error::last_os_error()` rather than `*libc::__errno()`. Measured on run
+            // 42472894579 (PDN 65b2b81): every CI job that builds the workspace failed within 90 s
+            // with `error[E0425]: cannot find function __errno in crate nix::libc` at this line - the
+            // libc crate declares `__errno` for android/bsd/newlib/nuttx but not for linux-gnu, where
+            // the accessor is `__errno_location`. The device compiled and the runner did not: the
+            // same device-vs-runner divergence as the `as c_int` incident. std reads errno on both.
+            if std::io::Error::last_os_error().raw_os_error() != Some(nix::libc::EINTR) {
                 nix::libc::_exit(126);
             }
         }
