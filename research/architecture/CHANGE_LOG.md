@@ -515,6 +515,37 @@ message, and restoring it returns `rc=0` with four `OK`s. A detail stated rather
 refuses, the two checksums written before the missing asset are left on disk; harmless because the step
 exits non-zero and nothing is published, but a reader should not have to infer that.
 
+---
+
+## TC-PARITY-01 / issue #76 - re-measured, and narrower than it was written
+
+**What was claimed.** That `install` does not write the `env`/`working_dir` that
+`apply_image_runtime_config` reads (`native/meta.rs:99-110`), with the OCI configuration being dropped.
+
+**What measurement shows (2026-11-08).**
+- `build` **does** write them: `commands/build.rs:342-344` emits `"cmd"`, `"env"` (as an object) and
+  `"working_dir"` into the container's `metadata.json`. So the reader's branches are **not** dead code, and
+  a claim I briefly wrote in this session ("nothing in the tree writes the `env` key") was **wrong**.
+- `install` does **not**: the OCI/registry path calls `save_container_metadata` (`native/image.rs:555`),
+  whose six keys are `name`, `image`, `tag`, `rootfs`, `created_at`, `status` (`:960-983`) - no `env`, no
+  working dir. That half of #76 stands.
+- The owner test target agrees with that split: `cargo test -p podnext --test image_config_env` ->
+  **6 passed, 0 failed**, including `the_image_config_is_persisted_by_a_build` and
+  `a_login_delivers_the_images_env_to_the_guest` - both about **build**.
+
+**Why the wrong claim almost shipped, and the rule it re-confirms.** The empty result came from
+`git grep -n '"env"\|"working_dir"\|"cmd"'`: `git grep` does not treat `\|` as alternation the way GNU grep
+does, so the pattern was searched literally and matched nothing. This is the **second** time in one day
+(the other was `git grep -n 'dpkg -i\|dpkg --install'` returning nothing while `install.sh:87` contains that
+text). Use `git grep -nE 'a|b'` or separate invocations, and treat an empty result as a question about the
+lookup before it becomes a finding about the code.
+
+**Next measurement, not a guess.** Whether the `install` path even fetches the image configuration (a
+registry pull may only fetch a layer plus a manifest), which decides whether propagating `env`/`working_dir`
+into the metadata is a small wiring change or a feature. That question is what the remaining half of #76
+now rests on.
+
+
 
 
 
