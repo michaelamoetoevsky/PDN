@@ -20,6 +20,41 @@ REPO="michaelamoetoevsky/PDN"
 INSTALL_DIR="${HOME}/.local/bin"
 RELEASE_URL="https://github.com/${REPO}/releases/latest"
 
+# Verify a download against the checksum the release publishes beside it.
+#
+# A mismatch always refuses, with no override. A missing checksum refuses too, unless the operator
+# sets PDN_ALLOW_UNVERIFIED=1 - which prints that it is installing unverified, so the choice is
+# visible rather than silent. Before this existed the installer piped whatever the URL served into
+# dpkg, with nothing to check it against (ASEC3-SUPPLY-01 / TC-SUPPLY-01, issue #74); the release
+# publishes <asset>.sha256 for each asset as of .github/workflows/release.yml.
+verify_download() {
+    _file=$1
+    _url=$2
+    _sum="$_file.sha256"
+    if ! curl -fsSL -o "$_sum" "$_url.sha256" 2>/dev/null; then
+        if [ "${PDN_ALLOW_UNVERIFIED:-}" = "1" ]; then
+            echo -e "${YELLOW}No checksum published for $(basename "$_url"); PDN_ALLOW_UNVERIFIED=1 is set, installing UNVERIFIED${NC}"
+            return 0
+        fi
+        echo -e "${RED}No checksum published for $(basename "$_url"): refusing to install an unverified download${NC}"
+        echo -e "${YELLOW}Releases publish <asset>.sha256 beside every asset. To install anyway, set PDN_ALLOW_UNVERIFIED=1${NC}"
+        rm -f "$_sum"
+        return 1
+    fi
+    _expected=$(cut -d' ' -f1 < "$_sum")
+    _actual=$(sha256sum "$_file" | cut -d' ' -f1)
+    if [ "$_expected" != "$_actual" ]; then
+        echo -e "${RED}Checksum mismatch for $(basename "$_url")${NC}"
+        echo -e "${YELLOW}  expected: $_expected${NC}"
+        echo -e "${YELLOW}  actual:   $_actual${NC}"
+        rm -f "$_sum"
+        return 1
+    fi
+    rm -f "$_sum"
+    echo -e "${GREEN}Checksum verified: $(basename "$_url")${NC}"
+    return 0
+}
+
 # Detect architecture
 ARCH=$(uname -m)
 case $ARCH in
@@ -43,7 +78,7 @@ fi
 
 # Check dependencies
 echo -e "${BLUE}Checking dependencies...${NC}"
-for cmd in curl tar dpkg; do
+for cmd in curl tar dpkg sha256sum; do
     if ! command -v $cmd &> /dev/null; then
         echo -e "${RED}Missing dependency: $cmd${NC}"
         echo -e "${YELLOW}Install with: pkg install $cmd${NC}"
@@ -83,6 +118,10 @@ TEMP_DEB="$TMPDIR/pdn_${LATEST_VERSION#v}_${TARGET}.deb"
 
 if curl -fsSL -o "$TEMP_DEB" "$DEB_URL" 2>/dev/null; then
     echo -e "${GREEN}Downloaded .deb package${NC}"
+    if ! verify_download "$TEMP_DEB" "$DEB_URL"; then
+        rm -f "$TEMP_DEB"
+        exit 1
+    fi
     echo -e "${BLUE}Installing via dpkg...${NC}"
     dpkg -i "$TEMP_DEB" 2>/dev/null || {
         echo -e "${YELLOW}Fixing dependencies...${NC}"
@@ -98,6 +137,10 @@ else
     TEMP_BIN="$TMPDIR/podnext-${TARGET}"
     
     if curl -fsSL -o "$TEMP_BIN" "$BIN_URL" 2>/dev/null; then
+        if ! verify_download "$TEMP_BIN" "$BIN_URL"; then
+            rm -f "$TEMP_BIN"
+            exit 1
+        fi
         chmod +x "$TEMP_BIN"
         mv "$TEMP_BIN" "$INSTALL_DIR/podnext"
         
@@ -105,6 +148,10 @@ else
         for BIN in podnext-daemon pn-gateway; do
             BIN_URL="https://github.com/${REPO}/releases/download/${LATEST_VERSION}/${BIN}-${TARGET}"
             if curl -fsSL -o "$TMPDIR/${BIN}-${TARGET}" "$BIN_URL" 2>/dev/null; then
+                if ! verify_download "$TMPDIR/${BIN}-${TARGET}" "$BIN_URL"; then
+                    rm -f "$TMPDIR/${BIN}-${TARGET}"
+                    exit 1
+                fi
                 chmod +x "$TMPDIR/${BIN}-${TARGET}"
                 mv "$TMPDIR/${BIN}-${TARGET}" "$INSTALL_DIR/${BIN}"
             fi

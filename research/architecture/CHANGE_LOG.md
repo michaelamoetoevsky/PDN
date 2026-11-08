@@ -472,6 +472,41 @@ checksum with no escape hatch; refuse when no checksum is published unless `PDN_
 explicitly (and print that it is installing unverified); verify locally by stubbing **only** `curl` in
 `PATH`, never by blanking `PATH`, which would also remove `sha256sum` and make every case look the same.
 
+---
+
+## SUPPLY-10 / issue #74 - half two: the installers verify their downloads
+
+*(Seam note: the paragraph beginning "**Verification.** The workflow's own `run:` block" further down
+closes the **half one** entry above, not this one. This section was inserted before it by a later edit; the
+order of the file is misleading here and this note marks it rather than leaving a reader to guess.)*
+
+**Change (2026-11-08).** Both installers now carry a `verify_download` helper and call it at every download
+site before anything is installed or executed: `install.sh` at the `.deb` download, the `podnext` binary
+and the `podnext-daemon`/`pn-gateway` loop; `install-short.sh` at the `.deb` and the binary loop. A
+mismatch always refuses with no override; a missing checksum refuses unless `PDN_ALLOW_UNVERIFIED=1` is
+set, in which case it prints that it is installing unverified. `sha256sum` joins the dependency check in
+`install.sh` so a host without it fails early and by name. Two other defects found while reading the same
+files: `install-short.sh` hardcoded `/tmp` for the `.deb` (`:28`), which does not exist for a Termux app
+uid, and both scripts left the `.sha256` file behind on the refusal paths.
+
+**Verification: a fixture harness, one stub.** `curl` is the only stubbed binary; `HOME` and `TMPDIR`
+point inside the fixture, so no real install target is touched. Eight cases: positive, tampered checksum
+with no override, missing checksum with no override, and missing checksum with `PDN_ALLOW_UNVERIFIED=1`,
+for each installer. Measured: positive `rc=0` with `Checksum verified: ...` then `Installing via dpkg...`
+and `Installation complete!`; tampered `rc=1` with `hecksum mismatch for ...` and **dpkg never called**;
+missing `rc=1` with `no checksum published for ...: refusing to install an unverified download`; override
+`rc=0` with `installing UNVERIFIED` (and `dpkg` called, which is the point of the override). Both scripts
+pass `bash -n`.
+
+**Five harness bugs of my own, because a control that fails for the wrong reason proves nothing.** Each
+looked like "the change is broken": a stub with `#!/bin/bash`, which does not exist on this Android host
+(bash is at `$PREFIX/bin/bash`); a stub that wrote to `"$out"` when `install.sh` calls `curl` **without**
+`-o` and reads the pipe; `shift` before reading `$1` for the script path; `-` as the "no env vars"
+sentinel, which made `env` try to execute a command named `-`; and grep patterns that missed the message
+they were looking for (`hecksum` vs `Checksum`, `no checksum` vs `No checksum`), so `rc` alone carried the
+verdict. The harness lives at `$PREFIX/tmp/instfix/harness2.sh` and is scratch, not a repo artifact.
+
+
 **Verification.** The workflow's own `run:` block was extracted from the YAML and executed with `bash` in a
 fixture holding four fake assets: `rc=0` and all four `sha256sum -c` report `OK`. Negative control, and it
 had to be corrected once: deleting only the combined copy proved nothing (`rc=0`) because the step re-copies

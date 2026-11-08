@@ -8,6 +8,43 @@ set -e
 REPO="michaelamoetoevsky/PDN"
 INSTALL_DIR="${HOME}/.local/bin"
 
+# Writable temp dir: $TMPDIR, else $PREFIX/tmp on Termux, else /tmp. This script used to hardcode
+# /tmp, which does not exist for a Termux app uid, so the .deb download always failed there
+# (termux-tmpdir-hygiene); the fallback matches install.sh.
+: "${TMPDIR:=${PREFIX:+$PREFIX/tmp}}"
+: "${TMPDIR:=/tmp}"
+
+# Verify a download against the checksum the release publishes beside it: a mismatch always refuses,
+# and a missing checksum refuses unless the operator sets PDN_ALLOW_UNVERIFIED=1 (which says so).
+# Before this, this script downloaded whatever the URL served and ran it (ASEC3-SUPPLY-01, issue #74).
+verify_download() {
+    _file=$1
+    _url=$2
+    _sum="$_file.sha256"
+    if ! curl -fsSL -o "$_sum" "$_url.sha256" 2>/dev/null; then
+        if [ "${PDN_ALLOW_UNVERIFIED:-}" = "1" ]; then
+            echo "No checksum for $(basename "$_url"); PDN_ALLOW_UNVERIFIED=1: installing UNVERIFIED"
+            return 0
+        fi
+        echo "ERROR: no checksum published for $(basename "$_url"); refusing to install an unverified download"
+        echo "       Releases publish <asset>.sha256 beside every asset. To install anyway: PDN_ALLOW_UNVERIFIED=1"
+        rm -f "$_sum"
+        return 1
+    fi
+    _expected=$(cut -d' ' -f1 < "$_sum")
+    _actual=$(sha256sum "$_file" | cut -d' ' -f1)
+    if [ "$_expected" != "$_actual" ]; then
+        echo "ERROR: checksum mismatch for $(basename "$_url")"
+        echo "       expected: $_expected"
+        echo "       actual:   $_actual"
+        rm -f "$_sum"
+        return 1
+    fi
+    rm -f "$_sum"
+    echo "Checksum verified: $(basename "$_url")"
+    return 0
+}
+
 # Detect architecture
 ARCH=$(uname -m)
 case $ARCH in
@@ -25,16 +62,25 @@ VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | gr
 
 # Try .deb first
 DEB_URL="https://github.com/${REPO}/releases/download/${VERSION}/pdn_${VERSION#v}_${TARGET}.deb"
-TEMP_DEB="/tmp/pdn_${VERSION#v}_${TARGET}.deb"
+TEMP_DEB="$TMPDIR/pdn_${VERSION#v}_${TARGET}.deb"
 
 if curl -fsSL -o "$TEMP_DEB" "$DEB_URL" 2>/dev/null; then
+    verify_download "$TEMP_DEB" "$DEB_URL" || { rm -f "$TEMP_DEB"; exit 1; }
     dpkg -i "$TEMP_DEB" 2>/dev/null || apt install -f -y
     rm -f "$TEMP_DEB"
 else
     # Fallback to binary
     mkdir -p "$INSTALL_DIR"
     for BIN in podnext podnext-daemon pn-gateway; do
-        curl -fsSL -o "$INSTALL_DIR/$BIN" "https://github.com/${REPO}/releases/download/${VERSION}/${BIN}-${TARGET}" 2>/dev/null && chmod +x "$INSTALL_DIR/$BIN"
+        _url="https://github.com/${REPO}/releases/download/${VERSION}/${BIN}-${TARGET}"
+        if curl -fsSL -o "$INSTALL_DIR/$BIN" "$_url" 2>/dev/null; then
+            if verify_download "$INSTALL_DIR/$BIN" "$_url"; then
+                chmod +x "$INSTALL_DIR/$BIN"
+            else
+                rm -f "$INSTALL_DIR/$BIN"
+                exit 1
+            fi
+        fi
     done
     export PATH="$PATH:$INSTALL_DIR"
     echo "export PATH=\"\$PATH:$INSTALL_DIR\"" >> "$HOME/.bashrc"
