@@ -171,9 +171,26 @@ fn copy_to(src: &Path, dst: &Path) {
     );
 }
 
+/// Removes the fixture root when the test ends, INCLUDING when an assertion panics.
+///
+/// The test cleaned its root twice by hand - once before the fixture is built and once at the end -
+/// and the trailing call is skipped the moment an assertion panics, which is exactly when a fixture
+/// tree is most likely to survive. Measured 2026-11-09: `$PREFIX/tmp/p7-loader-<pid>-dyn` trees were
+/// present (each holding `rootfs/p7loader/lib/{libc.so,libdl.so,libpdnflag.so}` and `rootfs/bin/hello`),
+/// and a planted panic reproduced one. The guard makes teardown unconditional; the pre-clean stays,
+/// because it is what makes a re-run start from a clean tree.
+struct FixtureGuard(PathBuf);
+
+impl Drop for FixtureGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn a_dynamic_guest_runs_inside_the_rootfs() {
     let root = fixture_root("dyn");
+    let _guard = FixtureGuard(root.clone());
     let _ = std::fs::remove_dir_all(&root);
     let rootfs = root.join("rootfs");
     std::fs::create_dir_all(rootfs.join("bin")).expect("create rootfs");
@@ -400,5 +417,6 @@ fn a_dynamic_guest_runs_inside_the_rootfs() {
         "a path-taking syscall with no translator must still be named in the report"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    // Teardown is the guard's (`FixtureGuard`), not this line's: the manual call that used to live
+    // here ran only on the way out of a PASSING test.
 }

@@ -1267,4 +1267,32 @@ synthesised mounts (`/dev`, `/sys`, the Android bind set - only `/proc` was prob
 kernel-release overrides, bind readonly semantics, namespaces and clone flags, and signal/ptrace
 behaviour inside the guest. The list was corrected during the work: it first still named cwd, envp and
 uid as uncompared AFTER the guest started reporting them, which understates evidence the harness itself
-produces.
+produces.## p7 fixture leak: corrected mechanism, then fixed with a Drop guard (2026-11-09 03:05 WIB)
+
+**Correction of the record, not a quiet rewrite.** The section "p7 step 6 follow-up" above says
+`crates/proot-core/tests/native_dynamic_guest.rs` "cleans its root at line 177 *before* the test and never
+after". The first half is right and the second half is WRONG: a `remove_dir_all` also sat at the END of
+the test (line 403, now removed). Six fixture trees under `$PREFIX/tmp/p7-loader-*-dyn` were genuinely
+present, so the observation stood - the explanation attached to it did not.
+
+**The real defect, and it was reproduced on purpose.** The trailing call runs only when the test
+PASSES. A panicking assertion unwinds straight past it, which is exactly the situation in which a
+fixture tree should be cleaned up and is not. Three runs of the same test target, with the tree counted
+from disk after each (`ls -d $PREFIX/tmp/p7-loader-* | wc -l`):
+
+| state | result | surviving trees |
+|---|---|---|
+| planted `panic!` after the fixture is built, **no** guard | `FAILED. 0 passed; 1 failed`, exit 101 | **1** (`p7-loader-17518-dyn`) |
+| the same planted panic, **with** the guard | `FAILED. 0 passed; 1 failed`, exit 101 | **0** |
+| panic removed, guard kept | `ok. 1 passed; 0 failed; 0 ignored`, exit 0 | **0** |
+
+The middle row is the point: the guard does not suppress the failure, it only makes teardown
+unconditional. Fix: a `FixtureGuard(PathBuf)` whose `Drop` removes the root, constructed immediately
+after `fixture_root("dyn")`; the pre-clean at the top of the test is kept, because it is what makes a
+re-run start from a clean tree. The manual call at the end is deleted with a comment saying who owns
+teardown now - a manual cleanup beside a guard reads as if both are needed.
+
+**Why the leak mattered at all:** dashboard tests and every `cargo test -p proot-core` run used the same
+`$PREFIX/tmp` root, so an unbounded leak is a slow disk-eating defect on a device with 11 GB of RAM and a
+shared filesystem, and a stale `p7-loader-*` tree is indistinguishable from a live fixture to anyone
+debugging by hand.
