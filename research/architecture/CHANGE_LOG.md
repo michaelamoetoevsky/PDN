@@ -630,3 +630,48 @@ session that a green local result hid a red reality.
 
 
 
+
+## p4 step 3a: the engine owns its tracee, and the execve translation is blocked by a measurement
+
+**Finding (2026-11-08 14:58-15:20 WIB, master 19df16b).** "Run containers with podnext's own binary"
+cannot be reached by wiring: `ProotEngine::run()` (`crates/proot-core/src/lib.rs:173-184`) installs
+the seccomp filter and enters `run_loop` without ever spawning a child, so it can never see a tracee,
+while `ProotEngine::start()` (`:187-193`) spawns the EXTERNAL `proot` binary with six argv features
+(`--kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=.`). The first increment of
+that subsystem was therefore built as a new module rather than as a change to the existing engine.
+
+**Action.** New module `crates/proot-core/src/native_run.rs` (560 lines) registered at
+`crates/proot-core/src/lib.rs:24` (`pub mod native_run;`), with a new test target
+`crates/proot-core/tests/native_exec_translation.rs` (327 lines). The module forks a child with
+`PTRACE_TRACEME`, traces syscall stops with `PTRACE_SYSCALL`, and reports what it did NOT handle as a
+named refusal carrying a reason; `strict` mode stops the run at the first such syscall instead of
+implying parity. Which binary the kernel executed is read from `/proc/<pid>/exe` at the
+`PTRACE_EVENT_EXEC` stop rather than inferred from an exit code. The guest path string lives in a
+page mapped `MAP_SHARED` before the fork, and the CHILD publishes its own pointer to it in a header
+inside that page, because measurement showed the engine's address for that page is not the child's.
+
+**Measurements this increment produced (device, 2026-11-08).**
+- `cargo test -p proot-core --test native_exec_translation` -> `1 passed; 0 failed; 1 ignored`.
+- The proven run reports: `entries=1172` syscalls traced, `refusals=1172` (each with a name or a
+  number plus a reason), `child_view=Some(ChildView { path_ptr: 524454457344, path_len: 9 })`, and
+  `executed=Some("/data/data/com.termux/files/usr/bin/coreutils")` - a HOST path, which is exactly
+  the false positive the test file exists to catch.
+- `cargo test -p proot-core --lib` -> `13 passed; 0 failed`; `cargo fmt --all -- --check` clean;
+  `python3 scripts/check_non_goals.py` -> "no non-goal was crossed".
+
+**Blocker, kept runnable rather than described.** `the_engine_translates_execve_into_the_given_rootfs`
+is `#[ignore]`d with the measurement in its reason: the engine's first entry stop is `48`
+(`faccessat`), and the child's own `getpid` sync marker appears later, at position 9, carrying the
+child's pid (21375 for the run whose fixture directory was `p4-3a-run-21373`). So the trace begins
+AFTER an `execve` the engine never saw an entry stop for, and the path the engine prepared is not the
+path being executed: arm A therefore runs the host's `/bin/true` (Termux maps `/bin` to
+`$PREFIX/bin`, hence the `coreutils` path) and exits 0. The first `execve` the engine does observe, at
+position 7 of that run, carries a path pointer that is neither the child's published pointer nor
+page-aligned. Un-ignoring that test is the acceptance criterion for the fix; it must not be deleted or
+weakened.
+
+**Rule this increment adds.** An engine that owns a tracee must verify WHERE ITS TRACE BEGAN before it
+trusts any syscall it observed: a sync marker emitted by the child immediately before the syscall of
+interest must be the first entry stop, asserted as a gate. Without that assertion the engine can
+believe it intercepted an `execve` while the kernel was running a host binary, and the resulting report
+- refusal counts, "executed" evidence, strict failures - reads as a working capability.

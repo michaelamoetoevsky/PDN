@@ -21,6 +21,7 @@ pub mod cli;
 pub mod compat;
 pub mod extension;
 pub mod identity;
+pub mod native_run;
 pub mod path;
 pub mod ptrace;
 pub mod seccomp;
