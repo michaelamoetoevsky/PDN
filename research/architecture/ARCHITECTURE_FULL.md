@@ -494,7 +494,7 @@ section therefore separates what the system *does* from what it *says*.
 | a wake lock is acquired | `acquire_platform` logs `"Android: Would acquire … wake lock"` and returns `Ok(())`; `dumpsys power` shows no PDN lock | `pn-next/src/wake_lock/mod.rs:224-247` |
 | quotas limit memory and pids | a guest at `VmHWM 564672 kB` under a 512 MiB limit stays `running`; 40 children under `pids_limit=10` | finding `ASEC3-ORCH-002` |
 | the watchdog honours `-m 3 -w 60` | those flags do not exist (`exit 2`); the TOML `max_restarts` is what stops a loop | negative control `max_restarts=1` |
-| the dashboard reports CPU usage | `stats.cpu_percent = 25.0 + rand::random::<f64>() * 30.0` | `pn-next/src/web_dashboard/mod.rs:801` |
+| the dashboard reports CPU usage | `stats.cpu_percent = 25.0 + rand::random::<f64>() * 30.0`, plus a fixed `memory_total = 8 GiB` at 40% used and `disk_total = 100 GiB` at 30% used | `pn-next/src/web_dashboard/mod.rs:801-807` — **fixed 2026-11-08**: CPU comes from `/proc/stat` (delta between polls, since-boot on the first), memory from `/proc/meminfo`, disk from `statvfs` on the store root, and `SystemStats::measured` carries "not measured here" as a third status because Android denies `/proc/stat` to an app uid (measured: `answered here: memory=true disk=true cpu=false`) |
 | the dashboard is safe by default | `bind_addr: "0.0.0.0"`, `auth_enabled: false` | `pn-next/src/web_dashboard/mod.rs:50,55` |
 | images are signature-verified | `enabled: false` by default; `verify_image` returns early | `proot-distro-core/src/signature.rs:33,132` |
 | the hardened descriptor VFS protects path traversal | `DirFd` has no consumer; the only reference outside its module is a re-export | `proot-distro-core/src/lib.rs:63` |

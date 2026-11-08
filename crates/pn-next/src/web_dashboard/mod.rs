@@ -157,6 +157,14 @@ pub struct SystemStats {
     pub service_count: usize,
     pub running_services: usize,
     pub uptime_seconds: u64,
+    /// Whether the host-derived fields above were actually measured.
+    ///
+    /// A measured zero and "not measured on this host" are different statements, and only this
+    /// flag can tell them apart. It exists because this struct used to carry invented values:
+    /// `cpu_percent = 25.0 + rand::random::<f64>() * 30.0`, `memory_total = 8 GiB` and
+    /// `disk_total = 100 GiB` at a fixed 40% and 30% used - numbers a dashboard presents as fact.
+    #[serde(default)]
+    pub measured: bool,
 }
 
 /// Dashboard event for real-time updates
@@ -741,9 +749,18 @@ async fn get_metrics(State(state): State<Arc<DashboardState>>) -> impl IntoRespo
         "pdn_services_running {}\n",
         services.values().filter(|s| s.status == "running").count()
     ));
-    metrics.push_str(&format!("pdn_cpu_percent {:.2}\n", stats.cpu_percent));
-    metrics.push_str(&format!("pdn_memory_used {}\n", stats.memory_used));
-    metrics.push_str(&format!("pdn_memory_total {}\n", stats.memory_total));
+    // Only when the host answered. Omitting the samples is the honest answer for a host where they
+    // could not be read: emitting a zero would draw as "idle" on a graph. These three lines used to
+    // be invented outright (see `SystemStats::measured`).
+    if stats.measured {
+        metrics.push_str(&format!("pdn_cpu_percent {:.2}\n", stats.cpu_percent));
+        metrics.push_str(&format!("pdn_memory_used {}\n", stats.memory_used));
+        metrics.push_str(&format!("pdn_memory_total {}\n", stats.memory_total));
+    } else {
+        metrics.push_str(
+            "# pdn_cpu_percent, pdn_memory_used, pdn_memory_total: not measured on this host\n",
+        );
+    }
 
     Response::builder()
         .header("Content-Type", "text/plain; version=0.0.4")
@@ -773,10 +790,74 @@ async fn handle_websocket(mut socket: axum::extract::ws::WebSocket, state: Arc<D
     }
 }
 
+/// The last `/proc/stat` sample, so CPU used between two polls can be subtracted instead of invented.
+///
+/// The first call has no predecessor and reports the average since boot, which is a real measurement
+/// too. The defect this replaces was `25.0 + rand::random::<f64>() * 30.0`.
+static LAST_CPU_SAMPLE: std::sync::Mutex<Option<(u64, u64)>> = std::sync::Mutex::new(None);
+
+/// CPU utilisation as a percentage, or `None` when `/proc/stat` cannot be read on this host.
+fn read_cpu_percent() -> Option<f64> {
+    let contents = std::fs::read_to_string("/proc/stat").ok()?;
+    let fields: Vec<u64> = contents
+        .lines()
+        .next()?
+        .split_whitespace()
+        .skip(1)
+        .map(str::parse::<u64>)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    let idle = *fields.get(3)? + fields.get(4).copied().unwrap_or(0);
+    let total: u64 = fields.iter().sum();
+    if total == 0 {
+        return None;
+    }
+    let mut last = LAST_CPU_SAMPLE.lock().ok()?;
+    let percent = match *last {
+        Some((previous_total, previous_idle)) if total > previous_total => {
+            let delta_total = (total - previous_total) as f64;
+            let delta_idle = idle.saturating_sub(previous_idle) as f64;
+            (delta_total - delta_idle) / delta_total * 100.0
+        }
+        _ => (total - idle) as f64 / total as f64 * 100.0,
+    };
+    *last = Some((total, idle));
+    Some(percent.clamp(0.0, 100.0))
+}
+
+/// `(total, available)` memory in bytes from `/proc/meminfo`, or `None` when it is unreadable.
+fn read_memory_bytes() -> Option<(u64, u64)> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let read = |key: &str| {
+        contents
+            .lines()
+            .find(|line| line.starts_with(key))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u64>().ok())
+            .map(|kb| kb.saturating_mul(1024))
+    };
+    Some((read("MemTotal:")?, read("MemAvailable:")?))
+}
+
+/// `(total, available)` bytes of the filesystem holding `path`, or `None` when it cannot be asked.
+fn read_disk_bytes(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    let block = stat.f_frsize as u64;
+    Some((
+        (stat.f_blocks as u64).saturating_mul(block),
+        (stat.f_bavail as u64).saturating_mul(block),
+    ))
+}
+
 /// Background task to update system stats
 async fn update_system_stats(state: Arc<DashboardState>) {
-    // In a real implementation, this would collect actual system stats
-    // For now, we'll simulate
+    // The container and service counters come from the in-memory maps; the host readings
+    // (CPU, memory, disk) are taken below from /proc and statvfs.
 
     let mut stats = state.system_stats.write().await;
     stats.uptime_seconds = state.start_time.elapsed().as_secs();
@@ -797,14 +878,29 @@ async fn update_system_stats(state: Arc<DashboardState>) {
         .filter(|s| s.status == "running")
         .count();
 
-    // Simulate CPU/memory
-    stats.cpu_percent = 25.0 + (rand::random::<f64>() * 30.0);
-    stats.memory_total = 8 * 1024 * 1024 * 1024; // 8GB
-    stats.memory_used = (stats.memory_total as f64 * 0.4) as u64;
-    stats.memory_available = stats.memory_total - stats.memory_used;
-    stats.disk_total = 100 * 1024 * 1024 * 1024; // 100GB
-    stats.disk_used = (stats.disk_total as f64 * 0.3) as u64;
-    stats.disk_available = stats.disk_total - stats.disk_used;
+    // Read, do not decorate. This block used to report `25.0 + rand()*30.0` as CPU and a fixed
+    // 8 GiB / 100 GiB pair at 40% and 30% used, which a dashboard shows as fact. Each source is
+    // probed now, and `measured` records whether the host answered: a measured zero and "not
+    // measured here" are different statements, and only the flag tells them apart.
+    let cpu = read_cpu_percent();
+    let mem = read_memory_bytes();
+    let disk = read_disk_bytes(
+        &proot_distro_core::paths::resolve_home().unwrap_or_else(|_| std::path::PathBuf::from("/")),
+    );
+    if let Some(percent) = cpu {
+        stats.cpu_percent = percent;
+    }
+    if let Some((total, available)) = mem {
+        stats.memory_total = total;
+        stats.memory_available = available;
+        stats.memory_used = total.saturating_sub(available);
+    }
+    if let Some((total, available)) = disk {
+        stats.disk_total = total;
+        stats.disk_available = available;
+        stats.disk_used = total.saturating_sub(available);
+    }
+    stats.measured = cpu.is_some() && mem.is_some() && disk.is_some();
 }
 
 use chrono;
@@ -813,6 +909,82 @@ use rand;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The host readings must be real and self-consistent.
+    ///
+    /// This is the guard for the values these readers replaced: the dashboard reported
+    /// `25.0 + rand()*30.0` as CPU and a fixed 8 GiB / 100 GiB pair at 40% and 30% used, so any
+    /// number looked plausible. A real measurement has to satisfy relations a fabricated one need
+    /// not. Availability is NOT assumed: `/proc/meminfo` and `statvfs` answer for an app-uid process
+    /// on this platform, `/proc/stat` does not on Android (measured: DITOLAK), so CPU may be absent
+    /// here and the test prints which sources answered instead of demanding all three.
+    #[test]
+    fn host_readings_are_measured_and_consistent() {
+        let memory = read_memory_bytes();
+        let disk = read_disk_bytes(std::path::Path::new("/"));
+        let cpu = read_cpu_percent();
+        println!(
+            "answered here: memory={} disk={} cpu={}",
+            memory.is_some(),
+            disk.is_some(),
+            cpu.is_some()
+        );
+
+        let (memory_total, memory_available) = memory.expect("/proc/meminfo answers here");
+        assert!(
+            memory_total > 0,
+            "a host that answers reports a non-zero total"
+        );
+        assert!(
+            memory_available <= memory_total,
+            "available ({memory_available}) must not exceed total ({memory_total})"
+        );
+
+        let (disk_total, disk_available) = disk.expect("statvfs answers for / here");
+        assert!(disk_total > 0);
+        assert!(disk_available <= disk_total);
+
+        if let Some(percent) = cpu {
+            assert!((0.0..=100.0).contains(&percent), "out of range: {percent}");
+        }
+    }
+
+    /// The stats the dashboard serves must come from the host, not from a plausible constant.
+    ///
+    /// The replaced block wrote an 8 GiB total and a 100 GiB filesystem regardless of the machine,
+    /// and those constants satisfy any range check - which is why this compares the served numbers
+    /// with the host's own readings, using the same path production uses. Measured here: the host
+    /// reports 11.0 GiB of memory and a ~481 GB data partition, so the two old constants cannot pass.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dashboard_stats_come_from_the_host() {
+        let state = Arc::new(DashboardState::new());
+        update_system_stats(state.clone()).await;
+        let stats = state.system_stats.read().await.clone();
+
+        let (memory_total, _available) = read_memory_bytes().expect("/proc/meminfo answers here");
+        assert_eq!(
+            stats.memory_total, memory_total,
+            "the served memory total must be this host's total, not a constant"
+        );
+        let disk_path = proot_distro_core::paths::resolve_home()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        let (disk_total, _disk_available) =
+            read_disk_bytes(&disk_path).expect("statvfs answers for the store's filesystem here");
+        assert_eq!(
+            stats.disk_total, disk_total,
+            "the served disk total must be this filesystem's total, not a constant"
+        );
+        // `measured` is the third status: false is the honest answer where a source is denied
+        // (CPU on Android), and it must be true only when every source answered - so the assertion
+        // repeats the conjunction rather than testing the CPU arm alone.
+        assert_eq!(
+            stats.measured,
+            read_cpu_percent().is_some()
+                && read_memory_bytes().is_some()
+                && read_disk_bytes(&disk_path).is_some(),
+            "measured must be the conjunction of all three sources"
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_dashboard_config() {

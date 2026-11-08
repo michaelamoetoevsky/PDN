@@ -234,5 +234,52 @@ with rc=0 while a descriptor holder was alive. What does not stand is that remed
 open with sharper evidence: the remedy has to distinguish the guest from other descriptor holders (the
 guest's own pid, or its process group), because refusing on any holder breaks the ladder's contract.
 
+---
+
+## Metrics 010 / 011 — the dashboard served invented host numbers, not measurements
+
+**Found.** `update_system_stats` (`crates/pn-next/src/web_dashboard/mod.rs:800-807`) ended with
+
+```rust
+// Simulate CPU/memory
+stats.cpu_percent = 25.0 + (rand::random::<f64>() * 30.0);
+stats.memory_total = 8 * 1024 * 1024 * 1024; // 8GB
+stats.memory_used = (stats.memory_total as f64 * 0.4) as u64;
+stats.disk_total = 100 * 1024 * 1024 * 1024; // 100GB
+stats.disk_used = (stats.disk_total as f64 * 0.3) as u64;
+```
+
+so a monitor that reads this dashboard as fact is told the machine has 8 GiB and a 100 GiB filesystem at
+40 % and 30 % used, and a CPU percentage that is random. These values flow out through `/api/metrics`
+(`:744-746`) and the JSON API, which is where the dishonesty stops being cosmetic.
+
+**Action.** Read the host instead of decorating it, and make "could not measure" a state the surface can
+express: `SystemStats` gains `measured: bool`, and the metric lines are emitted only when it is true, with
+an explanatory comment line when it is not. A measured zero and "not measured here" are different
+statements, and only a flag can tell them apart.
+
+**Change (2026-11-08).** `crates/pn-next/src/web_dashboard/mod.rs`
+- `:160-168` - `pub measured: bool` on `SystemStats`, with the reason it exists in its doc comment.
+- `:784-848` - new `read_cpu_percent()` (delta of `/proc/stat` between polls; the first call reports the
+  since-boot average, which is also a real figure), `read_memory_bytes()` (`/proc/meminfo`), and
+  `read_disk_bytes()` (`statvfs`).
+- `:858-884` - the fabricated block is replaced by those readings, and `measured` is their conjunction.
+- `:752-762` - `/api/metrics` emits the three samples only when `measured`, otherwise a comment naming why.
+- `:915-986` - two tests: the readers must satisfy relations a fabricated value need not (available never
+  exceeds total, a percentage stays in range), and the served numbers must equal the host's own readings -
+  the second is the discriminating one, since the old constants would pass any range check.
+
+**Verification.** `cargo test -p pn-next web_dashboard` -> `4 passed; 0 failed` (heavy label `metrics2`,
+75 s, peak 2763 MB), with the test printing which sources answered:
+`answered here: memory=true disk=true cpu=false`. Formatting: `cargo fmt --all -- --check` rc=0.
+
+**A measurement that corrected the change.** `/proc/stat` is **denied** to an app-uid process on Android
+(measured: DITOLAK, while `/proc/meminfo` and `statvfs` answer). So the first version of the test - which
+required all three sources - failed at `:936` on this device, and it was the test that was wrong: the code
+had already returned `None` and flagged `measured = false`, which is the honest answer where a source is
+denied. The tests now assert the contract instead of assuming availability, and they print which sources
+answered rather than implying all three did.
+
+
 
 
