@@ -44,7 +44,7 @@
     "crates/proot-distro-core/src/blobstore.rs"
   ],
   "line_budgets": {
-    "crates/pn-next/src": 24093,
+    "crates/pn-next/src": 24099,
     "crates/pn-next/src/cluster": 889,
     "crates/pn-next/src/dbus": 2565,
     "crates/pn-next/src/gitops": 1067,

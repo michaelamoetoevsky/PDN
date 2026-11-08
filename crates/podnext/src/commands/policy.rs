@@ -124,6 +124,10 @@ pub async fn cmd_policy_eval(name: String, format: crate::OutputFormat) -> Resul
     );
     println!("  state      : {:?} (pid {:?})", status.state, status.pid);
     println!("  action     : {:?}", result.action);
+    // The engine decides; nothing applies the decision. Without this line `action : Deny` reads as
+    // "the action that was taken" (ASEC2-ARCH-008, measured 2026-11-08: `PolicyAction` is defined in
+    // pn-next/src/security.rs and re-exported, but nothing outside this engine consumes it).
+    println!("  applied by : nothing - this command evaluates; no component enforces the action");
     println!("  reason     : {}", result.reason);
     if result.matched_rules.is_empty() {
         println!("  matched    : (no rule matched)");

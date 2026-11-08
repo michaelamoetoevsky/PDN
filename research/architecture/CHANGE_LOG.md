@@ -365,6 +365,32 @@ product decisions - wiring an engine that cannot measure anything into the CLI w
 it unreachable - so they are recorded in the honesty register instead of patched around. What is fixed is
 that the engine no longer *claims* what it does not do.
 
+---
+
+## ASEC2-ARCH-008 (policy) — a decision that nothing applies, printed as if it were an action
+
+**Found.** `PolicyAction` (`crates/pn-next/src/security.rs:132,138`, re-exported at `pn-next/src/lib.rs:87`)
+has **no consumer outside `policy_engine`**: nothing matches on it, so a rule can be evaluated and its action
+never enforced. `podnext policy eval` printed the decided action on a line labelled `action :`, which reads
+as "the action that was taken". Measured 2026-11-08 by searching for consumers across the tree: only the
+definition and the re-export appear.
+
+**Change (2026-11-08).**
+- `crates/pn-next/src/policy_engine/mod.rs:52-58` - the doc comment on `PolicyAction` now states that the
+  engine decides and nothing applies, names the finding, and says that wiring an enforcement point is a
+  product decision rather than a rename.
+- `crates/podnext/src/commands/policy.rs:126-129` - `policy eval` prints, next to the action,
+  `applied by : nothing - this command evaluates; no component enforces the action`.
+
+**Verification, and its limit.** The owning targets were run **before** committing, because this change
+edits CLI output: `cargo test -p podnext --test stdout_discipline` -> `4 passed; 0 failed` and
+`cargo test -p podnext --test cli_reference_contract` -> `6 passed; 0 failed`; `cargo fmt --all -- --check`
+clean. The new line itself was **not** observed end to end: `podnext policy eval demo` against a fixture
+store answers `Error: Service not found: demo`, because the command needs a service record and seeding one
+means reproducing the supervisor's persisted `ServiceConfig` shape. So the line's presence rests on the
+contract targets above, not on a captured run - stated here rather than implied by a green suite.
+
+
 
 
 

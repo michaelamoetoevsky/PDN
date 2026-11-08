@@ -50,6 +50,12 @@ impl ExpandPath for std::path::PathBuf {
 }
 
 /// Policy actions
+///
+/// The engine **decides** an action; nothing in this tree **applies** one. Measured 2026-11-08: the
+/// type is defined here and re-exported (`pn-next/src/lib.rs:87`), and a search for consumers outside
+/// `policy_engine` finds only the definition and that re-export, so a rule can be evaluated and its
+/// action never enforced (ASEC2-ARCH-008). `podnext policy eval` therefore prints, next to the action,
+/// that no component enforces it. Wiring an enforcement point is a product decision, not a rename.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyAction {
