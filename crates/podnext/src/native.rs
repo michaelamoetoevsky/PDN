@@ -261,3 +261,99 @@ mod signal_tests {
         assert!(smoke_test_rootfs(&rootfs).await.is_ok());
     }
 }
+
+/// The `--engine` wiring: which runner a choice selects, and that a native path refusal is a NAMED
+/// error and never a fallback. These are the assertions that go red if `--engine native` were made
+/// to fall through to the proot path, or a refusal were made silent.
+#[cfg(test)]
+mod engine_wiring_tests {
+    use super::{native_verdict, uses_native_engine};
+    use crate::EngineChoice;
+    use proot_core::native_run::{NativeRunReport, Refusal};
+
+    fn refusal(number: i64, name: &'static str, reason: &'static str) -> Refusal {
+        Refusal {
+            number,
+            name: Some(name),
+            reason,
+        }
+    }
+
+    fn report(refusals: Vec<Refusal>, exit_code: i32) -> NativeRunReport {
+        NativeRunReport {
+            exit_code,
+            stops: refusals.len(),
+            entries: refusals.len(),
+            translations: Vec::new(),
+            refusals,
+            observed: Vec::new(),
+            child_view: None,
+            executed: None,
+            strict_failure: None,
+        }
+    }
+
+    /// The `--engine` choice is what selects the runner. A named assertion about WHICH engine ran:
+    /// `native` must route to the in-tree engine, `proot` (and the default) must not. Making
+    /// `native` fall through to the proot path turns this red with this message.
+    #[test]
+    fn native_routes_to_the_native_engine_and_proot_does_not() {
+        assert!(
+            uses_native_engine(EngineChoice::Native),
+            "`--engine native` must route to the native runner, not the proot path"
+        );
+        assert!(
+            !uses_native_engine(EngineChoice::Proot),
+            "`--engine proot` (and the default) must stay on the proot path"
+        );
+    }
+
+    /// A path syscall the engine could not translate is a NAMED, hard error: the guest path would
+    /// have been resolved on the HOST, and the engine must NOT fall back to proot. `SYS_chdir` is a
+    /// path-taking syscall with no translator (`native_run::unhandled_path_syscall`), the cheapest
+    /// such case - the same one the engine's own test names.
+    #[test]
+    fn an_untranslated_path_is_a_named_error_and_not_a_fallback_to_proot() {
+        let report = report(
+            vec![refusal(
+                libc::SYS_chdir as i64,
+                "SYS_chdir",
+                "takes a path but this engine has no translation for it; the kernel resolves it \
+                 on the HOST filesystem",
+            )],
+            0,
+        );
+        let err = native_verdict(&report)
+            .expect_err("an untranslated path must fail the run")
+            .to_string();
+        assert!(
+            err.contains("SYS_chdir"),
+            "the refusal must name the syscall: {err}"
+        );
+        assert!(
+            err.contains("does NOT fall back to proot"),
+            "the refusal must say there is no fallback: {err}"
+        );
+    }
+
+    /// A pass-through (mmap, brk, ...) is recorded but does not fail the run: letting the kernel do
+    /// that work is the engine's design, and it is the only mode a dynamic guest survives.
+    #[test]
+    fn a_pass_through_refusal_does_not_fail_the_run() {
+        let report = report(
+            vec![refusal(
+                libc::SYS_mmap as i64,
+                "SYS_mmap",
+                "passed through, not emulated",
+            )],
+            0,
+        );
+        assert_eq!(native_verdict(&report).unwrap(), 0);
+    }
+
+    /// The guest's own non-zero status is passed through as the run's status.
+    #[test]
+    fn a_guests_own_exit_code_is_passed_through() {
+        assert_eq!(native_verdict(&report(Vec::new(), 7)).unwrap(), 7);
+    }
+}

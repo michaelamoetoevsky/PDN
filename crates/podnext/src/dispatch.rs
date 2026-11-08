@@ -3,7 +3,11 @@
 
 use super::*;
 
-pub(crate) async fn execute_command(cmd: Commands, global_binds: Vec<String>) -> Result<()> {
+pub(crate) async fn execute_command(
+    cmd: Commands,
+    global_binds: Vec<String>,
+    engine: EngineChoice,
+) -> Result<()> {
     pn_trace!("DEBUG execute_command: START {:?}", cmd);
     match cmd {
         // Container commands
@@ -23,7 +27,7 @@ pub(crate) async fn execute_command(cmd: Commands, global_binds: Vec<String>) ->
             user,
             isolated,
             command,
-        } => cmd_login(container, user, isolated, command, global_binds).await,
+        } => cmd_login(container, user, isolated, command, global_binds, engine).await,
         Commands::Run {
             container,
             command,
@@ -57,6 +61,7 @@ pub(crate) async fn execute_command(cmd: Commands, global_binds: Vec<String>) ->
                 workdir,
                 isolated,
                 global_binds,
+                engine,
             )
             .await
         }

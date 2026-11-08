@@ -205,6 +205,7 @@ pub async fn run_container_native(
     command: Vec<String>,
     isolated: bool,
     mounts: Vec<proot_distro_core::container::BindMount>,
+    engine: crate::EngineChoice,
 ) -> Result<()> {
     let container_mgr = proot_distro_core::ContainerManager::new()?;
     let mut container = container_mgr.get(container_name).await?;
@@ -218,6 +219,17 @@ pub async fn run_container_native(
     if isolated {
         container.config.isolated = true;
     }
+
+    // The opt-in native engine: run the guest under podnext's own in-tree ptrace engine, touching
+    // no `proot` binary. The default (`Proot`) is the path below, byte for byte as before.
+    //
+    // A native run is synchronous (`run_native` forks and ptrace-drives its own tracee), so it does
+    // not go through the async signal-forwarding loop further down; the engine's own refusal is a
+    // named error and is NEVER turned into a fallback to proot.
+    if uses_native_engine(engine) {
+        return run_native_engine(&container, command);
+    }
+
     let backend = container_mgr.get_backend(&container);
 
     // Anything this guest or its children fork is ours to reap (#A22); set the
@@ -288,6 +300,112 @@ pub async fn run_container_native(
         return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
     }
     Ok(())
+}
+
+/// Which engine runner a `--engine` choice selects: `true` means podnext's own in-tree engine
+/// (`run_native_engine`), `false` means the host `proot` path. A named function so the routing is
+/// asserted by a test rather than assumed at the call site.
+pub(crate) fn uses_native_engine(engine: crate::EngineChoice) -> bool {
+    engine == crate::EngineChoice::Native
+}
+
+/// Run `container`'s `command` under `proot_core::native_run` - the in-tree engine, with NO
+/// external `proot` binary involved.
+///
+/// The `RunPlan` is built from the container record: `rootfs_path`, and the bind list in the
+/// engine's `(guest_prefix, host_path)` form (`BindMount::target` is the guest path, `source` the
+/// host path). Fields the plan does not carry are named rather than invented:
+///
+///   * ENVIRONMENT - `RunPlan` has no env field and `run_native` hands the guest an EMPTY `envp`
+///     on purpose (see `native_run::child_main`), so no environment is set and none can be;
+///   * WORKING DIRECTORY - `RunPlan` has no cwd field, and the engine refuses a relative guest path
+///     rather than guessing one under a `dirfd`/cwd it does not model, so the guest starts wherever
+///     the kernel places it.
+///
+/// A refusal from the engine is surfaced as a NAMED error and NEVER falls back to proot:
+///
+///   * an `Err` from `run_native` (e.g. `translated path does not exist: ... does not fall back to
+///     the host filesystem`) is reported as-is;
+///   * a refusal for a PATH syscall the engine could not translate (`is_untranslated_path_refusal`)
+///     means the guest's path would have been resolved on the HOST, which is the silent fallback
+///     this engine exists to prevent - so the run fails, naming every such syscall.
+///
+/// Pass-through refusals (mmap, brk, read, write, ...) are recorded by the engine and do not fail
+/// the run: for a proot-style engine letting the kernel do that work is the design, and it is the
+/// only mode a dynamically linked guest survives (with `strict = true` the engine stops at the
+/// first such syscall).
+fn run_native_engine(
+    container: &proot_distro_core::container::Container,
+    argv: Vec<String>,
+) -> Result<()> {
+    use proot_core::native_run::{run_native, RunPlan};
+
+    // The guest command. An empty command runs the guest's `/bin/sh`, the same default the proot
+    // path uses; `argv[0]` is a guest-absolute path, which the engine resolves under the rootfs.
+    let argv = if argv.is_empty() {
+        vec!["/bin/sh".to_string()]
+    } else {
+        argv
+    };
+
+    let plan = RunPlan {
+        rootfs: Some(container.rootfs_path.clone()),
+        binds: container
+            .config
+            .bind_mounts
+            .iter()
+            .map(|b| (b.target.clone(), std::path::PathBuf::from(&b.source)))
+            .collect(),
+    };
+
+    let report = run_native(&argv, &plan, false).map_err(|e| {
+        anyhow::anyhow!(
+            "the native engine refused to run '{}' in '{}': {e}",
+            argv[0],
+            container.name
+        )
+    })?;
+
+    // The engine's refusal discipline decides the verdict; a non-zero guest status is then reported
+    // (runc's contract) so the CLI exits with it. The engine NEVER falls back to proot.
+    let exit_code = native_verdict(&report)?;
+    if exit_code != 0 {
+        return Err(anyhow::Error::new(proot_core::ChildExit(exit_code)));
+    }
+    Ok(())
+}
+
+/// The verdict a native run's report yields, as a pure function so the refusal discipline can be
+/// tested without a live tracee.
+///
+/// `Err` when the engine could not translate a PATH syscall (`is_untranslated_path_refusal`): a
+/// guest path would then have been resolved on the HOST filesystem, which is the silent fallback
+/// this engine exists to prevent - the run fails, naming every such syscall. Pass-through refusals
+/// (mmap, brk, read, write, ...) are recorded by the engine and do not fail the run: letting the
+/// kernel do that work is the design, and it is the only mode a dynamically linked guest survives.
+/// Otherwise the guest's own exit code is returned.
+pub(crate) fn native_verdict(report: &proot_core::native_run::NativeRunReport) -> Result<i32> {
+    let mut untranslated: Vec<String> = report
+        .refusals
+        .iter()
+        .filter(|r| proot_core::native_run::is_untranslated_path_refusal(r.number))
+        .map(|r| r.label())
+        .collect();
+    untranslated.sort();
+    untranslated.dedup();
+    if let Some(failure) = report.strict_failure.as_ref() {
+        anyhow::bail!("the native engine stopped the run: {failure}")
+    }
+    if !untranslated.is_empty() {
+        anyhow::bail!(
+            "the native engine did not translate {} path syscall(s): {}. A guest path would \
+             have been resolved on the HOST filesystem, which this engine refuses. The engine \
+             does NOT fall back to proot; run under `--engine proot` for full path coverage.",
+            untranslated.len(),
+            untranslated.join(", ")
+        )
+    }
+    Ok(report.exit_code)
 }
 
 // ===== Detached sessions: the `--detach` / `attach` round trip (PDN#57) =====

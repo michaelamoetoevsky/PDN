@@ -257,6 +257,7 @@ pub async fn cmd_login(
     isolated: bool,
     command: Vec<String>,
     binds: Vec<String>,
+    engine: crate::EngineChoice,
 ) -> Result<()> {
     // `--user` was parsed and then dropped: the value reached `LoginOptions.user`, nothing read it,
     // and the runtime hard-codes `--change-id=0:0:0` (proot-core), so `podnext login alpine
@@ -291,7 +292,7 @@ pub async fn cmd_login(
     // on an image built with `ENV GREETING=hi` saw `GREETING=hi` and `podnext
     // login` on the same image saw nothing, so the image did not behave as built.
     // One applied path instead of two that disagree.
-    run_container_native(&container, cmd, isolated, mounts).await
+    run_container_native(&container, cmd, isolated, mounts, engine).await
 }
 
 pub async fn cmd_run(
@@ -310,6 +311,7 @@ pub async fn cmd_run(
     _workdir: Option<String>,
     isolated: bool,
     binds: Vec<String>,
+    engine: crate::EngineChoice,
 ) -> Result<()> {
     // Flags that were parsed and then dropped. Each one changes what the command DOES, so
     // accepting it silently means the caller gets a run that is not the one they asked for
@@ -366,10 +368,21 @@ pub async fn cmd_run(
     // session is then reachable with `podnext attach <container>` (PDN#57). The mount specs and
     // the refused-flag checks above run first, so a detached run is the run that was asked for.
     if detach {
+        // The detached supervisor runs the guest through the proot path
+        // (`login_container_native` -> `ProotDistroCore::login`); the native engine has no
+        // detached-session form yet, so a request for one is refused by name rather than silently
+        // running the guest under proot.
+        if engine == crate::EngineChoice::Native {
+            anyhow::bail!(
+                "--engine native is not implemented for `--detach`: the detached session \
+                 supervisor runs the guest through the proot path. Drop `--detach` (a foreground \
+                 `run` uses the native engine), or use `--engine proot`."
+            );
+        }
         return crate::native::spawn_detached_session(&container, command, isolated, mounts).await;
     }
 
-    run_container_native(&container, command, isolated, mounts).await
+    run_container_native(&container, command, isolated, mounts, engine).await
 }
 
 pub async fn cmd_ps(format: OutputFormat) -> Result<()> {

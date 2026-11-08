@@ -192,8 +192,9 @@ async fn run() -> Result<()> {
     if let Some(cmd) = cli.command {
         pn_trace!("DEBUG main: Executing command: {:?}", cmd);
         // `-b/--bind` is a global option, so `login` and `run` must see it too; it used to
-        // reach only the direct-execution path below.
-        return execute_command(cmd, cli.bind.clone()).await;
+        // reach only the direct-execution path below. `--engine` is likewise global, so a run
+        // or login selects its engine from it (default `proot`, unchanged).
+        return execute_command(cmd, cli.bind.clone(), cli.engine).await;
     }
 
     print_help();

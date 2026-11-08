@@ -328,6 +328,17 @@ fn unhandled_path_syscall(number: i64) -> Option<&'static str> {
     })
 }
 
+/// Whether a refusal whose syscall `number` is given is a PATH refusal: a path-taking syscall this
+/// engine could not translate, so the kernel would resolve the guest's path on the HOST filesystem.
+///
+/// This is the class of refusal a caller can fail a run on by name. It is the union of the two
+/// tables above, kept here so the caller and the engine cannot disagree about which refusals are
+/// the dangerous ones - the same single-source rule the name table follows. A syscall that was
+/// actually translated produces no refusal, so this predicate is only ever asked about refusals.
+pub fn is_untranslated_path_refusal(number: i64) -> bool {
+    path_syscall(number).is_some() || unhandled_path_syscall(number).is_some()
+}
+
 /// Names for the syscall numbers this engine knows. Deliberately partial: a missing name reports
 /// as `None`, which is the honest answer, instead of a plausible-looking string.
 ///

@@ -229,6 +229,19 @@ pub(crate) struct Cli {
         help = "Output format (table, json, yaml, text)"
     )]
     pub(crate) format: Option<OutputFormat>,
+
+    /// Engine used to run a guest (`run`, `login`).
+    ///
+    /// `proot` is the default and runs the host `proot` binary, unchanged. `native` runs the
+    /// guest under podnext's own in-tree ptrace engine and never touches a `proot` binary.
+    #[arg(
+        long = "engine",
+        global = true,
+        value_enum,
+        default_value = "proot",
+        help = "Container engine: proot (default) or native"
+    )]
+    pub(crate) engine: EngineChoice,
 }
 
 /// Parse the command line, answering a rejected invocation with the page of the

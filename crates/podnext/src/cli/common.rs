@@ -25,6 +25,19 @@ pub(crate) enum OutputFormat {
     Text,
 }
 
+/// Which engine runs a guest for `run`/`login`.
+///
+/// `Proot` (the default) spawns the host `proot` binary - today's behaviour, byte for byte.
+/// `Native` runs the guest under podnext's own in-tree ptrace engine
+/// (`proot_core::native_run`), touching no `proot` binary at all. The choice is opt-in: the
+/// default is `Proot` so nothing about the existing path changes.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[clap(rename_all = "lowercase")]
+pub(crate) enum EngineChoice {
+    Proot,
+    Native,
+}
+
 #[derive(ValueEnum, Clone, Copy, Debug)]
 pub(crate) enum RestartPolicyArg {
     Never,
