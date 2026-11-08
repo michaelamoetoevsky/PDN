@@ -146,7 +146,12 @@ impl Tracee {
         };
         let ret = unsafe {
             nix::libc::ptrace(
-                nix::libc::PTRACE_GETREGSET as nix::libc::c_int,
+                // `as _` rather than a concrete integer type: the request parameter is
+                // `c_int` in Android's libc (which declares ptrace variadic) and `c_uint`
+                // in the libc the Linux CI runner links against, so naming either one
+                // compiles on one target and fails with E0308 on the other - measured on
+                // run 42449343311, where `as nix::libc::c_int` broke the runner build.
+                nix::libc::PTRACE_GETREGSET as _,
                 self.pid.as_raw(),
                 NT_PRSTATUS as *mut nix::libc::c_void,
                 &mut iov as *mut nix::libc::iovec as *mut nix::libc::c_void,
