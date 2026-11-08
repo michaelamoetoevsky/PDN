@@ -390,6 +390,36 @@ store answers `Error: Service not found: demo`, because the command needs a serv
 means reproducing the supervisor's persisted `ServiceConfig` shape. So the line's presence rests on the
 contract targets above, not on a captured run - stated here rather than implied by a green suite.
 
+---
+
+## ORCH (watchdog) — the README documented a command that does not load
+
+**Found.** `README.md:246` showed `podnext watchdog policy web-server restart -m 3 -w 60`. Measured
+2026-11-08 against the built binary: `watchdog policy` is **not a subcommand** (`error: unrecognized
+subcommand 'policy'`, with clap suggesting `set-policy`/`setpolicy`), `-m`/`-w` are not flags at all, and
+`-w` is already the global `--pwd`, so the short form could not be added later without a collision. The
+stage spec carries the same form (`workbench/asec/SPEC_STAGE3.txt:128,305`), which is where the README
+inherited it. The implemented surface is
+`podnext watchdog setpolicy <NAME> <POLICY> <MAX_RESTARTS> <WINDOW_SECS>` with the policy vocabulary
+`never, on-failure, always, unless-stopped, on-failure-or-crash`.
+
+**Change (2026-11-08).** `README.md:245-246` now shows the form that loads:
+
+```bash
+# Configure automatic restart policy: up to 3 restarts within a 60 second window
+podnext watchdog setpolicy web-server on-failure 3 60
+```
+
+**Verification, and one correction of my own first attempt.** The fixed line was run:
+`rc=0`, `Watchdog policy set for 'web-server': OnFailure (max restarts: 3, window: 60s)`. The negative
+control is the old form: `rc=2` with `unrecognized subcommand 'policy'`. My first edit kept the spec's
+policy word `restart`, and the measurement rejected it (`error: invalid value 'restart' for '<POLICY>'`) -
+so the documented form is now the one the binary accepts, checked by running it rather than by reading the
+help. The rest of that README block was load-tested too (`watchdog status`, `gitops sync`, `gitops drift`,
+`wakelock acquire web-server partial`, `boot enable web-server`): all reach their own logic, none are
+rejected by the parser.
+
+
 
 
 
