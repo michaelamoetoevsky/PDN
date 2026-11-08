@@ -419,6 +419,35 @@ help. The rest of that README block was load-tested too (`watchdog status`, `git
 `wakelock acquire web-server partial`, `boot enable web-server`): all reach their own logic, none are
 rejected by the parser.
 
+---
+
+## SUPPLY-07 (signature) — a disabled verifier reported `verified: true`
+
+**Found.** `verify_image` (`crates/proot-distro-core/src/signature.rs:132`) returned
+`VerificationResult { verified: true, ... }` whenever `signature.enabled` was false - and
+`SignatureConfig::default()` sets `enabled: false` (`:33`). So the struct a caller receives asserted a
+verification that never ran, with only a warning string as a hint. Measured 2026-11-08: nothing in the
+install path reads `SignatureConfig`/`SignatureVerifier` at all (grep in `podnext/` and `pn-*`: only the
+`lib.rs:95-96` re-exports), and the sole readers of `.verified` are this module's own tests.
+
+**Change (2026-11-08).** The early return now hands back `verified: false`, and the warning names the
+remedy: `Signature verification disabled: not verified (set signatures.enabled to verify)`. Nothing else
+changed: verification itself is still off by default, because turning it on is a product decision (it
+needs trusted keys, and a wrong default would refuse installs).
+
+**Verification.** Owner target `cargo test -p proot-distro-core --lib` -> `105 passed; 0 failed`,
+including `signature::tests::test_simple_verification` (the enabled path, so the flip cannot pass silently)
+and `test_signature_config_default`; `cargo fmt --all -- --check` clean. The safety argument for flipping
+the value is the caller measurement above: `image.rs:54` writes `self.verify_image(&image)?;` - it keeps the
+error and discards the flag.
+
+**A reading mistake of my own, recorded.** The first owner-target run printed
+`0 passed ... filtered out`, and I briefly took that as "the module's tests ran and matched nothing". It
+was the opposite: `tail -1` shows only the **last** test target's summary, and the lib target's line had
+scrolled past. The corrected run (`--lib`, all summary lines read) shows 105 passing. The lesson matches
+one already in this repo's memory - read every `test result` line, never a single one.
+
+
 
 
 
