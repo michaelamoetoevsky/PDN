@@ -1005,3 +1005,98 @@ the restore path cannot see them - a follow-up should surface `!is_clean()` ther
 **Isolation.** Own worktree and branch (`dept/untar` @ 8ff1a3c), never pushed, main checkout untouched by
 the child; the parent verified the branch, the commit, the four files and the test names before
 integrating.
+## p7 step 1: the engine translates the dynamic loader's path syscalls, so a real guest starts (2026-11-08)
+
+**Finding.** The in-tree engine could only prove STATIC fixtures. Every real guest is dynamically linked,
+and after `execve` the ELF interpreter runs inside the guest and opens the shared libraries by ABSOLUTE
+path (`/system/bin/linker64`, `<prefix>/lib/libc.so`, and whatever DT_RUNPATH names) through
+`openat`/`newfstatat`/`readlinkat`/`faccessat`. The engine translated only `execve`, so those opens went
+to the HOST filesystem: either the guest failed to link, or - worse - it silently ran against the host's
+libraries and appeared to work. The module's own doc named this gap: "argument translation for any syscall
+other than `execve`".
+
+**Action.** `crates/proot-core/src/native_run.rs` (+351/-52) adds a path-syscall dispatcher and entry-time
+translation. `path_syscall` (lines 262-310) maps a syscall number to its name and path-argument index:
+`openat`, `openat2`, `newfstatat`, `statx`, `readlinkat`, `faccessat`, `faccessat2`, `execve` on every
+target, plus the legacy `open`, `stat`, `lstat`, `readlink`, `access` where the target declares them
+(x86_64 only; arm64 has no legacy table). `SYS_NEWFSTATAT` is declared locally (245-253) because libc
+omits it for android/aarch64 - found by compile error, not by grep. The parent loop's entry branch
+(761-845) calls `translate_path_remote` (1190-1250: PEEKDATA the path, `resolve`, write the translated
+path into a stack scratch, SETREGSET) after `write_path_and_redirect_arg` was folded in as the shared
+helper (1132-1185). A path-taking syscall with no translator is a NAMED refusal
+(`unhandled_path_syscall`, 313-331), and `syscall_name` consults both tables so names cannot drift from
+the dispatcher (338-349). Relative paths (`dirfd`/cwd) are refused by name because neither is modelled.
+
+**Two real defects found while doing it.** `resolve` re-translated a path that was already on the host
+side (the loader `stat`s `/proc/self/exe`, which produced `<rootfs><rootfs>/...`, a path existing
+nowhere), and it matched bind prefixes as raw strings, so a bind on `/sys` swallowed
+`/system/lib64/libnetd_client.so` into `/sys/tem/lib64/...`. Both are fixed: an already-translated
+short-circuit, and component-wise prefix matching (`Path::starts_with`).
+
+**Verification - the parent re-ran the suites on the merged tree.** New test
+`crates/proot-core/tests/native_dynamic_guest.rs` (404 lines, 18 assertions) builds a dynamic guest whose
+`printf` depends on a library that exists ONLY inside the rootfs (a literal `return 7` would be vacuous on
+this device, because the host's `/system/lib64/libc.so` satisfies an untranslated loader - the child said
+so rather than shipping a test that cannot fail). Committed tree: `[dyn] exit=7 stops=669 entries=335
+executed=Some(".../rootfs/bin/hello")`, `guest stdout="hello from guest"`, translated names
+`["SYS_execve","SYS_faccessat","SYS_newfstatat","SYS_openat","SYS_readlinkat"]`, and the loader's
+rootfs-only RUNPATH `/p7loader/lib` resolved through `SYS_openat`. Pre-change engine on the SAME test:
+`CANNOT LINK EXECUTABLE "/bin/hello": library "libpdnflag.so" not found: needed by main executable`, with
+`SYS_openat (56) [passed through, not emulated]` x45 in the refuse list. Negative control (openat
+translation made a no-op): the guest's stdout is empty and the test fails on
+`the guest's printf must appear on the inherited stdout; got ""`, then restored green. Existing suite:
+`native_exec_translation` 4 passed, `--lib` 13 passed, and the full proot-core sweep (argv_facts 2,
+identity_table 4, native_dispatch 2, native_syscall_read 1, seccomp_filter 1, selective_seccomp 3) green.
+`cargo fmt --all -- --check` clean.
+
+**Limits, stated rather than implied.** (a) PT_INTERP cannot be translated: the kernel opens the
+interpreter before the tracee executes an instruction, so the guest's interpreter must exist at its
+absolute host path (`/system/bin/linker64` on Android). Only the loader the interpreter then runs is
+traced - which is what this change covers, and it is the honest boundary of a ptrace-based engine.
+(b) `dirfd`/cwd-relative paths are refused, not translated. (c) The x86_64-only arms are cfg-gated and
+compile-checked on this aarch64 device only; CI is the authority for them.
+
+## p6 slice-2: a test target no longer resolves the operator's real store (ASEC4-HARNESS-001)
+
+**Finding (mine, recorded after the WORKDIR verification).** `crates/podnext/tests/automation_contract.rs`
+spawned the real `podnext` binary with no `PN_TEST_ROOT`/`HOME` redirection while running `remove`,
+`kill`, `volume create` and `volume rm` - so it resolved `~/.podnext`, the operator's live store. Six of
+its neighbouring test files already redirect the store; this one did not, and CI cannot catch it because
+runners have no `~/.podnext` to damage.
+
+**Action.** `crates/podnext/tests/automation_contract.rs` (+235/-37): a per-test `Fixture` under
+`$PREFIX/tmp` with a `temp_base()` that never falls back to bare `/tmp`; `command_in()` sets `HOME`,
+`PN_TEST_ROOT`, `TERMUX__HOME` and `TMPDIR` and clears the XDG variables; and a PRE-FLIGHT GUARD
+(`assert_binary_honours_store`, lines 142-177) that points `HOME` at a separate DECOY store and requires a
+read-only `list` to return the fixture's sentinel - so a binary that ignored `PN_TEST_ROOT` lists the decoy
+and the suite refuses before any mutating arm runs. All six tests call the guard first, and
+`test_yes_flag_on_volume_rm` additionally asserts the volume mountpoint appears under the fixture store
+after `create` and is gone after `rm`.
+
+**Verification.** Parent's runs on the merged tree are part of the same wave; the child's pasted evidence:
+`cargo test -p podnext --test automation_contract` -> `ok. 6 passed; 0 failed`, with the guard printing
+`fixture guard OK: PN_TEST_ROOT=.../pdn-auto-volrm-NY1cbc/home listed exactly ["pdn-guard-sentinel"];
+decoy HOME=.../decoy was not consulted` and the volume landing in the fixture store. The real store is
+byte-identical across the run: `1794090579 ... entries=8` BEFORE and AFTER. Negative control (drop
+`PN_TEST_ROOT` from the child env): the guard FAILS naming what it saw -
+`It listed ["pdn-decoy-9666"], i.e. it resolved HOME=.../decoy instead. A binary that ignores
+PN_TEST_ROOT acts on the real ~/.podnext, so this suite refuses.` - then restored green.
+
+**A finding CORRECTED, not patched.** The same ledger row named
+`crates/proot-distro-core/tests/single_writer_races.rs` as unguarded. It was read in full and does not
+touch the store: every root is an explicit `tempfile::tempdir()` (`BlobStore::at`, `scan_store`,
+`staging_units`) and the session registry is redirected via `RUNTIME_DIR` (`session.rs:35-42` returns
+`RUNTIME_DIR/sessions` before `resolve_home`). Adding a guard there would have been decoration, so none
+was added and the file is untouched (`git diff` = 0 lines). The finding stands for
+`automation_contract.rs` only; the correction is written into the ledger rather than silently dropped.
+
+## The operator's acceptance criterion, as a runnable gate
+
+`scripts/own_engine_acceptance.py` is the goal from workbench/WORKLIST.md section Z expressed as a check:
+a container must run with `PROOT_BIN=/nonexistent/proot` and no `proot` on `PATH`. It builds a REAL
+dynamic guest in the fixture rootfs (Termux has no static toolchain - `cc -static` fails with
+`cannot open crtbegin_static.o`), copies the interpreter and every NEEDED library to the same absolute
+path inside the rootfs, and notes bionic's file-less `libdl.so` as "implied" rather than dropping it
+silently. Measured on this tree: `rc=1`, `Error: No such file or directory (os error 2)`, and the script
+names proot as the cause; without `PN_TEST_ROOT` it REFUSES with rc=2. When p7 is done this must flip to
+PASS, and the diff of this script is what proves it.
