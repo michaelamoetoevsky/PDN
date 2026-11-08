@@ -107,16 +107,105 @@ impl Tracee {
         Ok(())
     }
 
+    /// Read the syscall the tracee is stopped on and cache it as `syscall_info`.
+    ///
+    /// Public so a test can stop a child at a known syscall and assert the *number* the
+    /// engine reports (p4 step 1).
+    pub fn observe_syscall(&mut self) -> Result<()> {
+        let raw = self.read_registers()?;
+        self.registers = raw.registers;
+        self.syscall_info = Some(SyscallInfo {
+            number: raw.number,
+            args: raw.args,
+            retval: 0,
+        });
+        Ok(())
+    }
+
+    /// The register file as the kernel reports it at this stop.
+    ///
+    /// Measured 2026-11-08: `read_syscall` and `read_retval` used to return `0` for every
+    /// stop, so the 155 handler patterns in `syscall.rs` could only ever be selected by
+    /// `0`, and no `PTRACE_GETREGSET` call existed anywhere in the tree. Both now read
+    /// through `PTRACE_GETREGSET` with `NT_PRSTATUS`, and a failed read is an error naming
+    /// the pid and the errno rather than a silent zero.
+    fn read_registers(&self) -> Result<RegisterFile> {
+        // `nix 0.27`'s `ptrace::getregs` has no aarch64 implementation (compiling against
+        // it fails with "cannot find function `getregs`"), so the call goes through libc
+        // directly: PTRACE_GETREGSET with NT_PRSTATUS fills a `user_regs_struct`, which on
+        // aarch64 is exactly `Registers`. `libc` arrives via nix rather than as a new
+        // dependency.
+        let mut raw: nix::libc::user_regs_struct = unsafe { std::mem::zeroed() };
+        // NT_PRSTATUS is 1 in the Linux ptrace ABI (`include/uapi/linux/elf.h`:
+        // `#define NT_PRSTATUS 1`); libc does not export it for every target, so it is
+        // named here rather than spelled 1 at the call site.
+        const NT_PRSTATUS: nix::libc::c_uint = 1;
+        let mut iov = nix::libc::iovec {
+            iov_base: &mut raw as *mut _ as *mut nix::libc::c_void,
+            iov_len: std::mem::size_of::<nix::libc::user_regs_struct>(),
+        };
+        let ret = unsafe {
+            nix::libc::ptrace(
+                nix::libc::PTRACE_GETREGSET as nix::libc::c_int,
+                self.pid.as_raw(),
+                NT_PRSTATUS as *mut nix::libc::c_void,
+                &mut iov as *mut nix::libc::iovec as *mut nix::libc::c_void,
+            )
+        };
+        if ret < 0 {
+            return Err(anyhow::anyhow!(
+                "PTRACE_GETREGSET (NT_PRSTATUS) failed for pid {}: {}",
+                self.pid,
+                std::io::Error::last_os_error()
+            ));
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // aarch64 reports the syscall number in x8 and the result in x0, and
+            // `user_pt_regs` is 31 general registers followed by sp, pc and pstate -
+            // exactly the shape of `Registers`.
+            let mut args = [0u64; 6];
+            args.copy_from_slice(&raw.regs[0..6]);
+            Ok(RegisterFile {
+                number: raw.regs[8] as i64,
+                args,
+                retval: raw.regs[0] as isize,
+                registers: Registers {
+                    regs: raw.regs,
+                    pc: raw.pc,
+                    sp: raw.sp,
+                    pstate: raw.pstate,
+                },
+            })
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            Ok(RegisterFile {
+                number: raw.orig_rax as i64,
+                args: [raw.rdi, raw.rsi, raw.rdx, raw.r10, raw.r8, raw.r9],
+                retval: raw.rax as isize,
+                // `Registers` is the aarch64 layout, so it stays at its default here
+                // rather than being filled with values that mean something else.
+                registers: Registers::default(),
+            })
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        {
+            let _ = raw;
+            anyhow::bail!("no syscall register mapping is implemented for this target architecture")
+        }
+    }
+
     fn read_syscall(&self) -> Result<RawSyscall> {
-        // Architecture-specific syscall reading
+        let raw = self.read_registers()?;
         Ok(RawSyscall {
-            number: 0,
-            args: [0; 6],
+            number: raw.number,
+            args: raw.args,
         })
     }
 
     fn read_retval(&self) -> Result<isize> {
-        Ok(0)
+        Ok(self.read_registers()?.retval)
     }
 
     pub fn handle_event(
@@ -231,6 +320,18 @@ pub struct SyscallInfo {
     pub number: i64,
     pub args: [u64; 6],
     pub retval: isize,
+}
+
+/// One syscall as the registers report it, together with the register file itself.
+///
+/// Returned by `Tracee::read_registers`; kept private because it exists only to carry
+/// those four values out of the arch-specific read in one step.
+#[derive(Debug, Clone, Default)]
+struct RegisterFile {
+    number: i64,
+    args: [u64; 6],
+    retval: isize,
+    registers: Registers,
 }
 
 /// Register state
