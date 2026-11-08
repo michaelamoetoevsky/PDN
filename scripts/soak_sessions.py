@@ -71,11 +71,39 @@ def find_container(binary):
     return "alpine" if "alpine" in names else names[0]
 
 
+REAL_STORE = os.path.join(os.path.expanduser("~"), ".podnext")
+
+
+def _guard(path):
+    """Refuse to act on the operator's real store.
+
+    Every path this harness touches is a container it will log into and SIGKILL, so a
+    path under the real store is a destructive accident waiting to happen
+    (ASEC2-ARCH-015, 2026-11-08). PN_TEST_ROOT/.podnext is the fixture store - the same
+    variable the CLI honours (crates/proot-distro-core/src/paths.rs:27-53) - and
+    PDN_ALLOW_REAL_STORE=1 is the deliberate, explicit opt-out.
+    """
+    real = os.path.realpath(path)
+    real_store = os.path.realpath(REAL_STORE)
+    under_real = real == real_store or real.startswith(real_store + os.sep)
+    if under_real and os.environ.get("PDN_ALLOW_REAL_STORE") != "1":
+        print(f"REFUSING: {path} is inside the real store {REAL_STORE}.")
+        print("This harness logs in and SIGKILLs container processes, so it must run against")
+        print("a fixture:  export PN_TEST_ROOT=<fixture-home>   (store = <fixture-home>/.podnext)")
+        print("To run against the real store deliberately, also export PDN_ALLOW_REAL_STORE=1.")
+        print("REFUSING is not a pass.")
+        sys.exit(2)
+    return path
+
+
 def container_rootfs(name):
     explicit = os.environ.get("PDN_ROOTFS")
     if explicit:
-        return explicit
-    return os.path.expanduser(f"~/.podnext/containers/{name}/rootfs")
+        return _guard(explicit)
+    test_root = os.environ.get("PN_TEST_ROOT")
+    if test_root:
+        return _guard(os.path.join(test_root, ".podnext", "containers", name, "rootfs"))
+    return _guard(os.path.join(REAL_STORE, "containers", name, "rootfs"))
 
 
 def skip(reason) -> NoReturn:

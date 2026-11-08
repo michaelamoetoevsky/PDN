@@ -119,3 +119,80 @@ producing one; what it tests is the *decision rule* the code uses, and on that r
 and the new one is right. A guest that survives its supervisor end-to-end was not produced in this harness
 (it needs the detached-session path, which exits 1 in a fixture store — recorded as a separate anomaly).
 
+---
+
+## ASEC2-ARCH-013 / 014 / 015 / 016 and QUOTA-014 — the stress harnesses pointed at the operator's real store
+
+**Found.** Three harnesses derived their paths from `HOME` and used fixed container names, so
+`casino_chaos_runner.py` renamed and killed the real `test-alpine`, `dice_monkey_test.py` renamed and
+reset the real `deb-renamed`/`ubuntu`/`alpine`, and `soak_sessions.py` logged into and SIGKILLed the real
+`alpine` (logins and kills measured by the assessment). `ASEC2-ARCH-016` explains why a
+`PN_TEST_ROOT`-only redirect was not enough: the CLI resolves `PN_TEST_ROOT -> HOME -> ...` and appends
+`.podnext` (`crates/proot-distro-core/src/paths.rs:27-53`) while the scripts resolved their own paths from
+`HOME`, so the CLI acted on a fixture and the script acted on the real store. `QUOTA-014` is the same shape
+inside the test rig: `tests/integration/common.rs` redirected services/runtime/log/cni to a tempdir but never
+the home, and `ResourceQuotaManager::new` persists to `resolve_home()/.podnext/quotas.json`
+(`crates/pn-next/src/resource_quota/mod.rs:190-196`). Evidence that it was not theoretical: the operator's
+`~/.podnext/quotas.json` existed with the single key `quota-service`, which is the harness's own test
+service name (`tests/integration/v2_criteria.rs:488,492`), and the harness ignored the write's `Result`
+(`common.rs:517`) so the leak made no noise.
+
+**An incident, recorded because it changed the fix.** The first version of the new guard was script-side
+only. Running it with `PN_TEST_ROOT` set to a fixture, the harness's own paths were on the fixture but the
+binary it invoked - `/data/data/com.termux/files/usr/bin/podnext`, hardcoded in the script - **ignores
+`PN_TEST_ROOT`**, so `podnext rename test-alpine test-alpine-rnd1` renamed the container in the OPERATOR's
+store. Measured before restoring: with `PN_TEST_ROOT` pointing at a fixture that held only `test-alpine`,
+the installed binary listed `alpine, deb-pdn, deb-renamed, pdn-bench, test-alpine, test-pdn-install, ubuntu`
+while the repo build listed only `test-alpine`. Restored and verified: the directory renamed back, and the
+two fields the rename had rewritten returned to their previous values
+(`name: test-alpine-rnd1 -> test-alpine`, `rootfs: .../test-alpine-rnd1/rootfs -> .../test-alpine/rootfs`),
+then a read (`podnext copy test-alpine:/etc/alpine-release` -> `3.18.12`) proved the record resolves again.
+
+**Action.** One shared guard (`scripts/pdn_fixture_guard.py`) with three refusals, used by every harness:
+
+1. `store_root()` - harness paths come from `PN_TEST_ROOT/.podnext`; a path landing on the real store is
+   refused unless `PDN_ALLOW_REAL_STORE=1` is set deliberately.
+2. `resolve_binary()` - the binary under test is `PDNEXT_BIN` or the repo's debug build, never an arbitrary
+   installed binary (the incident's cause).
+3. `assert_binary_honours_store()` - a read-only `list` must return exactly the fixture's containers
+   **before** the harness may do anything. This is the check that would have caught the incident.
+
+Every refusal exits 2 and prints "REFUSING is not a pass." so a skipped guard can never be read as a
+passing harness. `seed_fixture()` creates the named containers; `casino` seeds one from the real rootfs
+(read-only copy, `tar` because a rootfs holds mode-000 bind directories that stop `cp -a`) and `dice` seeds
+four with an empty rootfs and says so, because it only exercises the store side.
+
+**Change (2026-11-08).**
+- new `scripts/pdn_fixture_guard.py`
+- `scripts/soak_sessions.py`: `container_rootfs()` derives from `PN_TEST_ROOT` and refuses the real store
+  (`_guard`), with `PDN_ALLOW_REAL_STORE=1` as the explicit opt-out.
+- `scripts/casino_chaos_runner.py`: `store_root()` + `seed_fixture()` + `resolve_binary()` +
+  `assert_binary_honours_store()` before any chaos; `CONTAINERS_DIR` now derives from the fixture.
+- `scripts/dice_monkey_test.py`: imports the guard; `PODNEXT_BIN`, `LOCK_DIR_PN_NEXT`, `LOCK_DIR_PODNEXT`,
+  `SESSIONS_DIR` and the seeded targets all derive from the fixture.
+- `tests/integration/common.rs`: `std::env::set_var("PN_TEST_ROOT", &temp_dir)` before the quota manager is
+  constructed (edition 2021, so no `unsafe`; the same pattern already exists at
+  `crates/proot-distro-core/tests/store_integrity.rs:59`).
+
+**Verification.**
+- `soak`: refusal `rc=2` with a named message; predicate checked three ways - `SystemExit(2)` with no
+  opt-out, the path returned under `PDN_ALLOW_REAL_STORE=1`, and a path outside the store passing with no
+  opt-out (no false refusal).
+- `casino`: with the installed binary the probe refuses `rc=2` and prints the fixture's names against the
+  real ones; with the repo build the probe passes and the chaos starts. Real store unchanged: 10 containers,
+  `test-alpine` present, 0 `rnd*`, 0 sessions.
+- `dice`: same two directions, fixture holding `['alpine','deb-pdn','deb-renamed','ubuntu']`; real store
+  unchanged.
+- `QUOTA-014`: `cargo test -p pdn-integration-tests --test v2_criteria -- test_all_v2_criteria` ->
+  `1 passed; 0 failed` in 247.88 s (heavy label `v2crit`, peak 1839 MB). The operator's
+  `~/.podnext/quotas.json` is byte-identical before and after - sha256 `d9e496855b74f52f`, mtime
+  `05 Nov 13:55` - while that test does call `set_resource_quota("quota-service", "memory", 50 MiB)`.
+- `cargo fmt --all -- --check` rc=0; `scripts/local_gate.sh --cargo` (label `p2-gate`).
+
+**Not done, and said plainly.** `casino_chaos_runner.py` still carries an inline copy of the guard rather
+than importing the shared module; the copy is behaviourally identical and was verified, but two copies of a
+safety guard can drift, so folding it onto `pdn_fixture_guard` is a follow-up. The harness report path
+(`scripts/casino_chaos_report.json` is a tracked file) means a run rewrites a tracked artifact; that was
+reverted after the test run and is a harness-hygiene item outside these findings.
+
+

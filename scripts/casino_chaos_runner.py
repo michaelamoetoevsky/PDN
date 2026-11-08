@@ -24,11 +24,143 @@ from typing import List, Dict, Any, Tuple
 HOME = Path(os.environ.get("HOME", "/data/data/com.termux/files/home"))
 SCRATCH = Path("/data/data/com.termux/files/home/.hermes/cache/scratch/casino_chaos")
 SCRATCH.mkdir(parents=True, exist_ok=True)
-PODNEXT_BIN = "/data/data/com.termux/files/usr/bin/podnext"
 REPORT_PATH = HOME / "workspace" / "PDN" / "scripts" / "casino_chaos_report.json"
 
 TARGET = "test-alpine"
-CONTAINERS_DIR = HOME / ".podnext" / "containers"
+
+REAL_STORE = Path(os.path.expanduser("~")) / ".podnext"
+
+
+def resolve_binary() -> str:
+    """The binary under test: `PDNEXT_BIN`, else this repo's debug build.
+
+    Never an arbitrary installed/PATH binary. On 2026-11-08 an installed `podnext` that
+    predated `PN_TEST_ROOT` support ignored the fixture store, so a chaos run renamed a
+    container in the operator's REAL store while the harness believed it was on a fixture.
+    Refusing is cheap; that was not.
+    """
+    explicit = os.environ.get("PDNEXT_BIN")
+    if explicit:
+        return explicit
+    candidate = Path(__file__).resolve().parent.parent / "target" / "debug" / "podnext"
+    if candidate.exists():
+        return str(candidate)
+    print(f"REFUSING: no binary given and {candidate} does not exist.")
+    print("Build it (`cargo build -p podnext --bin podnext`) or export PDNEXT_BIN=<path>.")
+    print("REFUSING is not a pass.")
+    sys.exit(2)
+
+
+def store_root() -> Path:
+    """The store this harness may touch: `PN_TEST_ROOT/.podnext`, never the real one.
+
+    The CLI resolves `PN_TEST_ROOT -> HOME -> ...` and appends `.podnext`
+    (`crates/proot-distro-core/src/paths.rs:27-53`), so honouring the same variable keeps
+    the harness and the binary looking at ONE store (ASEC2-ARCH-016). This script renames
+    containers, kills them and rewrites their `metadata.json`, so a path that lands on the
+    operator's store is refused unless `PDN_ALLOW_REAL_STORE=1` is exported deliberately
+    (ASEC2-ARCH-013, 2026-11-08).
+    """
+    test_root = os.environ.get("PN_TEST_ROOT")
+    root = Path(test_root) / ".podnext" if test_root else REAL_STORE
+    real, real_store = root.resolve(), REAL_STORE.resolve()
+    if (real == real_store or real_store in real.parents) and os.environ.get(
+        "PDN_ALLOW_REAL_STORE"
+    ) != "1":
+        print(f"REFUSING: store {root} is the operator's real store.")
+        print("This harness renames, kills and rewrites containers, so it must run against a")
+        print("fixture:  export PN_TEST_ROOT=<fixture-home>   (store = <fixture-home>/.podnext)")
+        print("The fixture container is seeded automatically. To run against the real store")
+        print("deliberately, also export PDN_ALLOW_REAL_STORE=1.")
+        print("REFUSING is not a pass.")
+        sys.exit(2)
+    return root
+
+
+def seed_fixture(store: Path) -> None:
+    """Ensure `<store>/containers/<TARGET>` exists before the chaos starts.
+
+    A missing fixture container would make every operation fail for the wrong reason. The
+    rootfs is copied out of the operator's store, which only READS it, and `tar` is used
+    rather than `cp -a` because a rootfs contains mode-000 bind directories that make
+    `cp -a` stop with exit 1.
+    """
+    target_dir = store / "containers" / TARGET
+    rootfs = target_dir / "rootfs"
+    if rootfs.is_dir():
+        return
+    target_dir.mkdir(parents=True, exist_ok=True)
+    rootfs.mkdir(parents=True, exist_ok=True)
+    source = REAL_STORE / "containers" / TARGET / "rootfs"
+    if source.is_dir():
+        producer = subprocess.Popen(
+            ["tar", "--ignore-failed-read", "-cf", "-", "-C", str(source), "."],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["tar", "-xf", "-", "-C", str(rootfs)],
+            stdin=producer.stdout,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if producer.stdout is not None:
+            producer.stdout.close()
+        producer.wait()
+        print(f"seeded {target_dir} from {source} (read-only copy)")
+    else:
+        print(
+            f"seeded {target_dir} with an EMPTY rootfs: {source} does not exist, so the guest"
+            " commands the chaos issues will fail and only the store-side operations mean"
+            " anything"
+        )
+    meta = target_dir / "metadata.json"
+    if not meta.exists():
+        meta.write_text(json.dumps({"name": TARGET, "image": "alpine", "rootfs": "rootfs"}))
+
+
+def assert_binary_honours_store(binary: str, store: Path) -> None:
+    """Prove the binary acts on the fixture BEFORE it is allowed to act at all.
+
+    A binary that ignores PN_TEST_ROOT renames, kills and rewrites containers in the
+    operator's real store while the harness believes it is on a fixture - measured on
+    2026-11-08. The probe is a read-only `list`: what it lists must be exactly the fixture's
+    containers. Skipped only under the deliberate `PDN_ALLOW_REAL_STORE=1` opt-out.
+    """
+    if os.environ.get("PDN_ALLOW_REAL_STORE") == "1":
+        return
+    containers = store / "containers"
+    expected = {p.name for p in containers.iterdir() if p.is_dir()} if containers.is_dir() else set()
+    env = dict(os.environ, PN_TEST_ROOT=str(store.parent))
+    try:
+        proc = subprocess.run(
+            [binary, "list"], env=env, capture_output=True, text=True, timeout=60
+        )
+    except Exception as exc:  # noqa: BLE001 - a probe that cannot run must refuse, not guess
+        print(f"REFUSING: could not run `{binary} list` to prove the store is the fixture: {exc}")
+        sys.exit(2)
+    seen = set()
+    for line in proc.stdout.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cells and cells[0] and cells[0] != "NAME" and set(cells[0]) != {"-"}:
+            seen.add(cells[0])
+    if seen != expected:
+        print(f"REFUSING: {binary} does not act on the fixture store.")
+        print(f"  PN_TEST_ROOT={store.parent}")
+        print(f"  the fixture holds {sorted(expected)}")
+        print(f"  the binary listed {sorted(seen)}")
+        print("A binary that ignores PN_TEST_ROOT would touch the REAL store, so this harness")
+        print("refuses. Use the repo build (target/debug/podnext) or export PDNEXT_BIN=<path>.")
+        print("REFUSING is not a pass.")
+        sys.exit(2)
+
+
+PODNEXT_BIN: str = resolve_binary()
+CONTAINERS_DIR = store_root() / "containers"
+seed_fixture(CONTAINERS_DIR.parent)
+assert_binary_honours_store(PODNEXT_BIN, CONTAINERS_DIR.parent)
 
 def run_cmd(cmd: List[str], timeout: float = 15.0) -> Dict[str, Any]:
     t0 = time.perf_counter()

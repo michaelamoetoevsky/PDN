@@ -125,6 +125,16 @@ impl TestEnvironment {
         let watchdog = WatchdogManager::new(watchdog_config);
 
         // Quota manager
+        //
+        // QUOTA-014 (2026-11-08): `ResourceQuotaManager::new` persists to
+        // `resolve_home()/.podnext/quotas.json` (crates/pn-next/src/resource_quota/mod.rs:190-196),
+        // and `resolve_home` reads PN_TEST_ROOT before HOME
+        // (crates/proot-distro-core/src/paths.rs:27-53). Every other directory in this rig is
+        // already redirected to a tempdir, so without this line the harness's `set_resource_quota`
+        // wrote the OPERATOR's quota store. The redirect is process-wide and the first harness to
+        // set it wins, so a second instance may share this fixture's store - both are tempdirs,
+        // which is the property that matters: it is never the real one.
+        std::env::set_var("PN_TEST_ROOT", &temp_dir);
         let quota_config = ResourceQuotaConfig::default();
         let quota_manager = ResourceQuotaManager::new(quota_config);
 

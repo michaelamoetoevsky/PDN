@@ -18,13 +18,29 @@ from typing import List, Dict, Any, Tuple, Optional
 HOME = Path(os.environ.get("HOME", "/data/data/com.termux/files/home"))
 TMPDIR = Path(os.environ.get("TMPDIR", "/data/data/com.termux/files/usr/tmp"))
 SCRATCH_DIR = TMPDIR / "podnext_monkey_scratch"
-PODNEXT_BIN = Path("/data/data/com.termux/files/usr/bin/podnext")
-LOCK_DIR_PN_NEXT = HOME / ".pn-next" / "locks"
-LOCK_DIR_PODNEXT = HOME / ".podnext" / "locks"
-SESSIONS_DIR = HOME / ".podnext" / "sessions"
+
+# ASEC2-ARCH-014 (2026-11-08): this harness renames containers, resets them, syncs over them
+# with --delete and reads their session files. It used to derive every path from HOME with
+# fixed target names, which aimed all of that at the operator's real store. The store, the
+# lock and session directories, the binary under test and the targets now come from the
+# fixture guard, which refuses rather than guesses (scripts/pdn_fixture_guard.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pdn_fixture_guard as guard  # noqa: E402 - imported after sys.path on purpose
+
+PODNEXT_BIN = Path(guard.resolve_binary())
+STORE = guard.store_root()
+LOCK_DIR_PN_NEXT = STORE.parent / ".pn-next" / "locks"
+LOCK_DIR_PODNEXT = STORE / "locks"
+SESSIONS_DIR = STORE / "sessions"
 
 VALID_TARGETS = ["deb-pdn", "ubuntu", "alpine"]
 ALL_TARGETS = ["deb-pdn", "ubuntu", "alpine", "nonexistent-target", "deb-renamed"]
+
+# An empty rootfs is enough here: this harness exercises the store side (rename, reset, sync,
+# lock races), and copying four real rootfs trees would cost hundreds of megabytes to test
+# paths that never enter the guest. Seeding says so out loud.
+guard.seed_fixture(STORE, [*VALID_TARGETS, "deb-renamed"], copy_rootfs=False)
+guard.assert_binary_honours_store(str(PODNEXT_BIN), STORE)
 
 COMMANDS = [
     "list",
