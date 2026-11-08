@@ -63,17 +63,29 @@ impl GuardrailManager {
                             ));
                         }
                         GuardrailAction::Throttle => {
-                            // Apply throttling
-                            warn!("Throttling due to guardrail: {}", rule.name);
+                            // Nothing in this engine throttles a container: there is no enforcement
+                            // point here. Measured 2026-11-08, this arm logged
+                            // "Throttling due to guardrail", which reads as an applied limit. The
+                            // message now says what happened (a violation was recorded) and what did
+                            // not (no throttle was applied by this engine).
+                            warn!(
+                                "Guardrail '{}' triggered (throttle requested, NOT applied by this \
+                                 engine): {}",
+                                rule.name, result.message
+                            );
                         }
                         GuardrailAction::Warn => {
-                            warn!("Guardrail warning: {} - {}", rule.name, result.message);
+                            warn!("Guardrail '{}' warning: {}", rule.name, result.message);
                         }
                         GuardrailAction::Quarantine => {
-                            warn!("Quarantining due to guardrail: {}", rule.name);
+                            warn!(
+                                "Guardrail '{}' triggered (quarantine requested, NOT applied by this \
+                                 engine): {}",
+                                rule.name, result.message
+                            );
                         }
                         GuardrailAction::Alert => {
-                            warn!("ALERT: {}", rule.name);
+                            warn!("Guardrail '{}' alert: {}", rule.name, result.message);
                         }
                         GuardrailAction::Allow => {}
                     }
@@ -84,14 +96,24 @@ impl GuardrailManager {
         Ok(())
     }
 
+    /// Condition evaluation is not implemented here, so this refuses instead of answering `false`.
+    ///
+    /// It used to return `Ok(false)` unconditionally, which reads as "the condition does not hold" -
+    /// a claim about the condition, made without evaluating it. Nothing in the tree called it
+    /// (measured 2026-11-08: the only `evaluate` call sites are the registered evaluators in
+    /// `check_all` and the separate `pn-next` policy engine), so failing closed costs nothing and
+    /// stops a future caller from trusting an answer that was never computed.
     pub async fn check_condition(
         &self,
-        _condition: &str,
+        condition: &str,
         _context: &HashMap<String, serde_json::Value>,
     ) -> Result<bool> {
-        // Simple condition evaluation (in production, use a proper expression parser)
-        // This is a simplified implementation
-        Ok(false)
+        anyhow::bail!(
+            "no condition language is implemented for '{}'; this engine evaluates rules through the \
+             evaluators registered by rule name in check_all, and a silent `false` would be a claim \
+             it never made",
+            condition
+        )
     }
 
     fn record_violation(&self, rule: &GuardrailRule, result: &EvaluationResult) -> Result<()> {
@@ -408,4 +430,74 @@ fn get_disk_usage_percent(_path: &str) -> Result<f64> {
 
 fn check_privileged_containers() -> Result<bool> {
     Ok(false) // Mock
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{GuardrailConfig, GuardrailRule};
+
+    fn rule(action: GuardrailAction) -> GuardrailRule {
+        GuardrailRule {
+            // The evaluator is looked up BY RULE NAME, so the name has to be the metric it evaluates.
+            name: "container_count".to_string(),
+            description: "test rule".to_string(),
+            // `container_count >= 0` is always true, so the evaluator really triggers and the arm
+            // under test runs. A condition that can never fire would make every arm look correct.
+            // Note the metric itself is a mock (`get_container_count() -> Ok(0)`), which is why the
+            // honest statement about this engine is that it cannot judge anything real yet.
+            condition: "container_count >= 0".to_string(),
+            action,
+            severity: Severity::Warning,
+        }
+    }
+
+    fn manager_for(action: GuardrailAction) -> GuardrailManager {
+        GuardrailManager::new(GuardrailConfig {
+            enabled: true,
+            rules: vec![rule(action)],
+            strict_mode: false,
+            audit_log: false,
+        })
+    }
+
+    /// `Deny` must still stop the check, and no other action may fail it. The engine has no
+    /// enforcement point, so its arms used to log "Throttling due to guardrail" for a throttle
+    /// nothing applied (ASEC2-ARCH-006/007/009, measured 2026-11-08).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deny_stops_and_the_other_actions_do_not_fail_the_check() {
+        let error = manager_for(GuardrailAction::Deny)
+            .check_all()
+            .expect_err("a triggered Deny must stop the check");
+        assert!(
+            format!("{error}").contains("denied"),
+            "the refusal must name the rule: {error}"
+        );
+
+        for action in [
+            GuardrailAction::Throttle,
+            GuardrailAction::Quarantine,
+            GuardrailAction::Alert,
+            GuardrailAction::Warn,
+            GuardrailAction::Allow,
+        ] {
+            manager_for(action.clone())
+                .check_all()
+                .unwrap_or_else(|error| panic!("{action:?} must not fail the check: {error}"));
+        }
+    }
+
+    /// An unimplemented condition must refuse instead of answering `false`, which reads as "the
+    /// condition does not hold" - a claim about a condition the engine never evaluated.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unimplemented_condition_refuses() {
+        let error = GuardrailManager::new(GuardrailConfig::default())
+            .check_condition("container_count >= 0", &HashMap::new())
+            .await
+            .expect_err("no condition language is implemented");
+        assert!(
+            format!("{error}").contains("no condition language"),
+            "the refusal must name the reason: {error}"
+        );
+    }
 }

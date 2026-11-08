@@ -328,6 +328,43 @@ that can assert "the platform lock is gone" without a device, so the release arm
 above and by nothing else. Both directions were also observed to be genuinely observable (the count went
 0 -> 1 -> 0 with the observer, not inferred from the CLI's own message).
 
+---
+
+## ASEC2-ARCH-006 / 007 / 009 (guardrails) — the engine claimed enforcement it does not perform
+
+**Found.** In `check_all` (`crates/pn-gateway/src/guardrails.rs:57-81`) only `Deny` returns an error. The
+`Throttle` arm logged `"Throttling due to guardrail: <rule>"` under a `// Apply throttling` comment while
+applying nothing, and `Quarantine` logged `"Quarantining due to guardrail"` likewise. `check_condition`
+(`:89-95`) returned `Ok(false)` unconditionally, which reads as "the condition does not hold" - a claim
+about a condition it never evaluated.
+
+**Two facts larger than the messages, measured while fixing them.**
+- `GuardrailManager` is **never constructed outside its own tests**: a grep for `GuardrailManager` and
+  `guardrails` across `crates/podnext/src` and `crates/pn-next/src` returns nothing, so no CLI path reaches
+  this engine (the live policy path is the separate `pn-next` policy engine, used by `podnext policy eval`).
+- Every metric the evaluators read is a **mock**: `get_container_count() -> Ok(0)`,
+  `get_memory_usage_percent() -> Ok(0.0)`, `get_cpu_usage_percent() -> Ok(0.0)`,
+  `get_disk_usage_percent() -> Ok(0.0)`, `check_privileged_containers() -> Ok(false)` (`:415-433`). Even if
+  it were reachable, it could not judge anything real.
+
+**Change (2026-11-08).** `crates/pn-gateway/src/guardrails.rs`
+- `:57-89` - the `Throttle` and `Quarantine` arms now say the action was *requested and NOT applied by this
+  engine* and carry the rule's own message; `Warn` and `Alert` name the rule and the message.
+- `:96-112` - `check_condition` refuses by name: no condition language is implemented here, and a silent
+  `false` is a claim the engine never made. Nothing in the tree called it, so this costs no caller.
+- `:437-503` - a test module (the file had none): a triggered `Deny` must stop the check while
+  `Throttle`/`Quarantine`/`Alert`/`Warn`/`Allow` must not fail it, and `check_condition` must refuse. The
+  rule condition is `container_count >= 0`, which the evaluator really triggers - a condition that never
+  fires would make every arm look correct.
+
+**Verification.** `cargo test -p pn-gateway guardrails` -> `2 passed; 0 failed` (heavy label `guard`, 31 s,
+peak 1015 MB). `cargo fmt --all -- --check` clean.
+
+**Not fixed, and named as such.** Reachability (nothing constructs the manager) and the mock inputs are
+product decisions - wiring an engine that cannot measure anything into the CLI would be worse than leaving
+it unreachable - so they are recorded in the honesty register instead of patched around. What is fixed is
+that the engine no longer *claims* what it does not do.
+
 
 
 
