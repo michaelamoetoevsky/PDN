@@ -1191,4 +1191,32 @@ without `--cold` returned rc 0; now rc 2 naming the six unseen targets. Empty lo
 **Not demonstrated, stated as such.** The real `--cold` compare path and the `record --cold` write path
 were not run (budget); the exact CI sequencing (build-then-warm-check) is not reachable on-device
 cheaply. The stale comment in `.github/workflows/issue-ledger.yml:122-125` still asserts the withdrawn
-warm-zero premise and was left untouched, flagged here instead.
+warm-zero premise and was left untouched, flagged here instead.## p7 step 6 follow-up: the help fixture, a global option, and a predicate pinned to commentary (2026-11-09)
+
+**Finding 1 - a global option reflows every screen.** Adding `--engine` with `global = true` and a
+three-line doc comment (which clap turns into `long_help`) made clap switch to next-line layout on
+**every** screen the option reaches: `research/cli-help-baseline.txt` went 4733 -> 10168 lines for an
+eight-line option. The gate caught it (`dump differs from research/cli-help-baseline.txt`). The fix is
+not to re-pin a 5,435-line diff nobody can review: the detail moved into a plain `//` comment and the
+doc line became single-line, so the option renders compactly again. Re-pinned with the gate's own
+generator, after rebuilding: +223 lines, 123 hunks, and filtering the `--engine` lines out of the diff
+leaves **zero** changes - the whole diff is the one flag appearing on every screen, which is what
+`global` means.
+
+**Finding 2 - a ledger predicate pinned the self-check's wording, not its behaviour.** `#69`'s predicate
+ran `check_warnings.py self-check` and looked for `fires on growth`. The self-check passed (rc 0) but now
+says `red on growth` and additionally refuses a partial measurement, so the predicate failed on prose
+while the property it stands for had got *stronger*. The needle moved with the sentence and a second
+predicate asserts the partial refusal ("refuses BOTH an empty and a partial"). A predicate pinned to
+commentary is a record of a past decision, not a law.
+
+**Measured state after both fixes.** Gate GREEN, `136 PASS, 0 FAIL, 0 SKIPPED (of 136)`, exit 0, 1073 s,
+run in a clean shell. CI on `656f8ea`: 15 runs, 15 success, 0 failures. Commits `0508656` (acceptance
+harness: `[engine-native] exit=0 ran=True` with no proot on PATH and `PROOT_BIN` missing, default arm
+still failing by design) and `656f8ea` (this follow-up).
+
+**Fixture leak, recorded rather than fixed here.** `crates/proot-core/tests/native_dynamic_guest.rs`
+cleans its root at line 177 *before* the test and never after, so each run of `cargo test -p proot-core`
+leaves `$PREFIX/tmp/p7-loader-<pid>-dyn/` behind (six were present when this was measured, each with
+`rootfs/p7loader/lib/{libc.so,libdl.so,libpdnflag.so}` and `rootfs/bin/hello`). Harmless but unbounded;
+the teardown belongs with the test that owns it.
