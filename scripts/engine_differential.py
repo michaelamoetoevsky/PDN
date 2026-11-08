@@ -30,6 +30,8 @@ import pdn_fixture_guard as guard  # noqa: E402  (path set above)
 CONTAINER = "engine-differential"
 RUNPATH_IN_ROOTFS = "/p7loader/lib"
 MARKER_IN_ROOTFS = "/differential-marker.txt"
+# Written with a RELATIVE path, so its landing place IS the starting directory's effect.
+RELATIVE_MARKER = "relative-marker.txt"
 RUNS = 3
 
 GUEST_SOURCE = r"""
@@ -51,6 +53,12 @@ int main(int argc, char **argv) {
     printf("sysfs=%s\n", access("/sys", R_OK) == 0 ? "readable" : "absent");
     printf("uid=%d\n", (int)getuid());
     printf("euid=%d\n", (int)geteuid());
+    /* A RELATIVE path: where it lands is the starting directory's effect, without needing
+     * getcwd() virtualisation - proot shows the guest "/" while the native engine shows the
+     * translated host path, and only the effect is comparable. */
+    FILE *r = fopen("relative-marker.txt", "w");
+    if (r) { fprintf(r, "relative-write-ok\n"); fclose(r); }
+    else { printf("relative-write-failed\n"); }
     FILE *f = fopen("/differential-marker.txt", "w");
     if (f) { fprintf(f, "written-by-guest\n"); fclose(f); }
     else { printf("marker-write-failed\n"); }
@@ -135,7 +143,7 @@ def build_guest(rootfs: pathlib.Path) -> pathlib.Path:
 
 
 def clear_effects(rootfs: pathlib.Path) -> None:
-    for path in (rootfs / MARKER_IN_ROOTFS.lstrip("/"),):
+    for path in (rootfs / MARKER_IN_ROOTFS.lstrip("/"), rootfs / RELATIVE_MARKER):
         if path.exists():
             path.unlink()
 
@@ -150,11 +158,14 @@ def run_arm(label: str, argv: list[str], env: dict, rootfs: pathlib.Path) -> dic
         proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=180)
         times.append(time.monotonic() - started)
         marker = rootfs / MARKER_IN_ROOTFS.lstrip("/")
+        relmarker = rootfs / RELATIVE_MARKER
         last = {
             "exit": proc.returncode,
             "stdout": proc.stdout or "",
             "stderr": proc.stderr or "",
             "marker": marker.read_text() if marker.exists() else None,
+            # Where the RELATIVE write landed: the starting directory's effect, measurable in both engines.
+            "relmarker": relmarker.read_text() if relmarker.exists() else None,
             "attempt": attempt + 1,
         }
     last["wall_s"] = {
@@ -229,11 +240,14 @@ def main() -> int:
             continue
         same = fp.get(key) == fn.get(key)
         print(f"  {key:<6}: {'same' if same else 'DIFFERS'}   proot={fp.get(key)!r} native={fn.get(key)!r}")
-        if not same:
+        # `cwd` is INFORMATIONAL, not a verdict field: proot virtualises getcwd() so its guest sees "/",
+        # while the native engine translates guest paths to host paths and does not virtualise the
+        # answer. Only the EFFECT of the starting directory is comparable, and `relmarker` measures it.
+        if not same and key != "cwd":
             field_differences.append(key)
     print("\n=== differential ===")
     differences = []
-    for key in ("exit", "stdout", "marker"):
+    for key in ("exit", "stdout", "marker", "relmarker"):
         same = proot[key] == native[key]
         print(f"  {key:<7}: {'same' if same else 'DIFFERS'}   proot={proot[key]!r} native={native[key]!r}")
         if not same:
@@ -251,6 +265,7 @@ def main() -> int:
     # things unmeasured understates the evidence on purpose-built grounds.
     print("\nNOT COMPARED here, so this is not a parity proof for them:")
     for item in (
+        "guest-visible path virtualisation: proot reports getcwd() as \"/\" and /proc/self/exe as a guest path, the native engine reports host paths (only the EFFECT is compared here)",
         "the remaining synthesised mounts (/dev, /sys and the Android bind set) - only /proc was probed",
         "hostname, kernel release, and bind-mount readonly semantics",
         "namespaces and clone flags",

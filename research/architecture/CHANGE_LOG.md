@@ -1330,4 +1330,61 @@ proot arm come from **proot's own default setup**, which means native parity has
 deliberately (bind them, or emulate them) rather than inherited from the container record.
 
 This is now five causes behind six differing fields: cwd (no chdir), devnull, proc, sysfs (no synthetic
-mounts), and uid/euid (no id mapping). Env is the one field that already agrees.
+mounts), and uid/euid (no id mapping). Env is the one field that already agrees.## p7 step 8, gap 1 of 3: the starting directory, and the over-refusal it exposed (2026-11-09 03:30 WIB)
+
+**Delegated to `deleg_901d9bfc`** (worktree `wt-p7cwd`, branch `dept/p7-cwd`, base `36ff688`), verified by
+the parent from the tree rather than from the report: `b43afbe`, 4 files, +287/-13, `pub cwd: Option<String>`
+at `native_run.rs:185`, `resolve_cwd` at `:1417`, `session.rs:364` sets
+`cwd: Some(working_dir.unwrap_or("/"))`, test `the_engine_chdirs_the_guest_into_the_plans_cwd` at
+`native_exec_translation.rs:684`. Cherry-picked as `58ea7e5` (auto-merged the one forced line in
+`native_dynamic_guest.rs`, which the parent's `FixtureGuard` commit had meanwhile touched).
+
+Design points the parent checked in the code, because they are the risk: `cwd_host` is resolved ONCE in
+`run_native` before the fork, so a refusal is an `Err` from `run_native` rather than a child exit code; the
+child issues a RAW `SYS_chdir` (a preloaded library can interpose `libc::chdir`, the same trap `execve`
+hit) and `_exit(126)` if it fails; the parent loop exempts the engine's own pre-exec `chdir` only for
+`pid == child && !slots[idx].execve_handled`, so a guest `chdir` after the exec is still the unhandled
+path syscall it always was. Non-absolute or `..`-containing cwd is a NAMED refusal.
+
+**Measured end-to-end by the parent** (the child declared this UNVERIFIED, correctly - it cannot run the
+CLI harness without the operator's store). Rebuild `target/debug/podnext` in 137 s, then
+`scripts/engine_differential.py`:
+
+| field | proot | native | before this commit | verdict |
+|---|---|---|---|---|
+| `cwd` (guest string) | `/` | `<fixture>/containers/engine-differential/rootfs` | the podnext process's own cwd, and it MOVED between runs (repo path once, the fixture rootfs another time) | informational, see below |
+| `relmarker` (relative write) | `relative-write-ok` | `relative-write-ok` | n/a | **same** |
+| `marker` (absolute write) | `written-by-guest` | `written-by-guest` | same | same |
+| `envp` probe | `<unset>` | `<unset>` | same | same |
+| `devnull` / `proc` / `sysfs` | `writable` / `readable` / `readable` | `absent` / `absent` / `absent` | same | differs |
+| `uid`/`euid` | `0`/`0` | `10396`/`10396` | same | differs |
+| wall time (median of 3) | 0.156 s | 0.107 s | - | native faster |
+
+`cwd` became an INFORMATIONAL field, with the reason in the harness: proot virtualises `getcwd()` so its
+guest sees `/`, while the native engine translates guest paths to host paths and does not virtualise the
+answer. The comparable property is the EFFECT of the starting directory, which `relmarker` measures by
+writing a RELATIVE path and checking where it lands - and it lands in the container on both engines. That
+is the parity claim for this increment, stated as the effect rather than as a string.
+
+**NEW FINDING, produced by that very measurement: the engine now refuses runs that were correct.** With the
+cwd translated, a relative guest path is resolved by the kernel against a directory that is already inside
+the rootfs, so it cannot escape. The engine nevertheless records it as an untranslated path syscall and
+fails the whole run:
+
+```
+Error: the native engine did not translate 1 path syscall(s): SYS_openat (56) [its path could not be
+translated (unreadable, empty or relative); the HOST path is not used as a fallback]. ... The engine does
+NOT fall back to proot; run under `--engine proot` for full path coverage.
+```
+while `rootfs/relative-marker.txt` (18 bytes) is present - the write SUCCEEDED. All three manual runs
+exited 1, so it is deterministic, not a flake. Before this commit the same refusal was CORRECT: with the
+cwd left at the host's directory, a relative path really did resolve on the host. The rule "refuse rather
+than silently fall back" is right; its scope is now one step too wide, and the fix is either to translate
+`AT_FDCWD`-relative paths against the known translated cwd (the engine knows it now) or to name them as a
+distinct, safe class instead of as an untranslated fallback. That is the next increment, and it was found
+only because the differential compares EFFECTS rather than strings.
+
+**Stale prose, clarified rather than left alone:** `native_dynamic_guest.rs:411-413` and
+`podnext/src/native.rs:311-314` describe `SYS_chdir` as "a path-taking syscall with no translator". Still
+true of a GUEST `chdir`; the clause added says the engine's own pre-exec `chdir` is exempt because it is
+handed an already-translated host path.

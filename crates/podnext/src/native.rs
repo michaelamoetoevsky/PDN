@@ -311,7 +311,8 @@ mod engine_wiring_tests {
     /// A path syscall the engine could not translate is a NAMED, hard error: the guest path would
     /// have been resolved on the HOST, and the engine must NOT fall back to proot. `SYS_chdir` is a
     /// path-taking syscall with no translator (`native_run::unhandled_path_syscall`), the cheapest
-    /// such case - the same one the engine's own test names.
+    /// such case - the same one the engine's own test names. A GUEST chdir is the case here; the
+    /// engine's own pre-exec chdir into `RunPlan::cwd` (2026-11-09) is exempt, being a host path.
     #[test]
     fn an_untranslated_path_is_a_named_error_and_not_a_fallback_to_proot() {
         let report = report(

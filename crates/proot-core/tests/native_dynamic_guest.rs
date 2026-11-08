@@ -411,7 +411,9 @@ fn a_dynamic_guest_runs_inside_the_rootfs() {
     );
     // A syscall that TAKES A PATH and has no translator here is named, so `strict` stops on it
     // instead of letting the kernel resolve a guest path on the host. `SYS_chdir` is the cheapest
-    // such case; the engine's own dispatcher is what this asserts is wired.
+    // such case; the engine's own dispatcher is what this asserts is wired. This is about a GUEST
+    // chdir: the engine's own pre-exec chdir (RunPlan::cwd, 2026-11-09) is exempt because the path it
+    // receives is already the translated HOST path.
     assert_eq!(
         proot_core::native_run::syscall_name(libc::SYS_chdir as i64),
         Some("SYS_chdir"),
