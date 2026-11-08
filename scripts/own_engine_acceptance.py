@@ -35,6 +35,10 @@ from pdn_fixture_guard import assert_binary_honours_store, resolve_binary, seed_
 
 CONTAINER = "own-engine-acceptance"
 GUEST_MARKER = "guest-ran-inside-the-rootfs"
+# Libraries the guest needs are placed HERE inside the rootfs and the guest is linked with this as its
+# DT_RUNPATH, so the loader resolves them through the engine's path translation. Mirrors the recipe the
+# engine's own test (crates/proot-core/tests/native_dynamic_guest.rs) proves.
+RUNPATH_IN_ROOTFS = "/p7loader/lib"
 
 
 def build_guest(rootfs: pathlib.Path) -> pathlib.Path:
@@ -59,13 +63,20 @@ def build_guest(rootfs: pathlib.Path) -> pathlib.Path:
         "#include <stdio.h>\n"
         "int main(void) { printf(\"%s\\n\", \"" + GUEST_MARKER + "\"); return 0; }\n"
     )
-    proc = subprocess.run([cc, "-o", str(dst), str(src)], capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(
+        [cc, "-o", str(dst), str(src), "-Wl,-rpath," + RUNPATH_IN_ROOTFS],
+        capture_output=True, text=True, timeout=180,
+    )
     if proc.returncode != 0:
         print(f"REFUSING: could not build the guest fixture with {cc}: {proc.stderr.strip()[:300]}")
         raise SystemExit(2)
     dst.chmod(0o755)
 
-    # The interpreter, then every NEEDED library, copied to the same absolute path inside the rootfs.
+    # The interpreter stays at its absolute host path (the kernel opens it before the tracee runs, so it
+    # cannot be translated), but every NEEDED library goes into the RUNPATH directory INSIDE the rootfs.
+    # That is the recipe the engine's own test proves: libraries resolved through DT_RUNPATH are opened
+    # by the guest's loader and translated, while copying Android's /system/lib64 stubs next to a
+    # Termux-linked binary fails to link (measured).
     needed: list[str] = []
     interp = subprocess.run(
         ["readelf", "-l", str(dst)], capture_output=True, text=True, timeout=60
@@ -83,9 +94,6 @@ def build_guest(rootfs: pathlib.Path) -> pathlib.Path:
     for path in needed:
         source = pathlib.Path(path)
         if not source.exists():
-            # Android's bionic has no libdl.so / libm.so FILES: the linker satisfies those DT_NEEDED
-            # entries from libc.so. Say so rather than silently dropping them - and rather than
-            # refusing, because the guest's own execution is the real assertion below.
             for directory in search:
                 candidate = directory / pathlib.Path(path).name
                 if candidate.exists():
@@ -94,11 +102,14 @@ def build_guest(rootfs: pathlib.Path) -> pathlib.Path:
             else:
                 implied.append(path)
                 continue
-        target = rootfs / path.lstrip("/")
+        if path.startswith("/") and "linker" in path:
+            target = rootfs / path.lstrip("/")          # the interpreter keeps its absolute path
+        else:
+            target = rootfs / RUNPATH_IN_ROOTFS.lstrip("/") / pathlib.Path(path).name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(source.read_bytes())
-        copied.append(f"{path} <- {source}")
-    print(f"guest    : {dst} ({dst.stat().st_size} bytes, dynamic)")
+        copied.append(f"{pathlib.Path(path).name} <- {source}")
+    print(f"guest    : {dst} ({dst.stat().st_size} bytes, dynamic, RUNPATH {RUNPATH_IN_ROOTFS})")
     print(f"in rootfs: {', '.join(copied) if copied else '<none>'}")
     if implied:
         print(f"implied  : {', '.join(implied)} (no file on this host - bionic satisfies these from libc.so)")
@@ -123,8 +134,11 @@ def main() -> int:
     print(f"fixture  : {fixture_home}")
     print(f"store    : {store}")
 
-    # A PATH with no proot in it, and PROOT_BIN pointing at a dead path: if the container still runs, the
-    # engine inside podnext did the work. If it fails, the reason must name proot.
+    # Two arms. The first is the operator's criterion in its ORIGINAL form (no engine flag, so whatever
+    # the default is must not need proot). The second asks the in-tree engine explicitly, which is the
+    # increment that can be demonstrated today: it proves the engine path runs a real guest with no proot
+    # binary anywhere, while the default still spawns proot until the interpreter limitation below is
+    # addressed for real distro rootfs.
     env = dict(os.environ)
     env.update(
         {
@@ -134,19 +148,32 @@ def main() -> int:
             "PROOT_BIN": "/nonexistent/proot",   # explicit: no fallback to a host proot
         }
     )
-    argv = [binary, "run", CONTAINER, "--", "/bin/sh"]
-    print("command  : " + " ".join(argv))
-    proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=180)
-    out = (proc.stdout or "") + (proc.stderr or "")
 
-    print(f"exit     : {proc.returncode}")
-    print(f"output   : {out.strip()[:600] or '<empty>'}")
+    results = {}
+    for label, extra in (("default", []), ("engine-native", ["--engine", "native"])):
+        # `--engine` is a GLOBAL argument, so it precedes the subcommand: `podnext --engine native run ...`
+        argv = [binary, *extra, "run", CONTAINER, "--", "/bin/sh"]
+        print(f"command  : " + " ".join(argv))
+        proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=180)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        ok = GUEST_MARKER in out and proc.returncode == 0
+        results[label] = ok
+        print(f"  [{label}] exit={proc.returncode} ran={ok}")
+        print(f"  [{label}] output: {out.strip()[:300] or '<empty>'}")
 
-    if GUEST_MARKER in out and proc.returncode == 0:
-        print("PASS: the guest ran with no proot binary available to the process")
+    if results.get("default"):
+        print("PASS: the DEFAULT path runs a container with no proot binary available to the process")
         return 0
 
-    print("FAIL: the container did not run without proot.")
+    if results.get("engine-native"):
+        print("PARTIAL: --engine native runs the guest with no proot, but the DEFAULT path still spawns")
+        print("         proot, so the operator's requirement is not met yet. Blockers, measured:")
+        print("           * the default still selects proot (deliberate until parity is demonstrated);")
+        print("           * PT_INTERP cannot be translated - a real distro rootfs whose interpreter is")
+        print("             not present at its absolute HOST path will not start under the native engine.")
+        return 1
+
+    print("FAIL: neither the default path nor --engine native ran the guest without proot.")
     if "proot" in out.lower():
         print("      the failure names proot, so the external engine is still the execution path")
     else:

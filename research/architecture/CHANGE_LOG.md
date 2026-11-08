@@ -1099,4 +1099,96 @@ dynamic guest in the fixture rootfs (Termux has no static toolchain - `cc -stati
 path inside the rootfs, and notes bionic's file-less `libdl.so` as "implied" rather than dropping it
 silently. Measured on this tree: `rc=1`, `Error: No such file or directory (os error 2)`, and the script
 names proot as the cause; without `PN_TEST_ROOT` it REFUSES with rc=2. When p7 is done this must flip to
-PASS, and the diff of this script is what proves it.
+PASS, and the diff of this script is what proves it.## p7 step 6: the in-tree engine is reachable from the CLI, and the operator's criterion flips to PARTIAL (2026-11-08/09)
+
+**Finding.** The engine could run a dynamic guest (commit f215756) but had no production caller: every
+container still ran by spawning the host `proot` binary (`proot-core/src/lib.rs:195`, `:337`,
+`podnext/src/native/image.rs:131`). The operator's requirement (workbench/asec/REPORT.md section 10,
+BUG-PROOT-01; workbench/WORKLIST.md section Z) was therefore unreachable no matter how good the engine
+became - the wiring was the missing half.
+
+**Action.** `--engine <proot|native>` as a GLOBAL clap argument with `default_value = "proot"`
+(`crates/podnext/src/cli.rs:236-244`, `EngineChoice` in `cli/common.rs:27-39`), threaded through
+`main.rs:194-196` and `dispatch.rs` into `cmd_login`/`cmd_run` (`commands/container.rs:261,294,314,
+371-382`). `native/session.rs:208,225-234,308-413` adds `run_container_native`, the predicate
+`uses_native_engine` (a named function so the routing cannot drift) and `native_verdict`, which turns the
+engine's report into an operator-facing error:
+`the native engine did not translate N path syscall(s): SYS_chdir (50) [takes a path but this engine has
+no translation for it; the kernel resolves it on the HOST filesystem]. ... The engine does NOT fall back
+to proot; run under --engine proot for full path coverage.` A refusal is NEVER a silent fallback to
+proot. `--engine native` with `--detach` is refused by name (the detached supervisor runs through
+`ProotDistroCore::login`). `proot-core/src/native_run.rs:329-338` gains `is_untranslated_path_refusal` so
+"path refusal" has one definition. 8 files, +276/-6.
+
+**RunPlan fields: filled and NOT filled, named rather than invented.** Filled: `rootfs` from
+`container.rootfs_path`, `binds` from `container.config.bind_mounts` (mapped to the engine's
+`(guest_prefix = target, host_path = source)` form), `argv` from the command (defaulting to `/bin/sh`).
+NOT filled, because `RunPlan` has no such fields and the engine hands the guest an EMPTY `envp` on
+purpose: environment and cwd. Also not modelled on the native path: bind `readonly`, hostname, uid/gid,
+kernel release, and the Android/synthetic bind set the proot path renders (`/dev`, `/proc`, `/sys`). All
+of it is stated in the doc comment on `run_native_engine`, not left to be discovered.
+
+**Verification - the parent's own acceptance harness, not the child's report.**
+`scripts/own_engine_acceptance.py` now runs two arms with `PATH=/nonexistent-bin` and
+`PROOT_BIN=/nonexistent/proot`:
+  * `[default] exit=1 ran=False` with `Error: No such file or directory (os error 2)` - the default still
+    needs proot, which is today's truth and the thing the operator is asking to change;
+  * `[engine-native] exit=0 ran=True` printing `guest-ran-inside-the-rootfs` - a dynamically linked guest
+    (6112 bytes, DT_RUNPATH `/p7loader/lib`, libraries present only inside the rootfs) RAN with no proot
+    binary available to the process. This is the first measured proof that the in-tree engine can carry
+    a real container.
+The harness prints PARTIAL rather than PASS and names its blockers, because the default path is still
+proot: (a) the default is deliberately proot until parity is demonstrated, and (b) PT_INTERP cannot be
+translated - the kernel opens the interpreter before the tracee executes an instruction, so a real distro
+rootfs whose interpreter is not present at its absolute HOST path will not start under the native engine.
+Child's own evidence agrees: `--engine proot` and no-flag argv are identical (all six features plus
+`/bin/sh`), the routing test fails on
+`` `--engine native` must route to the native runner, not the proot path `` when sabotage makes native
+fall through, and `cargo test -p podnext --bin podnext` is 56 passed.
+
+**Harness defect found and fixed while measuring (recorded because it cost two runs).** The fixture first
+copied Android's `/system/lib64` libraries next to a Termux-linked binary, and the guest failed to link
+(`CANNOT LINK EXECUTABLE "/bin/sh"`). The working recipe - the same one the engine's own test uses - is
+to link the guest with a DT_RUNPATH inside the rootfs and place every NEEDED library in THAT directory,
+so the guest's loader resolves them through the engine's path translation. The interpreter keeps its
+absolute host path. A `linkerconfig` warning remains (`failed to find generated linker configuration from
+"/linkerconfig/ld.config.txt"`) and is harmless here, but it is a real gap: the loader's config file is
+not part of the fixture rootfs.
+
+**Stale-build trap, third occurrence of its class.** The first acceptance run reported
+`unexpected argument '--engine' found` while the binary was in fact built from before the cherry-pick:
+cargo answered `Finished in 3.51s` and did NOT relink, because the shared target directory's fingerprint
+was stale. Touching the changed sources and rebuilding fixed it (binary mtime moved to 01:23:35 and
+`--engine <ENGINE>` appeared in `--help`). Any claim about a CLI surface must be made against a binary
+whose mtime is newer than the change - or built into a private target directory.
+
+## p6 slice-3: the warning ratchet no longer passes on a partial measurement (ASEC2-SUPPLY-15)
+
+**Finding.** `scripts/check_warnings.py` counted cargo's per-target warning summaries and compared them
+with `scripts/warning_baseline.json`, keyed on host triple plus tool versions. Its live defect: a
+PARTIAL measurement passed. A warm run that re-checked one crate of seven reported `208 -> 0` and exit 0
+("lower than the baseline"), because a target missing from the measurement read as zero. The docstring,
+the audit finding and a CI comment all justified the ratchet with a premise that does NOT reproduce here:
+that a warm `cargo check` re-emits nothing. Cargo replays cached diagnostics - the scoped probe
+re-checked zero crates yet still emitted four summaries, and two consecutive warm runs both measured 261.
+That premise is withdrawn in the docstring with the measurement that refutes it.
+
+**Action.** `scripts/check_warnings.py` (+72/-14): a pure `unseen_targets(measured, base, complete)` and a
+`compare(measured, base, complete, source)` that REFUSES an empty or partial measurement with exit 2
+("cannot measure") instead of reading it as zero, unchanged growth/equality logic, a `record` guard so a
+warm run cannot freeze a too-low ceiling, `mode` optional so a bare invocation defaults to `compare` (it
+used to die in argparse with rc 2), and a build-free `self-check` that proves red-on-growth,
+quiet-on-equality, red-on-empty, red-on-partial. ANSI handling and the toolchain key were already
+correct and are untouched.
+
+**Verification (child's pasted runs; parent integrates and re-runs the gate).** Pre-fix partial 1-of-7
+without `--cold` returned rc 0; now rc 2 naming the six unseen targets. Empty log -> rc 2
+`.../empty.log holds no cargo summary lines`. Growth 208 -> 209 -> rc 1
+`WARNINGS GREW: pn-next (lib): 208 -> 209`. Full+equal -> rc 0. Bare invocation -> rc 0 printing
+`measured: 261 warnings (ceiling 266 on this toolchain, cold=False)` plus the per-target deltas.
+`record` on a partial measurement -> rc 2 and the baseline file untouched.
+
+**Not demonstrated, stated as such.** The real `--cold` compare path and the `record --cold` write path
+were not run (budget); the exact CI sequencing (build-then-warm-check) is not reachable on-device
+cheaply. The stale comment in `.github/workflows/issue-ledger.yml:122-125` still asserts the withdrawn
+warm-zero premise and was left untouched, flagged here instead.
