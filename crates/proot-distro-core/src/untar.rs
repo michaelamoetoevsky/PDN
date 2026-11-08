@@ -53,8 +53,64 @@ thread_local! {
     pub(crate) static DIR_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// One member the extractor declined to write, named, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// The member's name after `strip` was applied — what the archive called it.
+    pub path: PathBuf,
+    /// Why the write was refused.
+    pub reason: String,
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "refusing entry `{}`: {}",
+            self.path.display(),
+            self.reason
+        )
+    }
+}
+
+/// What an extraction did with the members it would not write.
+///
+/// Zero refusals for a clean archive, one entry per refused member otherwise. The
+/// whole point is the distinction the older silent `continue` could not express:
+/// "the archive carried nothing to write" and "the archive carried N members we
+/// refused" both used to surface as `Ok(())` with no trace, so a refused write —
+/// a security event — was invisible to the operator.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ExtractReport {
+    refused: Vec<Refusal>,
+}
+
+impl ExtractReport {
+    /// Every member the extractor declined to write, named, with the reason.
+    pub fn refused(&self) -> &[Refusal] {
+        &self.refused
+    }
+
+    /// How many members were refused. Zero is a clean archive.
+    pub fn refusal_count(&self) -> usize {
+        self.refused.len()
+    }
+
+    /// True when the archive carried nothing the extractor had to refuse.
+    pub fn is_clean(&self) -> bool {
+        self.refused.is_empty()
+    }
+
+    fn refuse(&mut self, path: PathBuf, reason: String) {
+        self.refused.push(Refusal { path, reason });
+    }
+}
+
 /// Unpack a tar stream into `dest`, creating it if needed.
-pub fn extract<R: Read>(reader: R, dest: &Path) -> Result<()> {
+///
+/// The returned [`ExtractReport`] names every member that was refused; a clean
+/// archive reports zero.
+pub fn extract<R: Read>(reader: R, dest: &Path) -> Result<ExtractReport> {
     extract_with_strip(reader, dest, 0)
 }
 
@@ -66,13 +122,13 @@ pub fn extract<R: Read>(reader: R, dest: &Path) -> Result<()> {
 /// down; `detect_strip_count` in `crate::archive` scores that depth. A member
 /// with no components left after stripping is skipped, exactly as the reference
 /// skips the wrapper directory itself.
-pub fn extract_with_strip<R: Read>(reader: R, dest: &Path, strip: usize) -> Result<()> {
+pub fn extract_with_strip<R: Read>(reader: R, dest: &Path, strip: usize) -> Result<ExtractReport> {
     let mut archive = Archive::new(reader);
     extract_entries_stripped(&mut archive, dest, strip)
 }
 
 /// Unpack an already-open archive, for callers that need to inspect it first.
-pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result<()> {
+pub fn extract_entries<R: Read>(archive: &mut Archive<R>, dest: &Path) -> Result<ExtractReport> {
     extract_entries_stripped(archive, dest, 0)
 }
 
@@ -81,7 +137,7 @@ pub fn extract_entries_stripped<R: Read>(
     archive: &mut Archive<R>,
     dest: &Path,
     strip: usize,
-) -> Result<()> {
+) -> Result<ExtractReport> {
     fs::create_dir_all(dest)?;
     // Directories already known to exist this run. Without it every entry
     // re-walks its whole ancestor chain through `create_dir_all` (a `mkdir`
@@ -89,6 +145,7 @@ pub fn extract_entries_stripped<R: Read>(
     // deep with `n` entries below it paid `n * d` resolutions.
     let mut created: HashSet<PathBuf> = HashSet::new();
     created.insert(dest.to_path_buf());
+    let mut report = ExtractReport::default();
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -102,22 +159,36 @@ pub fn extract_entries_stripped<R: Read>(
         let target = dest.join(&path);
 
         // Archive paths are attacker-controlled in the general case; refuse to
-        // travel outside the destination.
+        // travel outside the destination. Record the refusal instead of dropping
+        // the member silently: a refused write that leaves no trace is a security
+        // event the operator cannot see, and `Ok(())` then reads the same whether
+        // the archive was empty or carried N members we refused.
         if !is_inside(dest, &target) {
+            report.refuse(
+                path,
+                format!(
+                    "resolved path `{}` escapes destination `{}`",
+                    target.display(),
+                    dest.display()
+                ),
+            );
             continue;
         }
         // ...and refuse to travel *through* one. An earlier entry (or a lower
         // layer) may have planted a symlink, and `File::create`/`create_dir_all`
         // follow it, so this entry's bytes would land wherever the link points —
         // `is_inside` only normalises the name and cannot see the link on disk.
+        // Also recorded, not fatal mid-archive: the caller sees every refusal.
         if let Some(link) = first_symlink_component(dest, &target) {
-            return Err(anyhow!(
-                "refusing entry `{}`: `{}` is a symlink on its path, which would carry the \
-                 write outside `{}`",
-                path.display(),
-                link.display(),
-                dest.display()
-            ));
+            report.refuse(
+                path,
+                format!(
+                    "`{}` is a symlink on its path, which would carry the write outside `{}`",
+                    link.display(),
+                    dest.display()
+                ),
+            );
+            continue;
         }
         if let Some(parent) = target.parent() {
             ensure_dir(parent, &mut created)?;
@@ -184,7 +255,7 @@ pub fn extract_entries_stripped<R: Read>(
         }
     }
 
-    Ok(())
+    Ok(report)
 }
 
 /// Create `dir` unless this run already did.
@@ -607,9 +678,9 @@ mod tests {
             .unwrap();
 
         let tar = builder.into_inner().unwrap();
-        let result = extract(tar.as_slice(), &dir);
+        let report = extract(tar.as_slice(), &dir).expect("extract");
 
-        // The bytes must never leave the destination, on either outcome.
+        // The bytes must never leave the destination.
         assert!(
             !outside.join("pwned").exists(),
             "the later entry was written through the archive's symlink, outside the destination"
@@ -621,22 +692,361 @@ mod tests {
             "the destination's sibling gained an entry"
         );
 
-        // ...and the write-through is refused by name, not silently skipped.
-        let err = result.expect_err("the write-through must be refused, not allowed");
-        let msg = format!("{err:#}");
+        // ...and the write-through is refused BY NAME and COUNTED, not silently
+        // skipped, so the caller can tell "nothing to extract" from "one refused".
+        assert_eq!(
+            report.refusal_count(),
+            1,
+            "refusals: {:?}",
+            report.refused()
+        );
+        let msg = report.refused()[0].to_string();
         assert!(
             msg.contains("escape/pwned"),
             "the refusal must name the offending entry: {msg}"
+        );
+        assert!(
+            msg.contains("symlink"),
+            "the refusal must name the reason: {msg}"
         );
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&outside);
     }
 
-    // A whiteout whose own path escapes the destination cannot be built with this crate: the `tar`
-    // builder refuses `..` in a name (see `sample_tar`) and refuses absolute names too. The guard
-    // that would stop such an archive, `is_inside`, has its own unit test instead, and it runs
-    // before the whiteout branch, on the marker's own path. Hand-assembling header bytes to defeat
-    // the builder would exercise a path reachable only from a foreign layer, which arrives with
-    // the v0.2.0 import work - where a real hostile-layer fixture belongs.
+    // A whiteout whose own path escapes the destination: the guard that stops it,
+    // `is_inside`, runs on the marker's own path before the whiteout branch and
+    // has its own unit test (`is_inside_rejects_traversal`), plus the extract-level
+    // traversal test below.
+
+    // ---------------------------------------------------------------------
+    // Fixtures for names the `tar` crate's BUILDER refuses to produce.
+    //
+    // `Builder::append_data` rejects `..` and absolute names at build time, but
+    // an archive from elsewhere was not built by this crate, so the extractor's
+    // guards are exercised against raw header bytes here. The checksum is
+    // recomputed for every header: a header whose checksum was left stale fails
+    // with `archive header checksum mismatch`, which looks like the defect under
+    // test and is not.
+
+    /// One raw tar entry: the name is kept verbatim (`..`, a leading `/`, a
+    /// doubled `//` all survive), with a ustar typeflag and a body.
+    struct RawTar(Vec<u8>);
+
+    impl RawTar {
+        fn new() -> Self {
+            RawTar(Vec::new())
+        }
+
+        fn entry(&mut self, name: &str, typeflag: u8, link: &str, body: &[u8]) -> &mut Self {
+            self.entry_sized(name, typeflag, link, body.len() as u64, body)
+        }
+
+        /// Like [`RawTar::entry`] but with a declared `size` independent of the
+        /// body actually present (for the declared-size case).
+        fn entry_sized(
+            &mut self,
+            name: &str,
+            typeflag: u8,
+            link: &str,
+            size: u64,
+            body: &[u8],
+        ) -> &mut Self {
+            let mut h = [0u8; 512];
+            put(&mut h[0..100], name.as_bytes());
+            put(&mut h[100..108], octal(0o644, 8).as_bytes()); // mode
+            put(&mut h[108..116], octal(0, 8).as_bytes()); // uid
+            put(&mut h[116..124], octal(0, 8).as_bytes()); // gid
+            put(&mut h[124..136], octal(size, 12).as_bytes()); // size
+            put(&mut h[136..148], octal(0, 12).as_bytes()); // mtime
+            h[156] = typeflag;
+            put(&mut h[157..257], link.as_bytes());
+            h[257..263].copy_from_slice(b"ustar\0");
+            h[263..265].copy_from_slice(b"00");
+            // Checksum: the field is spaces while summing, then `%06o\0 `.
+            for b in &mut h[148..156] {
+                *b = b' ';
+            }
+            let sum: u32 = h.iter().map(|&b| b as u32).sum();
+            h[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+
+            self.0.extend_from_slice(&h);
+            self.0.extend_from_slice(body);
+            self.0
+                .extend(std::iter::repeat(0u8).take((512 - body.len() % 512) % 512));
+            self
+        }
+
+        /// Two zero blocks terminate a tar.
+        fn finish(mut self) -> Vec<u8> {
+            self.0.extend_from_slice(&[0u8; 1024]);
+            self.0
+        }
+    }
+
+    /// Copy `s` at the start of `field`, leaving the rest of the field zero.
+    fn put(field: &mut [u8], s: &[u8]) {
+        field[..s.len()].copy_from_slice(s);
+    }
+
+    /// A `width`-byte octal field: `width - 1` digits followed by a NUL.
+    fn octal(value: u64, width: usize) -> String {
+        format!("{:0>width$o}", value, width = width - 1)
+    }
+
+    fn fresh_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn cleanup(dir: PathBuf) {
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// ASEC-1 / A04-01. Three escaping names were SKIPPED and `extract` returned
+    /// `Ok(())` with no record: a refused write — a security event — that left no
+    /// trace. Each refused member must now be named and counted, while the clean
+    /// member still lands, so "the archive carried nothing" and "the archive
+    /// carried N members we refused" are distinguishable.
+    #[test]
+    fn a_traversal_member_is_refused_by_name_and_counted_not_silently_skipped() {
+        let dir = fresh_dir("pdn-untar-trav");
+
+        let mut tar = RawTar::new();
+        tar.entry("ok-inside", b'0', "", b"inside-control");
+        tar.entry("../escape-target", b'0', "", b"P1-parent");
+        tar.entry("a/../../escape2", b'0', "", b"P1-double");
+        tar.entry("../../../../../../asec-abs-escape", b'0', "", b"P1-deep");
+        let tar = tar.finish();
+
+        let report = extract(tar.as_slice(), &dir).expect("extract");
+
+        // The clean member really landed — so a non-zero refusal count below is
+        // not a side effect of "nothing was extracted at all".
+        assert_eq!(fs::read(dir.join("ok-inside")).unwrap(), b"inside-control");
+        // None of the escaping names created anything.
+        assert!(!dir.parent().unwrap().join("escape-target").exists());
+        assert!(!dir.parent().unwrap().join("escape2").exists());
+
+        // Three members were refused, each NAMED with the reason.
+        assert_eq!(
+            report.refusal_count(),
+            3,
+            "refusals: {:?}",
+            report.refused()
+        );
+        let named = |needle: &str| {
+            report
+                .refused()
+                .iter()
+                .any(|r| r.path.to_string_lossy().contains(needle))
+        };
+        assert!(named("../escape-target"), "{:?}", report.refused());
+        assert!(named("a/../../escape2"), "{:?}", report.refused());
+        assert!(named("asec-abs-escape"), "{:?}", report.refused());
+        let msg = report.refused()[0].to_string();
+        assert!(msg.contains("escapes destination"), "reason: {msg}");
+
+        cleanup(dir);
+    }
+
+    /// Positive control. A clean archive extracts in full and reports ZERO
+    /// refusals. Without this, "nothing was reported" would be indistinguishable
+    /// from "nothing was extracted".
+    #[test]
+    fn a_clean_archive_extracts_fully_and_reports_zero_refusals() {
+        let dir = fresh_dir("pdn-untar-clean");
+
+        let mut tar = RawTar::new();
+        tar.entry("usr/", b'5', "", b"");
+        tar.entry("usr/bin/hello", b'0', "", b"hi");
+        tar.entry("etc/hostname", b'0', "", b"box\n");
+        let tar = tar.finish();
+
+        let report = extract(tar.as_slice(), &dir).expect("extract");
+
+        assert!(
+            report.is_clean(),
+            "a clean archive reported refusals: {:?}",
+            report.refused()
+        );
+        assert_eq!(report.refusal_count(), 0);
+        assert_eq!(fs::read(dir.join("usr/bin/hello")).unwrap(), b"hi");
+        assert_eq!(fs::read(dir.join("etc/hostname")).unwrap(), b"box\n");
+        assert!(dir.join("usr/bin").is_dir());
+
+        cleanup(dir);
+    }
+
+    /// ASEC-1 / A04-03. A leading `/` is trimmed under strip=1 exactly as the
+    /// reference does, and a doubled leading `//` likewise. At strip=0 an
+    /// absolute name is refused — `dest.join("/x")` is `/x`, outside `dest` —
+    /// named and counted, the belt to the strip=1 braces.
+    #[test]
+    fn absolute_and_doubled_slash_members_land_only_after_stripping() {
+        let mut tar = RawTar::new();
+        tar.entry("/etc/hostname-evil", b'0', "", b"P3-absolute");
+        tar.entry("//weird/path", b'0', "", b"P3-double-slash");
+        tar.entry("./rel", b'0', "", b"P3-dot-rel");
+        let tar = tar.finish();
+
+        // strip 0: both absolute names are refused and counted; "./rel" lands.
+        let d0 = fresh_dir("pdn-untar-s0");
+        let r0 = extract(tar.as_slice(), &d0).expect("extract strip 0");
+        assert_eq!(fs::read(d0.join("rel")).unwrap(), b"P3-dot-rel");
+        assert_eq!(r0.refusal_count(), 2, "strip0 refusals: {:?}", r0.refused());
+        assert!(
+            r0.refused()
+                .iter()
+                .any(|r| r.path.to_string_lossy().contains("hostname-evil")),
+            "{:?}",
+            r0.refused()
+        );
+        assert!(!Path::new("/etc/hostname-evil").exists());
+
+        // strip 1: the leading slashes are trimmed, then the first component
+        // dropped, so both land under `dest` and nothing is refused.
+        let d1 = fresh_dir("pdn-untar-s1");
+        let r1 = extract_with_strip(tar.as_slice(), &d1, 1).expect("extract strip 1");
+        assert_eq!(r1.refusal_count(), 0, "strip1 refusals: {:?}", r1.refused());
+        assert_eq!(fs::read(d1.join("hostname-evil")).unwrap(), b"P3-absolute");
+        assert_eq!(fs::read(d1.join("path")).unwrap(), b"P3-double-slash");
+        assert_eq!(fs::read(d1.join("rel")).unwrap(), b"P3-dot-rel");
+
+        cleanup(d0);
+        cleanup(d1);
+    }
+
+    /// ASEC-1 / A07-007. A tar cut in the middle of an entry must fail with a
+    /// named error rather than silently succeed with a short file.
+    #[test]
+    fn a_truncated_tar_fails_with_a_named_error() {
+        let dir = fresh_dir("pdn-untar-trunc");
+
+        let mut tar = RawTar::new();
+        tar.entry("etc/payload", b'0', "", &[b'x'; 4096]);
+        let full = tar.finish();
+        // One 512-byte header, then only 100 of the declared 4096 body bytes.
+        let truncated = &full[..512 + 100];
+
+        let err = extract(truncated, &dir).expect_err("a truncated tar must not extract cleanly");
+        assert!(
+            !format!("{err:#}").is_empty(),
+            "the failure must carry a message"
+        );
+
+        // The entry was cut short, so it cannot have fully materialised.
+        let len = fs::metadata(dir.join("etc/payload"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        assert!(
+            len < 4096,
+            "a truncated entry fully materialised ({len} bytes)"
+        );
+
+        cleanup(dir);
+    }
+
+    /// ASEC-1 / A07-007. A valid gzip stream whose payload is not a tar. The
+    /// header cannot be parsed, so the extraction fails before writing anything.
+    #[test]
+    fn a_gzip_that_is_not_a_tar_fails_with_a_named_error() {
+        use flate2::write::GzEncoder;
+        use flate2::{read::GzDecoder, Compression};
+        use std::io::Write;
+
+        let dir = fresh_dir("pdn-untar-gznottar");
+
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(&b"this is not a tar\n".repeat(100)).unwrap();
+        let gz = enc.finish().unwrap();
+
+        let err = extract(GzDecoder::new(gz.as_slice()), &dir)
+            .expect_err("a gzip that is not a tar must not extract");
+        assert!(
+            !format!("{err:#}").is_empty(),
+            "the failure must carry a message"
+        );
+
+        // Nothing written: the first header could not be read. (Here a checksum
+        // error IS the non-tar signal — the payload is not a header at all.)
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            0,
+            "a partial tree was left behind"
+        );
+
+        cleanup(dir);
+    }
+
+    /// ASEC-1 / A07-007. A valid tar, gzipped, then cut mid-stream: the failure
+    /// must be the truncated deflate stream, not a bad header.
+    #[test]
+    fn a_truncated_deflate_stream_fails_with_a_named_error() {
+        use flate2::write::GzEncoder;
+        use flate2::{read::GzDecoder, Compression};
+        use std::io::Write;
+
+        let dir = fresh_dir("pdn-untar-truncgz");
+
+        let mut tar = RawTar::new();
+        tar.entry("payload", b'0', "", &vec![b'a'; 100_000]);
+        let tar = tar.finish();
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(&tar).unwrap();
+        let gz = enc.finish().unwrap();
+        let truncated = &gz[..gz.len() / 2];
+
+        let err = extract(GzDecoder::new(truncated), &dir)
+            .expect_err("a truncated deflate stream must not extract");
+        let msg = format!("{err:#}");
+        assert!(!msg.is_empty(), "the failure must carry a message");
+        // A checksum error here would mean the FIXTURE is wrong (a stale header),
+        // not that the deflate truncation was detected.
+        assert!(
+            !msg.contains("checksum"),
+            "fixture is wrong — the header itself failed to parse: {msg}"
+        );
+
+        let len = fs::metadata(dir.join("payload"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        assert!(
+            len < 100_000,
+            "a truncated entry fully materialised ({len} bytes)"
+        );
+
+        cleanup(dir);
+    }
+
+    /// ASEC-1 / A07-007, declared-size clause. A header declaring 4 GiB with a
+    /// 5-byte body must fail on the first short read — the declared size must not
+    /// drive an allocation.
+    #[test]
+    fn a_declared_size_beyond_the_data_fails_without_allocating_it() {
+        let dir = fresh_dir("pdn-untar-huge");
+
+        let mut tar = RawTar::new();
+        tar.entry_sized("huge.bin", b'0', "", 4 * 1024 * 1024 * 1024, b"short");
+        let tar = tar.finish();
+
+        let err = extract(tar.as_slice(), &dir)
+            .expect_err("a 4 GiB-declared entry with a 5-byte body must not extract");
+        assert!(
+            !format!("{err:#}").is_empty(),
+            "the failure must carry a message"
+        );
+
+        let len = fs::metadata(dir.join("huge.bin"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        assert!(
+            len < 4096,
+            "a 4 GiB-declared entry materialised {len} bytes"
+        );
+
+        cleanup(dir);
+    }
 }

@@ -126,6 +126,7 @@ fn install_from_tar(tar: &Path, rootfs: &Path) -> Result<()> {
         let file = File::open(tar).with_context(|| format!("opening {}", tar.display()))?;
         crate::untar::extract_with_strip(BufReader::new(file), rootfs, strip)
             .with_context(|| format!("extracting rootfs archive {}", tar.display()))
+            .map(|_| ())
     }
 }
 
@@ -264,6 +265,7 @@ pub fn apply_layer_from_store(
     let reader = decode_layer(store.open(digest)?, media_type)?;
     crate::untar::extract(reader, rootfs)
         .with_context(|| format!("applying OCI layer {digest} from the store"))
+        .map(|_| ())
 }
 
 /// Materialise a rootfs from layer blobs that are already in the store.

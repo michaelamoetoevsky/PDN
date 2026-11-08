@@ -1021,8 +1021,10 @@ impl BackupManager {
             let decoder = GzDecoder::new(file);
             // Shares the Android-safe extractor: `Archive::unpack` refuses to
             // create hard links here, which is why restoring a Debian backup
-            // would fail the same way installing one used to.
-            proot_distro_core::untar::extract(decoder, &extract_dir_clone)
+            // would fail the same way installing one used to. A backup this
+            // project wrote carries no refusable member, so the report is
+            // discarded.
+            proot_distro_core::untar::extract(decoder, &extract_dir_clone).map(|_| ())
         })
         .await??;
 

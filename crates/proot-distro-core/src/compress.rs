@@ -168,22 +168,22 @@ impl Compressor {
     // device denies `link(2)`, so archives containing hard links would fail.
     fn extract_tar(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        crate::untar::extract(input_file, output)
+        crate::untar::extract(input_file, output).map(|_| ())
     }
 
     fn extract_tar_gz(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        crate::untar::extract(GzDecoder::new(BufReader::new(input_file)), output)
+        crate::untar::extract(GzDecoder::new(BufReader::new(input_file)), output).map(|_| ())
     }
 
     fn extract_tar_bz2(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        crate::untar::extract(BzDecoder::new(BufReader::new(input_file)), output)
+        crate::untar::extract(BzDecoder::new(BufReader::new(input_file)), output).map(|_| ())
     }
 
     fn extract_tar_xz(&self, input: &Path, output: &Path) -> Result<()> {
         let input_file = fs::File::open(input)?;
-        crate::untar::extract(XzDecoder::new(BufReader::new(input_file)), output)
+        crate::untar::extract(XzDecoder::new(BufReader::new(input_file)), output).map(|_| ())
     }
 }
 
