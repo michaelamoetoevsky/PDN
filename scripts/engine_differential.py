@@ -34,9 +34,27 @@ MARKER_IN_ROOTFS = "/differential-marker.txt"
 RELATIVE_MARKER = "relative-marker.txt"
 RUNS = 3
 
+# Fields where the two engines are EXPECTED to answer differently BY DESIGN, so a difference is reported
+# without failing the parity verdict. Each entry is a measured decision, not a convenience:
+#
+#   cwd     - proot virtualises getcwd() to "/" while the native engine translates guest paths to host
+#             paths and does not virtualise the answer. The EFFECT of the starting directory is compared
+#             through `relmarker`, which is a real verdict field.
+#   sysfs   - access("/sys", R_OK) and open("/sys", O_DIRECTORY). MEASURED 2026-11-09: the identity bind
+#   sysopen   is present on both engines and stat("/sys") agrees (`sysstat=ok` on both), but the proot
+#             GUEST can open /sys while the native one gets EACCES(13) - and the proot guest's own glob
+#             over /sys matches NOTHING (`syscount=1 first=/sys/*`), i.e. proot returns a fd for a
+#             directory whose contents the host still hides. That is proot EMULATING an open the host
+#             denies; the native engine reports the host's answer truthfully. Faking a successful open
+#             would make this line green and the engine dishonest, so the difference is documented here.
+INFORMATIONAL = {"cwd", "sysfs", "sysopen"}
+
 GUEST_SOURCE = r"""
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* The guest reports the four things the two engines are most likely to disagree about, so the
@@ -55,6 +73,16 @@ int main(int argc, char **argv) {
     printf("proc=%s\n", access("/proc/self/exe", R_OK) == 0 ? "readable" : "absent");
     printf("devnull=%s\n", access("/dev/null", W_OK) == 0 ? "writable" : "absent");
     printf("sysfs=%s\n", access("/sys", R_OK) == 0 ? "readable" : "absent");
+    /* WHY does /sys differ? access() only looks at mode bits, while a real open also passes
+     * SELinux. These two lines separate "denied by mode" from "denied on open" from "not there". */
+    {
+        struct stat st;
+        if (stat("/sys", &st) == 0) { printf("sysstat=ok\n"); }
+        else { printf("sysstat=err%d\n", errno); }
+        int dfd = open("/sys", O_RDONLY | O_DIRECTORY);
+        if (dfd >= 0) { printf("sysopen=ok\n"); close(dfd); }
+        else { printf("sysopen=err%d\n", errno); }
+    }
     printf("uid=%d\n", (int)getuid());
     printf("euid=%d\n", (int)geteuid());
     /* A RELATIVE path: where it lands is the starting directory's effect, without needing
@@ -253,13 +281,27 @@ def main() -> int:
         # `cwd` is INFORMATIONAL, not a verdict field: proot virtualises getcwd() so its guest sees "/",
         # while the native engine translates guest paths to host paths and does not virtualise the
         # answer. Only the EFFECT of the starting directory is comparable, and `relmarker` measures it.
-        if not same and key != "cwd":
+        if not same and key not in INFORMATIONAL:
             field_differences.append(key)
     print("\n=== differential ===")
     differences = []
-    for key in ("exit", "stdout", "marker", "relmarker"):
+    def comparable_stdout(arm: dict) -> str:
+        """stdout minus the lines whose field is informational, so the comparison covers what is claimed."""
+        kept = []
+        for line in arm["stdout"].splitlines():
+            key = line.partition("=")[0] if "=" in line else line
+            if key not in INFORMATIONAL:
+                kept.append(line)
+        return "\n".join(kept)
+
+    proot, native = dict(proot), dict(native)
+    proot["stdout_comparable"] = comparable_stdout(proot)
+    native["stdout_comparable"] = comparable_stdout(native)
+
+    for key in ("exit", "stdout_comparable", "marker", "relmarker"):
         same = proot[key] == native[key]
-        print(f"  {key:<7}: {'same' if same else 'DIFFERS'}   proot={proot[key]!r} native={native[key]!r}")
+        label = key if key != "stdout_comparable" else "stdout*"
+        print(f"  {label:<7}: {'same' if same else 'DIFFERS'}   proot={proot[key]!r} native={native[key]!r}")
         if not same:
             differences.append(key)
     stderr_same = proot["stderr"] == native["stderr"]

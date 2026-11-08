@@ -1506,4 +1506,39 @@ errno values, run under each engine - the sh-based probe used here is invalid fo
 `/bin` is a bind to the host and the guest shell cannot resolve `libc.so`.
 
 Claim discipline for this increment: two of the three fields flipped and are quoted; the third is reported as
-open with the facts that are known, not folded into a parity claim.
+open with the facts that are known, not folded into a parity claim.## p7 gap 2 closed as a decision: what /sys really is, and one gap left (2026-11-09 06:20 WIB)
+
+**The experiment that settled it.** The differential guest now reports `stat("/sys")` and
+`open("/sys", O_RDONLY|O_DIRECTORY)` alongside `access`, so the question "denied by mode bits, denied on
+open, or not there at all" is answered instead of argued. Measured on both engines:
+
+| probe | proot | native |
+|---|---|---|
+| `stat("/sys")` | `ok` | `ok` |
+| `open("/sys", O_RDONLY\|O_DIRECTORY)` | `ok` | **`err13` (EACCES)** |
+| `access("/sys", R_OK)` | `readable` | `absent` |
+| glob `/sys/*` INSIDE the guest (shell builtins only) | **no entries** (`syscount=1 first=/sys/*`) | n/a |
+| glob `/proc/self/*` inside the guest | 48 entries | n/a |
+
+Read together: the identity bind is present on both engines (stat agrees), the host `/sys` is not readable by
+this uid (host `test -r /sys` fails, `ls /sys` exits 2, host glob matches nothing), and the PROOT guest can
+`open` a directory whose contents it then cannot list at all. proot is therefore **emulating** an open that
+the host denies. The native engine answers with the host's own answer - `EACCES` - which is the truthful
+result for a translating engine.
+
+**Decision.** Faking a successful `open` to make that line green would make the engine lie to buy a metric.
+Instead `scripts/engine_differential.py` now has an `INFORMATIONAL` set with the reason written beside each
+entry in the source: `cwd` (proot virtualises `getcwd`; the EFFECT is compared through `relmarker`),
+`sysfs`/`sysopen` (proot emulates; the native engine reports the host truth). stdout is compared with those
+lines removed (`stdout*`), so the comparison still covers everything the verdict claims, and a difference in
+any OTHER field still fails the run. This is a decision recorded in code, not a quieter test.
+
+**State after gap 2, measured:** `exit`, `marker`, `relmarker`, `argc`, `argv[0..2]`, `envp`, `proc`,
+`devnull` and `sysstat` are all **identical** across the two engines. `stdout*` differs on exactly one pair
+of lines - `uid=0`/`euid=0` under proot against `uid=10396`/`euid=10396` under native. Cost: proot median
+0.256 s, native 0.138 s.
+
+So the parity inventory is down to ONE real gap (identity mapping: proot fakes `uid`/`gid` 0 via
+`--change-id=0:0:0`, the native engine passes the host ids through), plus the documented engine-model
+differences above, plus the items still never measured: hostname, kernel release, bind readonly semantics,
+namespaces/clone flags, and signal/ptrace behaviour inside the guest.
