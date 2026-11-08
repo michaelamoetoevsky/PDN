@@ -61,9 +61,26 @@
 //! the rootfs exactly as before. This module has no caller that fills `binds`; a caller (or a
 //! test) supplies them in the `RunPlan`.
 //!
-//! NOT DONE HERE, named so the gap is explicit rather than implied (all of it is p4 step 3b+):
-//! the other five argv features; argument translation for any syscall other than `execve`; the
-//! guest's environment (an empty `envp` is passed on purpose - see `child_main`).
+//! ENTRY-TIME PATH TRANSLATION FOR THE DYNAMIC LOADER (2026-11-08, p7): a dynamically linked guest
+//! could not start, because the ELF interpreter runs INSIDE the guest and opens its `NEEDED`
+//! libraries by absolute path - paths that name the HOST, not the rootfs. `execve` translation
+//! alone is therefore not enough: the kernel starts the image, and the loader's own
+//! `openat`/`newfstatat`/`readlinkat`/`faccessat` calls then reach the host filesystem. Those
+//! syscalls are now translated AT ENTRY: the path is read out of the tracee with `peek_cstr`,
+//! resolved through the same `resolve` (binds first, then the rootfs), and written back with the
+//! same stack-scratch + `PTRACE_SETREGSET` technique `execve` uses - one helper,
+//! `write_path_and_redirect_arg`, parameterised by the argument register instead of duplicated.
+//! A guest path that has no counterpart in the rootfs is still REWRITTEN, so the kernel answers
+//! `ENOENT`; it is never left pointing at the host file. `path_syscall` states which syscalls and
+//! which argument index; `unhandled_path_syscall` names the path-taking syscalls that have NO
+//! translator here, so they are refused by name with a reason that says the host will resolve
+//! them - never passed through as if they were handled.
+//!
+//! NOT DONE HERE, named so the gap is explicit rather than implied:
+//! the other five argv features; the guest's environment (an empty `envp` is passed on purpose -
+//! see `child_main`); `dirfd`/cwd-relative path translation (a relative guest path is refused by
+//! name rather than guessed); and the `PT_INTERP` path, which the KERNEL opens before the tracee
+//! runs a single instruction, so it cannot be translated and must exist on the host.
 
 use anyhow::{anyhow, Result};
 use nix::sys::ptrace::{self, Options};
@@ -225,6 +242,92 @@ impl NativeRunReport {
     }
 }
 
+/// `SYS_newfstatat` is declared by the libc crate for linux-gnu (79 on arm64, 262 on x86_64) and
+/// for android/x86_64, but NOT for android/aarch64 - measured 2026-11-08 on libc 0.2.191, whose
+/// `android/b64/aarch64/mod.rs` has no such constant. The arm64 table (`asm-generic/unistd.h`)
+/// fixes it at 79, the same number the gnu arm64 crate declares, so that one number is named here
+/// rather than leaving `stat` untranslatable on the device.
+#[cfg(any(not(target_os = "android"), target_arch = "x86_64"))]
+const SYS_NEWFSTATAT: i64 = nix::libc::SYS_newfstatat as i64;
+#[cfg(all(target_os = "android", target_arch = "aarch64"))]
+const SYS_NEWFSTATAT: i64 = 79;
+
+/// The syscalls whose path argument this engine rewrites at ENTRY, and which argument holds it.
+///
+/// Only numbers the TARGET's libc actually declares are named. arm64 has no legacy
+/// `open`/`stat`/`lstat`/`access`/`readlink` syscalls at all (the table starts at `openat`), so
+/// those arms are `x86_64`-only for the same reason the name table above is partial: a constant the
+/// target does not declare does not compile, and the runner would accept a wider table - the
+/// device-only compile error that CI then has to explain.
+fn path_syscall(number: i64) -> Option<(&'static str, usize)> {
+    if number == nix::libc::SYS_openat as i64 {
+        return Some(("SYS_openat", 1));
+    }
+    if number == nix::libc::SYS_openat2 as i64 {
+        return Some(("SYS_openat2", 1));
+    }
+    if number == SYS_NEWFSTATAT {
+        return Some(("SYS_newfstatat", 1));
+    }
+    if number == nix::libc::SYS_statx as i64 {
+        return Some(("SYS_statx", 1));
+    }
+    if number == nix::libc::SYS_readlinkat as i64 {
+        return Some(("SYS_readlinkat", 1));
+    }
+    if number == nix::libc::SYS_faccessat as i64 {
+        return Some(("SYS_faccessat", 1));
+    }
+    if number == nix::libc::SYS_faccessat2 as i64 {
+        return Some(("SYS_faccessat2", 1));
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if number == nix::libc::SYS_open as i64 {
+            return Some(("SYS_open", 0));
+        }
+        if number == nix::libc::SYS_stat as i64 {
+            return Some(("SYS_stat", 0));
+        }
+        if number == nix::libc::SYS_lstat as i64 {
+            return Some(("SYS_lstat", 0));
+        }
+        if number == nix::libc::SYS_readlink as i64 {
+            return Some(("SYS_readlink", 0));
+        }
+        if number == nix::libc::SYS_access as i64 {
+            return Some(("SYS_access", 0));
+        }
+    }
+    None
+}
+
+/// Path-taking syscalls this engine has NO translator for. They are refused BY NAME, with a reason
+/// that says the kernel will resolve the guest path on the HOST filesystem - the distinction the
+/// module exists to keep: a path the engine cannot translate must never be passed through as if it
+/// were handled. `strict` mode therefore stops on one instead of continuing to look like parity.
+///
+/// Only constants declared on every supported target are named (all of these are in the generic
+/// non-legacy table, so arm64 has them); the legacy-only `chmod`/`chown`/`rename`/... are not,
+/// because they do not exist on arm64 and referencing them would not compile there.
+fn unhandled_path_syscall(number: i64) -> Option<&'static str> {
+    Some(match number {
+        x if x == nix::libc::SYS_chdir as i64 => "SYS_chdir",
+        x if x == nix::libc::SYS_mkdirat as i64 => "SYS_mkdirat",
+        x if x == nix::libc::SYS_unlinkat as i64 => "SYS_unlinkat",
+        x if x == nix::libc::SYS_renameat as i64 => "SYS_renameat",
+        x if x == nix::libc::SYS_renameat2 as i64 => "SYS_renameat2",
+        x if x == nix::libc::SYS_symlinkat as i64 => "SYS_symlinkat",
+        x if x == nix::libc::SYS_linkat as i64 => "SYS_linkat",
+        x if x == nix::libc::SYS_fchmodat as i64 => "SYS_fchmodat",
+        x if x == nix::libc::SYS_fchownat as i64 => "SYS_fchownat",
+        x if x == nix::libc::SYS_utimensat as i64 => "SYS_utimensat",
+        x if x == nix::libc::SYS_execveat as i64 => "SYS_execveat",
+        x if x == nix::libc::SYS_inotify_add_watch as i64 => "SYS_inotify_add_watch",
+        _ => return None,
+    })
+}
+
 /// Names for the syscall numbers this engine knows. Deliberately partial: a missing name reports
 /// as `None`, which is the honest answer, instead of a plausible-looking string.
 ///
@@ -233,6 +336,14 @@ impl NativeRunReport {
 /// runner as well - the same class of mistake as the `PTRACE_GETREGSET` cast that broke the runner
 /// build on run 42449343311.
 pub fn syscall_name(number: i64) -> Option<&'static str> {
+    // A path syscall has a name whether the engine translates it or refuses it; keeping the two
+    // tables as the single source of those names stops the report and the dispatcher drifting.
+    if let Some((name, _)) = path_syscall(number) {
+        return Some(name);
+    }
+    if let Some(name) = unhandled_path_syscall(number) {
+        return Some(name);
+    }
     // Only constants this engine's TARGET libc actually declares. Measured 2026-11-08: an earlier
     // version of this table also named `SYS_fstat`, `SYS_newfstatat`, `SYS_rseq` and `SYS_fork`,
     // and the crate did not compile on Android/aarch64 at all (`cannot find value SYS_fstat in
@@ -587,8 +698,8 @@ fn parent_loop(
                 report.stops += 1;
                 let mut tracee = Tracee::new(pid, Arch::from_host());
                 tracee.observe_syscall()?;
-                let (number, arg0) = match tracee.syscall_info.as_ref() {
-                    Some(info) => (info.number, info.args[0]),
+                let (number, arg0, args) = match tracee.syscall_info.as_ref() {
+                    Some(info) => (info.number, info.args[0], info.args),
                     None => {
                         let _ = ptrace::kill(pid);
                         return Err(anyhow!(
@@ -647,36 +758,91 @@ fn parent_loop(
                         }
                     }
                 } else if slots[idx].at_entry {
-                    // Not a first execve: a syscall the engine observed but does not handle.
-                    let refusal = if is_execve {
-                        // A second execve is how a script's interpreter is started. Translating it
-                        // here would be guesswork about which path is a guest path, so it is
-                        // recorded instead.
-                        Refusal {
+                    // ENTRY-TIME PATH TRANSLATION (p7). A syscall that takes a guest path is
+                    // translated here, at the stop BEFORE the kernel reads the argument, so the
+                    // dynamic loader's own opens land inside the rootfs. `Ok(false)` is a path the
+                    // engine could not translate (unreadable, empty, relative, or no rootfs plan);
+                    // it is recorded as a named refusal rather than left to the host silently.
+                    if let Some((name, arg_index)) = path_syscall(number) {
+                        match translate_path_remote(
+                            pid,
+                            arg_index,
+                            name,
                             number,
-                            name: syscall_name(number),
-                            reason:
-                                "a later execve (an interpreter for a script) is not translated",
+                            &args,
+                            plan,
+                            &mut report,
+                        ) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                let refusal = Refusal {
+                                    number,
+                                    name: Some(name),
+                                    reason:
+                                        "its path could not be translated (unreadable, empty or \
+                                             relative); the HOST path is not used as a fallback",
+                                };
+                                if strict {
+                                    report.strict_failure = Some(refusal.label());
+                                    report.refusals.push(refusal);
+                                    // The program was NOT run as the guest asked: leave nothing
+                                    // that could be mistaken for a partial success.
+                                    report.translations.clear();
+                                    for s in &slots {
+                                        let _ = ptrace::kill(s.pid);
+                                    }
+                                    break;
+                                }
+                                report.refusals.push(refusal);
+                            }
+                            Err(e) => {
+                                let _ = ptrace::kill(pid);
+                                return Err(e);
+                            }
                         }
                     } else {
-                        Refusal {
-                            number,
-                            name: syscall_name(number),
-                            reason: "passed through, not emulated",
+                        // Not a first execve and not a path this engine translates: a syscall the
+                        // engine observed but does not handle.
+                        let refusal = if is_execve {
+                            // A second execve is how a script's interpreter is started.
+                            // Translating it here would be guesswork about which path is a guest
+                            // path, so it is recorded instead.
+                            Refusal {
+                                number,
+                                name: syscall_name(number),
+                                reason: "a later execve (an interpreter for a script) is not \
+                                         translated",
+                            }
+                        } else if unhandled_path_syscall(number).is_some() {
+                            // It takes a path and has no translator: say so by name and say that
+                            // the kernel will resolve it on the HOST. This is the distinction the
+                            // module exists to keep.
+                            Refusal {
+                                number,
+                                name: syscall_name(number),
+                                reason: "takes a path but this engine has no translation for it; \
+                                         the kernel resolves it on the HOST filesystem",
+                            }
+                        } else {
+                            Refusal {
+                                number,
+                                name: syscall_name(number),
+                                reason: "passed through, not emulated",
+                            }
+                        };
+                        if strict && !is_execve {
+                            report.strict_failure = Some(refusal.label());
+                            report.refusals.push(refusal);
+                            // The program was NOT run: no translation happened, so leave nothing
+                            // that could be mistaken for a partial success.
+                            report.translations.clear();
+                            for s in &slots {
+                                let _ = ptrace::kill(s.pid);
+                            }
+                            break;
                         }
-                    };
-                    if strict && !is_execve {
-                        report.strict_failure = Some(refusal.label());
                         report.refusals.push(refusal);
-                        // The program was NOT run: no translation happened, so leave nothing that
-                        // could be mistaken for a partial success.
-                        report.translations.clear();
-                        for s in &slots {
-                            let _ = ptrace::kill(s.pid);
-                        }
-                        break;
                     }
-                    report.refusals.push(refusal);
                 }
                 // `execve` succeeds without an exit stop (the image is replaced), so the parity
                 // between entry and exit stops is re-established by the exec event below.
@@ -948,39 +1114,129 @@ fn poke_cstr(pid: Pid, addr: u64, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Write the translated path into the tracee and make `execve`'s path argument point at it.
+/// Write the translated path into the tracee and make argument `arg_index` of the stopped syscall
+/// point at it.
 ///
 /// The scratch lives `0x200` bytes below the tracee's stack pointer: the translated path is at most
 /// `PATH_CAPACITY + 1` (= 512) bytes, so it fits in `[sp - 0x200, sp)`, a region the tracee is not
 /// using while it is stopped in a syscall. The pointer is published through `PTRACE_SETREGSET` so
 /// the kernel reads the host path instead of the guest one.
 ///
-/// CEILING: the argument register differs per architecture, so only the two supported targets are
-/// named (aarch64 `x0` = `regs[0]`; x86_64 `rdi`); any other target would need its own arm.
-fn write_path_and_redirect_arg0(pid: Pid, bytes: &[u8]) -> Result<()> {
+/// `arg_index` is the syscall argument number (0-based), NOT a register number: on aarch64 the
+/// argument registers are `x0..x5` (`regs[0..6]`), and on x86_64 the kernel takes them from
+/// `rdi, rsi, rdx, r10, r8, r9` - so the mapping is named here, once, rather than at each call site.
+/// `execve` uses argument 0; `openat`-style syscalls carry the path in argument 1.
+///
+/// CEILING: the register file differs per architecture, so only the two supported targets are
+/// named; any other target needs its own arm.
+fn write_path_and_redirect_arg(pid: Pid, arg_index: usize, bytes: &[u8]) -> Result<()> {
     const SCRATCH_BELOW_SP: u64 = 0x200;
     let mut raw = get_regs(pid)?;
     #[cfg(target_arch = "aarch64")]
     {
         let scratch = raw.sp.wrapping_sub(SCRATCH_BELOW_SP) & !0xf;
+        let Some(slot) = raw.regs.get_mut(arg_index) else {
+            return Err(anyhow!(
+                "syscall argument {} has no register on aarch64 (only 0..=5 do)",
+                arg_index
+            ));
+        };
         poke_cstr(pid, scratch, bytes)?;
-        raw.regs[0] = scratch;
+        *slot = scratch;
     }
     #[cfg(target_arch = "x86_64")]
     {
         let scratch = raw.rsp.wrapping_sub(SCRATCH_BELOW_SP) & !0xf;
+        let slot = match arg_index {
+            0 => &mut raw.rdi,
+            1 => &mut raw.rsi,
+            2 => &mut raw.rdx,
+            3 => &mut raw.r10,
+            4 => &mut raw.r8,
+            5 => &mut raw.r9,
+            _ => {
+                return Err(anyhow!(
+                    "syscall argument {} has no register on x86_64 (only 0..=5 do)",
+                    arg_index
+                ))
+            }
+        };
         poke_cstr(pid, scratch, bytes)?;
-        raw.rdi = scratch;
+        *slot = scratch;
     }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     {
-        let _ = bytes;
+        let _ = (arg_index, bytes);
         return Err(anyhow!(
-            "execve argument rewriting is not implemented for this target architecture"
+            "syscall argument rewriting is not implemented for this target architecture"
         ));
     }
     set_regs(pid, raw)?;
     Ok(())
+}
+
+/// Translate ONE path argument of a syscall whose path the engine did not publish (every tracee,
+/// including the engine's own child after its exec).
+///
+/// Reads the guest path at `args[arg_index]` with `peek_cstr`, resolves it through the SAME
+/// `resolve` `execve` uses (binds first, then the rootfs), and points the argument at a copy of the
+/// host path in the tracee's own memory. Returns `Ok(false)` when there is nothing to rewrite -
+/// no rootfs plan, an unreadable/NULL pointer, an empty path (the `AT_EMPTY_PATH` case, where the
+/// kernel acts on `dirfd`), or a relative path (which depends on `dirfd`/cwd, neither modelled).
+///
+/// The translated host path is written even when it does not exist: the kernel must answer `ENOENT`
+/// for a guest path the rootfs does not carry, and leaving the guest path in place would let the
+/// HOST file answer instead - the false positive this module exists to prevent.
+fn translate_path_remote(
+    pid: Pid,
+    arg_index: usize,
+    name: &'static str,
+    number: i64,
+    args: &[u64; 6],
+    plan: &RunPlan,
+    report: &mut NativeRunReport,
+) -> Result<bool> {
+    let Some(rootfs) = plan.rootfs.as_ref() else {
+        // No plan: the guest path is used as-is by the kernel. Not an error - it is the control arm
+        // showing that the translation is what makes a rootfs-relative run work.
+        return Ok(false);
+    };
+    let Some(arg) = args.get(arg_index) else {
+        return Ok(false);
+    };
+    let Some(guest) = peek_cstr(pid, *arg)? else {
+        return Ok(false);
+    };
+    if guest.is_empty() || !guest.starts_with('/') {
+        return Ok(false);
+    }
+    let host = resolve(rootfs, &guest, &plan.binds);
+    if host.as_path() == Path::new(&guest) {
+        // The rewrite would not change anything: either the guest path is already the host path
+        // (a bind mounted on itself, or the "already translated" case), so it is HANDLED and needs
+        // no memory write. Recording it as a translation would put a line in the report for every
+        // path the loader touched, which is noise rather than evidence.
+        return Ok(true);
+    }
+    let bytes = host.as_os_str().as_encoded_bytes();
+    if bytes.len() > PATH_CAPACITY {
+        return Err(anyhow!(
+            "translated path of {} bytes does not fit the {} byte translation area: {} \
+             (syscall {}, number {})",
+            bytes.len(),
+            PATH_CAPACITY,
+            host.display(),
+            name,
+            number
+        ));
+    }
+    write_path_and_redirect_arg(pid, arg_index, bytes)?;
+    report.translations.push(Translation {
+        guest,
+        host,
+        syscall: name,
+    });
+    Ok(true)
 }
 
 /// Rewrite the `execve` path argument of a tracee whose path the engine did NOT publish (a fork
@@ -1028,7 +1284,7 @@ fn translate_execve_remote(
             host.display()
         ));
     }
-    write_path_and_redirect_arg0(pid, bytes)?;
+    write_path_and_redirect_arg(pid, 0, bytes)?;
     report.translations.push(Translation {
         guest,
         host,
@@ -1065,10 +1321,27 @@ fn ptrace_event_msg(pid: Pid) -> Result<Pid> {
 /// binds match, the LONGEST prefix wins (so a more specific mount beats a broader one). A guest path
 /// outside every bind resolves under the rootfs exactly as before, and a relative guest path is
 /// joined under the rootfs too, so an exec cannot escape it.
+///
+/// Two rules that a raw string prefix test gets wrong, both measured 2026-11-08 (p7, first run of
+/// `native_dynamic_guest`):
+///
+///   * A path that is ALREADY on the host side is returned unchanged. The kernel and the loader
+///     hand host paths back in places - `/proc/self/exe` is the measured one, which the loader then
+///     `stat`s - and translating those a second time produced `<rootfs><rootfs>/...`, a path that
+///     exists nowhere. This is proot's "already translated" case.
+///   * Prefixes are matched by PATH COMPONENT, not by string. The run bound `/sys` and the loader
+///     opened `/system/lib64/libnetd_client.so`, which a string `starts_with("/sys")` accepts -
+///     producing the silently wrong `/sys/tem/lib64/libnetd_client.so`. `Path::starts_with` compares
+///     whole components, so `/system` no longer matches a bind on `/sys`.
 pub fn resolve(rootfs: &Path, guest: &str, binds: &[(String, PathBuf)]) -> PathBuf {
+    let guest_path = Path::new(guest);
+    if guest_path.starts_with(rootfs) {
+        return guest_path.to_path_buf();
+    }
     let mut chosen: Option<&(String, PathBuf)> = None;
     for b in binds {
-        if guest.starts_with(b.0.as_str()) && chosen.map_or(true, |c| b.0.len() > c.0.len()) {
+        if guest_path.starts_with(Path::new(&b.0)) && chosen.map_or(true, |c| b.0.len() > c.0.len())
+        {
             chosen = Some(b);
         }
     }

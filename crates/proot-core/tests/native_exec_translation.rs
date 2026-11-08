@@ -161,6 +161,37 @@ fn canon(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
+/// The host runtime trees a DYNAMICALLY LINKED fixture's loader probes for its libraries, bound to
+/// themselves.
+///
+/// Why these tests need it (2026-11-08, p7): the engine now translates the loader's own
+/// path-taking syscalls at entry, so a rootfs carrying only `bin/true` no longer borrows the
+/// host's libc by accident - the loader's `openat` is rewritten into the rootfs and answers
+/// ENOENT, the loader aborts, and the run exits 1. That is the CORRECT container behaviour, and
+/// `native_dynamic_guest.rs` proves it with a fixture that links a library existing only inside
+/// the rootfs. These four tests are about `execve` translation, not about library loading, so they
+/// bind the host's runtime trees over themselves: the loader finds the libraries it found before.
+/// A bind mounted on itself is a rewrite that changes nothing, so the engine does not record it -
+/// which is what keeps `translations` here holding exactly the `execve` rewrite under test.
+fn host_runtime_binds() -> Vec<(String, PathBuf)> {
+    [
+        "/system",
+        "/odm",
+        "/vendor",
+        "/lib",
+        "/lib64",
+        "/usr/lib",
+        "/usr/lib64",
+        "/proc",
+        "/dev",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .filter(|p| p.exists())
+    .map(|p| (p.to_string_lossy().into_owned(), p))
+    .collect()
+}
+
 /// The proven half: the engine owns its tracee and reports honestly about what it does not handle.
 #[test]
 fn the_engine_owns_the_tracee_and_records_named_refusals() {
@@ -170,7 +201,7 @@ fn the_engine_owns_the_tracee_and_records_named_refusals() {
     let argv = vec!["/bin/true".to_string()];
     let plan = RunPlan {
         rootfs: Some(rootfs_a),
-        binds: Vec::new(),
+        binds: host_runtime_binds(),
     };
 
     let run = run_native(&argv, &plan, false).expect("traced run of the fixture");
@@ -258,7 +289,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     // ---- arm A: the guest's /bin/true is the fixture's copy, which exits 1 -------------------
     let plan_a = RunPlan {
         rootfs: Some(rootfs_a.clone()),
-        binds: Vec::new(),
+        binds: host_runtime_binds(),
     };
     let a = run_native(&argv, &plan_a, false).expect("run against rootfs-a");
     eprintln!(
@@ -326,16 +357,24 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
         nix::libc::SYS_read,
         a.observed
     );
+    // Only the `execve` rewrite is this arm's subject. The loader's own opens are translated too
+    // now (see `native_dynamic_guest.rs`), and those this plan binds to themselves the engine does
+    // not record at all, so filtering keeps the count meaningful without weakening it.
+    let a_execve: Vec<_> = a
+        .translations
+        .iter()
+        .filter(|t| t.syscall == "SYS_execve")
+        .collect();
     assert_eq!(
-        a.translations.len(),
+        a_execve.len(),
         1,
         "exactly one execve path should have been translated, got {:?}",
         a.translations
     );
-    assert_eq!(a.translations[0].guest, "/bin/true");
-    assert_eq!(a.translations[0].syscall, "SYS_execve");
+    assert_eq!(a_execve[0].guest, "/bin/true");
+    assert_eq!(a_execve[0].syscall, "SYS_execve");
     assert_eq!(
-        canon(&a.translations[0].host),
+        canon(&a_execve[0].host),
         canon(&rootfs_a.join("bin").join("true")),
         "the translation must land inside the requested rootfs"
     );
@@ -359,7 +398,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     // ---- arm B: same guest path, other rootfs, other program ---------------------------------
     let plan_b = RunPlan {
         rootfs: Some(rootfs_b.clone()),
-        binds: Vec::new(),
+        binds: host_runtime_binds(),
     };
     let b = run_native(&argv, &plan_b, false).expect("run against rootfs-b");
     eprintln!(
@@ -370,14 +409,19 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
         b.exit_code, 0,
         "arm B ran a copy of `true`; a non-zero exit means the rootfs was not honoured"
     );
-    assert_eq!(b.translations.len(), 1);
+    let b_execve: Vec<_> = b
+        .translations
+        .iter()
+        .filter(|t| t.syscall == "SYS_execve")
+        .collect();
+    assert_eq!(b_execve.len(), 1);
     assert_eq!(
-        canon(&b.translations[0].host),
+        canon(&b_execve[0].host),
         canon(&rootfs_b.join("bin").join("true"))
     );
     assert_ne!(
-        canon(&a.translations[0].host),
-        canon(&b.translations[0].host),
+        canon(&a_execve[0].host),
+        canon(&b_execve[0].host),
         "the two arms must have run different files for this test to prove anything"
     );
 
@@ -507,7 +551,7 @@ fn the_engine_traces_a_forked_child_and_translates_its_execve() {
     let argv = vec!["/bin/forker".to_string()];
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
-        binds: Vec::new(),
+        binds: host_runtime_binds(),
     };
     let run = run_native(&argv, &plan, false).expect("traced run of the forking fixture");
     eprintln!(
@@ -557,9 +601,13 @@ fn a_bind_prefix_wins_over_the_rootfs_for_execve() {
     compile_exit_fixture(&bind_tool, 7);
 
     let argv = vec!["/bin/forker".to_string()];
+    let mut binds = vec![("/opt".to_string(), bind_dir.clone())];
+    // The fixture is dynamic too, so its loader needs the host runtime trees visible for the same
+    // reason as in the tests above.
+    binds.extend(host_runtime_binds());
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
-        binds: vec![("/opt".to_string(), bind_dir.clone())],
+        binds,
     };
     let run = run_native(&argv, &plan, false).unwrap_or_else(|e| {
         panic!("the bind must supply the guest path, but the engine refused the run: {e:#}")
