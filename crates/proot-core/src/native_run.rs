@@ -195,6 +195,16 @@ pub struct RunPlan {
     /// the STARTING point: a per-syscall `dirfd` is still not modelled and a relative guest path is
     /// still refused by name. Not absolute, or containing `..`, is a NAMED refusal.
     pub cwd: Option<String>,
+    /// The GUEST'S ENVIRONMENT, as `(key, value)` pairs (2026-11-09, p7 envp). Empty means the guest
+    /// starts with no environment at all. The engine builds `envp` from this list and an explicit
+    /// allow-list of its own (`guest_environment`) instead of forwarding its own `environ`, for two
+    /// measured reasons: `nix::libc::environ` is not declared for the Android target, and handing the
+    /// guest the engine's whole environment would be a claim about isolation this engine has not
+    /// measured. The allow-list mirrors what the proot path sets (`proot-core/src/lib.rs:255-270`):
+    /// `PATH`, `HOME=/root`, a forwarded `TERM`, and `LANG`/`LC_ALL`/`COLORTERM` when the caller has
+    /// them. Container-configured variables arrive here through this field, exactly as they reach the
+    /// proot argv through `config.env`.
+    pub env: Vec<(String, String)>,
 }
 
 /// A path the engine rewrote at a syscall stop.
@@ -555,6 +565,10 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
     // (2026-11-08, p4 step 3b) A pipe the child blocks on as its FIRST syscall. It is what lets the
     // engine attach before the child can exec: the child cannot pass its `execve` until the engine
     // writes one byte, and the engine writes only after it owns the tracee.
+    // The guest's environment is decided in the PARENT, before the fork (2026-11-09, p7 envp), so the
+    // child does no allocation beyond turning the strings into `CString`s for `execve`.
+    let env_strings = guest_environment(&plan.env);
+
     let (pipe_r, pipe_w) = nix::unistd::pipe()?;
 
     match unsafe { fork() }? {
@@ -567,6 +581,7 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
                 argv,
                 pipe_r,
                 cwd_host.as_deref(),
+                &env_strings,
             )
         }
         ForkResult::Parent { child } => {
@@ -593,6 +608,7 @@ fn child_main(
     argv: &[String],
     pipe_r: nix::libc::c_int,
     cwd: Option<&Path>,
+    env: &[String],
 ) -> ! {
     // SAFETY: the child is a fresh fork of a single-threaded test/engine process, and every pointer
     // below is derived from the page mapped by `run_native` before the fork.
@@ -668,12 +684,21 @@ fn child_main(
         let _sync_marker = nix::libc::syscall(nix::libc::SYS_getpid);
         std::hint::black_box(_sync_marker);
 
-        // An EMPTY environment, deliberately: `nix::libc::environ` is not declared for the Android
-        // target (measured 2026-11-08: `cannot find value environ in crate nix::libc`), and handing
-        // the guest the engine's own environment would be a claim about isolation this increment
-        // has not measured. Passing no environment is the honest version of that, and it is named
-        // here as a limitation: p4-3b decides the guest's environment on purpose.
-        let empty_envp: [*const nix::libc::c_char; 1] = [std::ptr::null()];
+        // The guest's environment (2026-11-09, p7 envp). It comes from an EXPLICIT list
+        // (`guest_environment`) rather than the engine's own `environ`: `nix::libc::environ` is not
+        // declared for the Android target anyway (measured 2026-11-08: `cannot find value environ in
+        // crate nix::libc`), and forwarding the engine's whole environment would be a claim about
+        // isolation this engine has not measured. The strings live on the child's own heap, which is
+        // valid until the `execve` below replaces the image, so no page region is needed for them.
+        let env_cstrings: Vec<std::ffi::CString> = env
+            .iter()
+            .map(|s| std::ffi::CString::new(s.as_str()).unwrap_or_default())
+            .collect();
+        let mut env_ptrs: Vec<*const nix::libc::c_char> = env_cstrings
+            .iter()
+            .map(|c| c.as_ptr() as *const nix::libc::c_char)
+            .collect();
+        env_ptrs.push(std::ptr::null());
 
         // `execve` is issued as a RAW syscall, NOT through `libc::execve`, because a preloaded
         // library can interpose the libc symbol and then the tracee's execve never surfaces as a
@@ -688,7 +713,7 @@ fn child_main(
             nix::libc::SYS_execve,
             page.add(PATH_OFFSET) as *const nix::libc::c_char,
             page.add(ARGV_OFFSET) as *const *const nix::libc::c_char,
-            empty_envp.as_ptr(),
+            env_ptrs.as_ptr(),
         );
         std::hint::black_box(_exec_rc);
         // execve only returns on failure; 127 is the conventional "could not execute".
@@ -1210,6 +1235,30 @@ const NT_PRSTATUS: nix::libc::c_uint = 1;
 
 /// Read the tracee's register file through `PTRACE_GETREGSET`/`NT_PRSTATUS`. The struct is
 /// per-architecture (`tracee.rs` reads the same one); only the two supported targets are used.
+/// The guest's environment (2026-11-09, p7 envp). An EXPLICIT allow-list plus whatever the caller
+/// configured, never a copy of the engine's `environ`: the guest is told what it is given, and the
+/// caller's environment cannot leak in by accident. Mirrors the proot path's `env_clear()` +
+/// `cmd.env(...)` sequence so both engines present the same environment.
+pub fn guest_environment(configured: &[(String, String)]) -> Vec<String> {
+    let mut env = vec![
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+        "HOME=/root".to_string(),
+        format!(
+            "TERM={}",
+            crate::guest_term(std::env::var("TERM").ok().as_deref())
+        ),
+    ];
+    for passthrough in ["LANG", "LC_ALL", "COLORTERM"] {
+        if let Ok(value) = std::env::var(passthrough) {
+            env.push(format!("{passthrough}={value}"));
+        }
+    }
+    for (key, value) in configured {
+        env.push(format!("{key}={value}"));
+    }
+    env
+}
+
 /// Syscalls whose entire result IS the caller's identity (p7 gap 3, 2026-11-09). Only these four can
 /// be mapped by rewriting the return register; the `getres*`/`getgroups` family writes through a guest
 /// pointer and is deliberately left out rather than silently half-done.

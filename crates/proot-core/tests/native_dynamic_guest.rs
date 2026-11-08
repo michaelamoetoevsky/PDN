@@ -274,6 +274,7 @@ fn a_dynamic_guest_runs_inside_the_rootfs() {
         rootfs: Some(rootfs.clone()),
         binds: Vec::new(),
         cwd: None,
+        env: Vec::new(),
     };
 
     // ---- capture the guest's stdout ----------------------------------------------------------

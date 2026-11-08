@@ -1587,4 +1587,47 @@ default, and flipping today would be wrong for a reason unrelated to parity: the
 is EMPTY (`envp` is a declared gap in `native_run.rs`), so a real container would start without `PATH` or
 `HOME` even though the differential's toy guest - which reads no environment - cannot see the difference.
 The environment is therefore the next increment, and the differential harness will grow an `env` field so
-that claim is measured rather than assumed.
+that claim is measured rather than assumed.## p7 envp: the native guest now has an environment (2026-11-09 07:10 WIB)
+
+**Finding.** The native guest ran with an EMPTY environment: `child_main` passed a null-terminated array
+containing only `NULL`, and the module header named that as a deliberate, measured limitation (two stated
+reasons - `nix::libc::environ` is not declared for the Android target, and forwarding the engine's whole
+environment would be an isolation claim the engine had not measured). Both reasons were sound, and the
+consequence was still fatal for real use: a container started with no `PATH` and no `HOME` cannot run a
+shell or resolve a command, and the differential harness could not see it because its toy guest never read
+the environment. A gap that only a real workload would reveal had to be found by reading the code.
+
+**Action.**
+- `crates/proot-core/src/native_run.rs`: `RunPlan::env: Vec<(String, String)>` (documented at the field, says
+  why it exists and why the engine does not forward `environ`); `guest_environment(configured)` (`:1238`
+  region) builds an EXPLICIT list that mirrors the proot path's `env_clear()` + `cmd.env(...)` sequence
+  (`crates/proot-core/src/lib.rs:255-270`): `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+  `HOME=/root`, `TERM` forwarded through the existing `crate::guest_term`, and `LANG`/`LC_ALL`/`COLORTERM`
+  when the caller has them - plus every configured pair. The strings are built in the PARENT before the fork
+  and turned into `CString`s in the child, so no page region was needed and no capacity refusal can occur.
+  The third `execve` argument is now that array. The `empty_envp` array and its comment are gone.
+- `crates/podnext/src/native/session.rs`: the plan carries `container.config.env_vars.clone()`, the same
+  source the proot path applies, so container-configured variables reach either engine.
+
+**Verification, all executed.**
+1. `scripts/engine_differential.py`, default run, `rc=0` (`DIFFERENTIAL: EQUAL ...`):
+   `pathenv: same proot='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+   native='...same...'` and `homeenv: same proot='/root' native='/root'`. Before this change the native arm
+   had no environment at all, which is what the new guest probe is for.
+2. `cargo test -p proot-core --test native_exec_translation the_guest_receives_the_configured_environment`
+   (`tests/native_exec_translation.rs`): `1 passed`. It runs TWO arms in one test, so it carries its own
+   control - with `env: [("PDN_TEST_ENV","from-the-plan")]` the guest reports `probe=from-the-plan` AND the
+   allow-list `PATH`; with `env: Vec::new()` it must report `probe=<unset>`, which is what proves the value
+   travelled through the plan rather than leaking out of the engine's own process environment.
+3. First run of that test FAILED at fixture build (`getenv` undeclared, missing `<stdlib.h>`), which is
+   recorded rather than quietly fixed: the failure was in the fixture, not the engine.
+
+**Still named, still not done:** the other five proot argv features (`--kill-on-exit`, `--link2symlink`,
+`--sysvipc`, `-L`, `--change-id` as an argv surface), `dirfd`-relative path translation, `getres*`/`getgroups`
+and `st_uid`, and the `PT_INTERP` path the kernel resolves before the tracee runs.
+
+**What the flip now waits on.** With cwd, argv, binds, mounts and the environment all measured identical, the
+remaining unknown is not parity but ADEQUACY: whether the native engine can carry a REAL container - one with
+a `PATH`-resolved shell, a hardlink-hostile Android filesystem, and the operator's own 10 containers - and not
+just the differential's single static guest. That is the next measurement, and the acceptance harness
+(`scripts/own_engine_acceptance.py`) is the instrument: today it still reports the proot path as the default.

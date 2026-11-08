@@ -70,6 +70,11 @@ int main(int argc, char **argv) {
     for (int i = 0; i < argc; i++) printf("argv[%d]=%s\n", i, argv[i]);
     printf("cwd=%s\n", getcwd(cwd, sizeof cwd) ? cwd : "<none>");
     printf("envp=%s\n", getenv("PDN_DIFFERENTIAL_PROBE") ? getenv("PDN_DIFFERENTIAL_PROBE") : "<unset>");
+    /* The guest environment itself (2026-11-09, p7 envp). An empty `envp` and a populated one look
+     * identical to a guest that never reads it, so PATH and HOME are what turn "the environment is
+     * implemented" into a measurement instead of an assumption. */
+    printf("pathenv=%s\n", getenv("PATH") ? getenv("PATH") : "<unset>");
+    printf("homeenv=%s\n", getenv("HOME") ? getenv("HOME") : "<unset>");
     printf("proc=%s\n", access("/proc/self/exe", R_OK) == 0 ? "readable" : "absent");
     printf("devnull=%s\n", access("/dev/null", W_OK) == 0 ? "writable" : "absent");
     printf("sysfs=%s\n", access("/sys", R_OK) == 0 ? "readable" : "absent");

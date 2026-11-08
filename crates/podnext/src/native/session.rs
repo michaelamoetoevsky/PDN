@@ -401,6 +401,10 @@ fn run_native_engine(
                 .clone()
                 .unwrap_or_else(|| "/".to_string()),
         ),
+        // Container-configured variables reach the guest here, the same way the proot path applies
+        // them (2026-11-09, p7 envp). The engine adds its own allow-list on top - PATH, HOME, TERM and
+        // the LANG/LC_ALL/COLORTERM passthrough - in `guest_environment`.
+        env: container.config.env_vars.clone(),
     };
 
     let report = run_native(&argv, &plan, false).map_err(|e| {

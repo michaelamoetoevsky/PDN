@@ -203,6 +203,7 @@ fn the_engine_owns_the_tracee_and_records_named_refusals() {
         rootfs: Some(rootfs_a),
         binds: host_runtime_binds(),
         cwd: None,
+        env: Vec::new(),
     };
 
     let run = run_native(&argv, &plan, false).expect("traced run of the fixture");
@@ -292,6 +293,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
         rootfs: Some(rootfs_a.clone()),
         binds: host_runtime_binds(),
         cwd: None,
+        env: Vec::new(),
     };
     let a = run_native(&argv, &plan_a, false).expect("run against rootfs-a");
     eprintln!(
@@ -402,6 +404,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
         rootfs: Some(rootfs_b.clone()),
         binds: host_runtime_binds(),
         cwd: None,
+        env: Vec::new(),
     };
     let b = run_native(&argv, &plan_b, false).expect("run against rootfs-b");
     eprintln!(
@@ -433,6 +436,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
         rootfs: Some(rootfs_c),
         binds: Vec::new(),
         cwd: None,
+        env: Vec::new(),
     };
     let c = run_native(&argv, &plan_c, false);
     let err =
@@ -557,6 +561,7 @@ fn the_engine_traces_a_forked_child_and_translates_its_execve() {
         rootfs: Some(rootfs.clone()),
         binds: host_runtime_binds(),
         cwd: None,
+        env: Vec::new(),
     };
     let run = run_native(&argv, &plan, false).expect("traced run of the forking fixture");
     eprintln!(
@@ -614,6 +619,7 @@ fn a_bind_prefix_wins_over_the_rootfs_for_execve() {
         rootfs: Some(rootfs.clone()),
         binds,
         cwd: None,
+        env: Vec::new(),
     };
     let run = run_native(&argv, &plan, false).unwrap_or_else(|e| {
         panic!("the bind must supply the guest path, but the engine refused the run: {e:#}")
@@ -725,6 +731,7 @@ int main(void) {
         rootfs: Some(rootfs.clone()),
         binds: binds.clone(),
         cwd: Some("/".to_string()),
+        env: Vec::new(),
     };
     let run = run_native(&argv, &plan, false).expect("traced run with a cwd");
     let guest_cwd = read_report("some");
@@ -762,6 +769,7 @@ int main(void) {
         rootfs: Some(rootfs.clone()),
         binds,
         cwd: None,
+        env: Vec::new(),
     };
     let run_none = run_native(&argv, &plan_none, false).expect("traced run without a cwd");
     let guest_cwd_none = read_report("none");
@@ -790,6 +798,7 @@ int main(void) {
             rootfs: Some(rootfs.clone()),
             binds: Vec::new(),
             cwd: Some(bad.to_string()),
+            env: Vec::new(),
         };
         let err = run_native(&argv, &plan_bad, false)
             .expect_err("a cwd that is not a plain absolute under-rootfs path must be refused");
@@ -880,6 +889,7 @@ int main(void) {
         rootfs: Some(rootfs.clone()),
         binds: binds.clone(),
         cwd: Some("/probe".to_string()),
+        env: Vec::new(),
     };
     let run = run_native(
         &["/bin/rel".to_string(), "relative-report".to_string()],
@@ -931,6 +941,7 @@ int main(void) {
         rootfs: Some(rootfs.clone()),
         binds: binds.clone(),
         cwd: None,
+        env: Vec::new(),
     };
     let run_none = run_native(
         &["/bin/rel".to_string(), "relative-report".to_string()],
@@ -1026,6 +1037,7 @@ int main(int argc, char **argv) {
         rootfs: Some(rootfs.clone()),
         binds,
         cwd: Some("/".to_string()),
+        env: Vec::new(),
     };
 
     // An entry with a space and one with `=` are included on purpose: a naive re-split would mangle them.
@@ -1116,6 +1128,7 @@ int main(void) {
         rootfs: Some(rootfs.clone()),
         binds,
         cwd: Some("/".to_string()),
+        env: Vec::new(),
     };
 
     let run = run_native(&argv, &plan, false).expect("traced run of the identity fixture");
@@ -1131,6 +1144,100 @@ int main(void) {
         report.trim(),
         "uid=0 euid=0 gid=0 egid=0",
         "the guest must see the mapped root identity that the note promised it for every engine"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// p7 envp (2026-11-09). A guest that never reads its environment cannot tell an empty `envp` from a
+/// populated one, so the differential harness could not see this gap - the guest here reads it. Two
+/// arms, so the test carries its own control: with the plan's environment the guest must find the
+/// variable, and with an empty plan it must not, which proves the value travelled through `RunPlan`
+/// rather than through the engine's own process environment.
+#[test]
+fn the_guest_receives_the_configured_environment() {
+    let root = fixture_root("envp");
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-envp");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    compile_c(
+        &rootfs.join("bin").join("envp"),
+        r#"#include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    char buf[256];
+    const char *probe = getenv("PDN_TEST_ENV");
+    const char *path = getenv("PATH");
+    int n = snprintf(buf, sizeof buf, "probe=%s\npath=%s\n",
+                     probe ? probe : "<unset>", path ? path : "<unset>");
+    int fd = open("/probe/env", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 61; }
+    if (write(fd, buf, (unsigned)n) < 0) { return 62; }
+    close(fd);
+    return 0;
+}
+"#,
+    );
+
+    let argv = vec!["/bin/envp".to_string()];
+    let mut binds = vec![("/probe".to_string(), probe.clone())];
+    binds.extend(host_runtime_binds());
+    let base = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+        env: Vec::new(),
+    };
+
+    let read_report = |tag: &str| -> String {
+        std::fs::read_to_string(probe.join("env"))
+            .unwrap_or_else(|e| panic!("[{tag}] the guest did not report its environment: {e}"))
+    };
+
+    // ---- arm with the variable: it must reach the guest -----------------------------------------
+    let with_env = RunPlan {
+        env: vec![("PDN_TEST_ENV".to_string(), "from-the-plan".to_string())],
+        ..base
+    };
+    let run =
+        run_native(&argv, &with_env, false).expect("traced run with a configured environment");
+    let report = read_report("configured");
+    eprintln!(
+        "[envp] configured exit={} report={:?}",
+        run.exit_code, report
+    );
+    assert_eq!(run.exit_code, 0, "the fixture must run to completion");
+    assert!(
+        report.contains("probe=from-the-plan"),
+        "the plan's variable must reach the guest: {report:?}"
+    );
+    assert!(
+        report.contains("path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+        "the engine's own allow-list must be present too: {report:?}"
+    );
+
+    // ---- control arm: no plan, no variable ------------------------------------------------------
+    let empty = RunPlan {
+        env: Vec::new(),
+        ..with_env
+    };
+    let run =
+        run_native(&argv, &empty, false).expect("traced run without a configured environment");
+    let report = read_report("empty");
+    eprintln!("[envp] empty exit={} report={:?}", run.exit_code, report);
+    assert_eq!(
+        run.exit_code, 0,
+        "the control arm must run to completion too"
+    );
+    assert!(
+        report.contains("probe=<unset>"),
+        "with no configured environment the variable must be absent, which is what proves the value \
+         came from the plan and not from the engine's process environment: {report:?}"
     );
 
     let _ = std::fs::remove_dir_all(&root);
