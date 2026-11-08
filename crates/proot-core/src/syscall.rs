@@ -1365,6 +1365,17 @@ impl SyscallHandler {
         );
     }
 
+    /// Register a handler for one syscall number.
+    ///
+    /// Measured 2026-11-08 (p4 step 2): the table is a `HashMap<i64, Box<dyn SyscallHandlerFn>>`
+    /// that only the constructors fill (`register_path_syscalls` and friends), so no caller
+    /// outside this module could add one. That is also why the step 2 wiring could not be tested
+    /// behaviourally - a test had no way to make a handler observably run. Registering a number
+    /// that is already present replaces it, so a caller can also override a default.
+    pub fn register(&mut self, number: i64, handler: Box<dyn SyscallHandlerFn>) {
+        self.handlers.insert(number, handler);
+    }
+
     pub fn handle_entry(
         &mut self,
         state: &mut TraceeState,
