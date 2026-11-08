@@ -131,17 +131,39 @@ pub(crate) fn guest_to_host(
     }
 
     // Lexical checks cannot see a symlink inside the rootfs that points outside
-    // it, so confirm against the real path when the target exists.
-    if let (Ok(root), Ok(real)) = (
-        std::fs::canonicalize(rootfs),
-        std::fs::canonicalize(&resolved),
-    ) {
-        if !real.starts_with(&root) {
-            anyhow::bail!(
-                "path '{}' resolves outside the container rootfs ({})",
-                guest_path,
-                real.display()
-            );
+    // it, so confirm against the real path. A copy creates the leaf, so it may
+    // not exist yet — and `canonicalize()` fails for a missing path, which the
+    // previous version treated as "nothing to check". That is the hole: with
+    // `<rootfs>/link -> /somewhere/else` and a destination of `c:link/new.txt`,
+    // the check was skipped entirely and the write landed outside the rootfs.
+    // Walk up to the deepest ancestor that does exist and verify *that* instead.
+    // (findings ASEC3-SEC-001 and ASEC3-SEC-002, reproduced 2026-11-08:
+    //  `podnext copy host/file esc:esc/pwn.txt` returned rc=0 and wrote
+    //  `$FIX/outside/pwn.txt`, while pre-creating the leaf was refused.)
+    if let Ok(root) = std::fs::canonicalize(rootfs) {
+        let mut probe = resolved.clone();
+        loop {
+            match std::fs::canonicalize(&probe) {
+                Ok(real) => {
+                    if !real.starts_with(&root) {
+                        anyhow::bail!(
+                            "path '{}' resolves outside the container rootfs ({})",
+                            guest_path,
+                            real.display()
+                        );
+                    }
+                    break;
+                }
+                Err(_) => {
+                    let Some(parent) = probe.parent() else { break };
+                    // Stop at the lexical rootfs boundary: above it there is
+                    // nothing this function is allowed to look at.
+                    if !parent.starts_with(rootfs) {
+                        break;
+                    }
+                    probe = parent.to_path_buf();
+                }
+            }
         }
     }
 
@@ -583,4 +605,72 @@ pub(crate) fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::guest_to_host;
+    use std::path::PathBuf;
+
+    /// `/tmp` is not writable by an app uid on Android, so `std::env::temp_dir()`
+    /// must never be used alone. Same order as the other test helpers in this
+    /// crate: `$TMPDIR` -> `$PREFIX/tmp` -> `temp_dir()`.
+    fn temp_base() -> PathBuf {
+        if let Some(t) = std::env::var_os("TMPDIR") {
+            return PathBuf::from(t);
+        }
+        if let Some(p) = std::env::var_os("PREFIX") {
+            return PathBuf::from(p).join("tmp");
+        }
+        std::env::temp_dir()
+    }
+
+    /// A symlinked directory whose leaf does not exist yet must not let a write
+    /// follow the link out of the rootfs. Regression guard for ASEC3-SEC-001 and
+    /// ASEC3-SEC-002 (2026-11-08): the containment check ran only when
+    /// `canonicalize(&resolved)` succeeded, so a missing leaf skipped it and
+    /// `podnext copy host/file c:link/new.txt` wrote outside the rootfs (rc=0).
+    #[test]
+    fn missing_leaf_under_a_symlinked_parent_is_refused() {
+        let base = temp_base().join(format!("sync-escape-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let rootfs = base.join("rootfs");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(rootfs.join("plain")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, rootfs.join("link")).unwrap();
+        std::os::unix::fs::symlink("plain", rootfs.join("inside")).unwrap();
+
+        // The subject of the finding: escaping link + missing leaf.
+        assert!(
+            guest_to_host(&rootfs, "link/new.txt").is_err(),
+            "a missing leaf under an escaping symlink must be refused"
+        );
+        // Control 1: the same shape without a symlink is what a normal copy does.
+        assert!(
+            guest_to_host(&rootfs, "plain/new.txt").is_ok(),
+            "a missing leaf on a plain path is normal copy: it must be allowed"
+        );
+        // Control 2: a relative symlink that stays inside the rootfs is legitimate
+        // (Debian's /etc/os-release is this shape).
+        assert!(
+            guest_to_host(&rootfs, "inside/new.txt").is_ok(),
+            "an in-rootfs relative symlink must stay allowed"
+        );
+        // Control 3: the pre-existing behaviour, an existing leaf through the same
+        // escaping link, was already refused — the fix must not regress it.
+        std::fs::File::create(outside.join("exists.txt")).unwrap();
+        assert!(
+            guest_to_host(&rootfs, "link/exists.txt").is_err(),
+            "an existing leaf through an escaping symlink must be refused"
+        );
+        // Control 4: an existing leaf behind the legitimate in-rootfs link still passes.
+        std::fs::File::create(rootfs.join("plain").join("in.txt")).unwrap();
+        assert!(
+            guest_to_host(&rootfs, "inside/in.txt").is_ok(),
+            "an existing file behind an in-rootfs link must stay reachable"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
