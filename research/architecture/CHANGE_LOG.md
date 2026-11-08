@@ -1219,4 +1219,52 @@ still failing by design) and `656f8ea` (this follow-up).
 cleans its root at line 177 *before* the test and never after, so each run of `cargo test -p proot-core`
 leaves `$PREFIX/tmp/p7-loader-<pid>-dyn/` behind (six were present when this was measured, each with
 `rootfs/p7loader/lib/{libc.so,libdl.so,libpdnflag.so}` and `rootfs/bin/hello`). Harmless but unbounded;
-the teardown belongs with the test that owns it.
+the teardown belongs with the test that owns it.## p7 step 7: the two engines compared on the same load (2026-11-09 02:34 WIB)
+
+**Finding.** After step 6 the CLI could reach both engines, but nobody had measured whether they AGREE.
+Flipping the default to `native` on the strength of one passing command would have been a claim about
+one guest on one rootfs with three of its observables never looked at.
+
+**Action.** `scripts/engine_differential.py` (new, ~250 lines): one fixture rootfs, one guest, the SAME
+argv and the SAME bind for both arms, three runs each. The guest reports what the two engines are most
+likely to disagree about - `cwd`, a probe environment variable, `/proc/self/exe`, `uid`/`euid` - writes
+a file inside the rootfs, prints its argv, and exits 7. Four observables are compared (exit, stdout,
+the file effect, per-field values) and wall time is recorded. It uses the shared fixture guard
+(`scripts/pdn_fixture_guard.py`), so it refuses without `PN_TEST_ROOT` instead of touching the operator's
+store (measured: `~/.podnext` unchanged at 10 containers / 0 sessions).
+
+**Two fixture defects found while measuring, both real:**
+
+1. The proot arm failed with `proot error: '/bin/sh' not found (root = <fixture>)` - the proot path
+   resolves its command through a shell inside the rootfs, and the seeded rootfs is empty by design.
+   Fixed by binding the host `$PREFIX/bin` at `/bin` for BOTH arms (symmetric), with the guest at
+   `/opt/hello` so neither arm can accidentally run a host binary.
+2. The first guest build was refused (`REFUSING ... rc=2`) for a missing `<stdlib.h>` and for `%%s` left
+   over from the Python raw string. Fail-closed rather than a silent skip, which is the behaviour the
+   guard is supposed to have.
+
+**Measured result (exit 1 - NOT EQUAL, and that is the finding):**
+
+| observable | proot (default) | native | verdict |
+|---|---|---|---|
+| exit status | 7 | 7 | same |
+| stdout | `differential-ok`, `argv[0]=/opt/hello`, ... | identical except the fields below | differs only in those fields |
+| file written in rootfs | `written-by-guest` | `written-by-guest` | **same** |
+| `cwd` | `/` | `/data/data/com.termux/files/home/workspace/PDN` | **DIFFERS** |
+| probe env var | `<unset>` | `<unset>` | same (neither path passes it) |
+| `/proc/self/exe` | `readable` | `absent` | **DIFFERS** |
+| `uid` / `euid` | `0` / `0` | `10396` / `10396` | **DIFFERS** |
+| wall time (median of 3) | 0.186 s | 0.087-0.124 s | native faster by ~1.5-2.1x |
+
+**Three named gaps, which is what step 8 is blocked on:** the working directory is not set on the
+native path (`RunPlan` has no cwd field, so the guest inherits the HOST cwd), the guest sees the host
+uid because no `--change-id=0:0:0` mapping exists on that path, and `/proc` is not mounted so anything
+reading `/proc/self` sees nothing. Each is fixable in the engine or the plan, and each must be fixed or
+explicitly modelled before the default moves.
+
+**Not measured, and said so in the script's own output** rather than in a summary: the remaining
+synthesised mounts (`/dev`, `/sys`, the Android bind set - only `/proc` was probed), hostname and
+kernel-release overrides, bind readonly semantics, namespaces and clone flags, and signal/ptrace
+behaviour inside the guest. The list was corrected during the work: it first still named cwd, envp and
+uid as uncompared AFTER the guest started reporting them, which understates evidence the harness itself
+produces.
