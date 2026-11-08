@@ -312,15 +312,17 @@ pub(crate) fn uses_native_engine(engine: crate::EngineChoice) -> bool {
 /// Run `container`'s `command` under `proot_core::native_run` - the in-tree engine, with NO
 /// external `proot` binary involved.
 ///
-/// The `RunPlan` is built from the container record: `rootfs_path`, and the bind list in the
-/// engine's `(guest_prefix, host_path)` form (`BindMount::target` is the guest path, `source` the
-/// host path). Fields the plan does not carry are named rather than invented:
+/// The `RunPlan` is built from the container record: `rootfs_path`, the bind list in the engine's
+/// `(guest_prefix, host_path)` form (`BindMount::target` is the guest path, `source` the host
+/// path), and the guest's STARTING working directory. Fields the plan does NOT carry are named
+/// rather than invented:
 ///
-///   * ENVIRONMENT - `RunPlan` has no env field and `run_native` hands the guest an EMPTY `envp`
-///     on purpose (see `native_run::child_main`), so no environment is set and none can be;
-///   * WORKING DIRECTORY - `RunPlan` has no cwd field, and the engine refuses a relative guest path
-///     rather than guessing one under a `dirfd`/cwd it does not model, so the guest starts wherever
-///     the kernel places it.
+///   * ENVIRONMENT - `RunPlan` still has no env field and `run_native` hands the guest an EMPTY
+///     `envp` on purpose (see `native_run::child_main`), so no environment is set and none can be;
+///   * a `dirfd`/per-syscall cwd - `RunPlan::cwd` models only the guest's STARTING directory: the
+///     engine `chdir`s the child into its translated host path before `execve` (matching the proot
+///     path's `container.config.working_dir.unwrap_or("/")`), and a RELATIVE guest path is still
+///     refused by name rather than guessed against a `dirfd` it does not model.
 ///
 /// A refusal from the engine is surfaced as a NAMED error and NEVER falls back to proot:
 ///
@@ -356,6 +358,16 @@ fn run_native_engine(
             .iter()
             .map(|b| (b.target.clone(), std::path::PathBuf::from(&b.source)))
             .collect(),
+        // The configured working directory, defaulting to `/` - the SAME value the proot path gives
+        // proot (`container.config.working_dir.unwrap_or("/")`, see `container.rs:234-240` and
+        // `runtime.rs:152-158`), so the guest's cwd no longer depends on which engine ran it.
+        cwd: Some(
+            container
+                .config
+                .working_dir
+                .clone()
+                .unwrap_or_else(|| "/".to_string()),
+        ),
     };
 
     let report = run_native(&argv, &plan, false).map_err(|e| {

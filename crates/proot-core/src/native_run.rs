@@ -76,11 +76,25 @@
 //! translator here, so they are refused by name with a reason that says the host will resolve
 //! them - never passed through as if they were handled.
 //!
+//! GUEST WORKING DIRECTORY (2026-11-09, p7 cwd). `RunPlan::cwd` carries the guest's STARTING
+//! directory as a guest-absolute path; the child `chdir`s into its TRANSLATED host path (through
+//! the same `resolve` the execve rewrite uses) after the release read and before its `execve`, so
+//! the guest starts in the container's configured working directory instead of wherever the host
+//! engine process happened to be. The proot path does exactly this with
+//! `container.config.working_dir.unwrap_or("/")` (`proot-distro-core/src/container.rs:234-240`,
+//! `runtime.rs:152-158`). A cwd that is not absolute, or that contains a `..` component (which
+//! `resolve` would join under the rootfs and the KERNEL would then collapse OUTSIDE the rootfs and
+//! its binds), is refused BY NAME; a failing `chdir` exits `126` rather than run the guest in the
+//! wrong directory. The child's own pre-exec `chdir` is engine setup on an already-translated host
+//! path, not a guest path, so it is exempt from the named path-refusal rule below; a guest `chdir`
+//! after the exec is still the unhandled path syscall it always was.
+//!
 //! NOT DONE HERE, named so the gap is explicit rather than implied:
 //! the other five argv features; the guest's environment (an empty `envp` is passed on purpose -
-//! see `child_main`); `dirfd`/cwd-relative path translation (a relative guest path is refused by
-//! name rather than guessed); and the `PT_INTERP` path, which the KERNEL opens before the tracee
-//! runs a single instruction, so it cannot be translated and must exist on the host.
+//! see `child_main`); `dirfd`-relative path translation (a RELATIVE guest path is still refused by
+//! name rather than guessed - only the STARTING cwd is modelled, not a per-syscall `dirfd`); and
+//! the `PT_INTERP` path, which the KERNEL opens before the tracee runs a single instruction, so it
+//! cannot be translated and must exist on the host.
 
 use anyhow::{anyhow, Result};
 use nix::sys::ptrace::{self, Options};
@@ -162,6 +176,13 @@ pub struct RunPlan {
     /// Extra guest->host prefixes (bind mounts): `(guest_prefix, host_path)` pairs. Honoured by
     /// `resolve` before the rootfs, longest matching prefix first (2026-11-08, p4 step 4).
     pub binds: Vec<(String, PathBuf)>,
+    /// The guest's STARTING working directory, as a GUEST-ABSOLUTE path, or `None` to leave the
+    /// child wherever the engine process is. Translated to its host path through `resolve` and
+    /// `chdir`'d in the child before its `execve` (2026-11-09, p7 cwd), so a container's configured
+    /// `working_dir` reaches the guest (proot uses `working_dir.unwrap_or("/")`). This models only
+    /// the STARTING point: a per-syscall `dirfd` is still not modelled and a relative guest path is
+    /// still refused by name. Not absolute, or containing `..`, is a NAMED refusal.
+    pub cwd: Option<String>,
 }
 
 /// A path the engine rewrote at a syscall stop.
@@ -403,6 +424,14 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
         ));
     }
 
+    // The guest's starting directory, translated to its host path ONCE, here in the engine, so a
+    // refusal is an `Err` from `run_native` (not a child exit code). `None` leaves the child in
+    // whatever directory the engine process is in - the parity gap this increment closes.
+    let cwd_host = match plan.cwd.as_deref() {
+        Some(guest) => Some(resolve_cwd(plan, guest)?),
+        None => None,
+    };
+
     // Mapped BEFORE the fork, so the engine and the child share the physical page. (The ADDRESS is
     // per-process and is never assumed to match - see `ChildView`.)
     let page = unsafe {
@@ -431,7 +460,13 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
         ForkResult::Child => {
             // Close the write end we inherited: only the engine releases the child.
             let _ = nix::unistd::close(pipe_w);
-            child_main(page as *mut u8, &guest_path, argv, pipe_r)
+            child_main(
+                page as *mut u8,
+                &guest_path,
+                argv,
+                pipe_r,
+                cwd_host.as_deref(),
+            )
         }
         ForkResult::Parent { child } => {
             // The engine only writes the release byte; the child owns the read end.
@@ -451,7 +486,13 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
 /// the child's `execve`, so the engine's trace began on the startup of an already-exec'd program and
 /// the child's own pre-exec syscalls were invisible. The child now does NOT trace itself: its first
 /// syscall is the `read` below, and the engine `PTRACE_SEIZE`s + `PTRACE_INTERRUPT`s it there.
-fn child_main(page: *mut u8, guest_path: &str, argv: &[String], pipe_r: nix::libc::c_int) -> ! {
+fn child_main(
+    page: *mut u8,
+    guest_path: &str,
+    argv: &[String],
+    pipe_r: nix::libc::c_int,
+    cwd: Option<&Path>,
+) -> ! {
     // SAFETY: the child is a fresh fork of a single-threaded test/engine process, and every pointer
     // below is derived from the page mapped by `run_native` before the fork.
     unsafe {
@@ -476,6 +517,25 @@ fn child_main(page: *mut u8, guest_path: &str, argv: &[String], pipe_r: nix::lib
             }
         }
         nix::libc::close(pipe_r);
+
+        // The guest's STARTING directory (2026-11-09, p7 cwd): `cwd` is already the TRANSLATED host
+        // path (`run_native` resolved it through `resolve_cwd` before the fork). Issued as a RAW
+        // syscall for the same reason `execve` below is - a preloaded library can interpose
+        // `libc::chdir`, and this must reach the kernel as a `SYS_chdir` the engine can see. A
+        // failure is FATAL: continuing would run the guest in the wrong directory, the exact parity
+        // gap this increment closes. 126 is the same "could not proceed" code the release-read
+        // failure above uses.
+        if let Some(dir) = cwd {
+            let mut path_bytes = dir.as_os_str().as_encoded_bytes().to_vec();
+            path_bytes.push(0);
+            let rc = nix::libc::syscall(
+                nix::libc::SYS_chdir,
+                path_bytes.as_ptr() as *const nix::libc::c_char,
+            );
+            if rc != 0 {
+                nix::libc::_exit(126);
+            }
+        }
 
         write_cstr(page.add(PATH_OFFSET), guest_path);
         write_cstr(page.add(ARGV0_OFFSET), &argv[0]);
@@ -811,6 +871,18 @@ fn parent_loop(
                                 return Err(e);
                             }
                         }
+                    } else if number == nix::libc::SYS_chdir as i64
+                        && pid == child
+                        && !slots[idx].execve_handled
+                    {
+                        // The engine's OWN pre-exec `chdir` into `RunPlan::cwd` (2026-11-09, p7 cwd).
+                        // The path the child was handed is ALREADY the translated host path
+                        // (`resolve_cwd`), so the kernel resolves it correctly with no rewrite and
+                        // there is nothing for the engine to translate. It is engine setup on a host
+                        // path, NOT a guest path, so it is exempt from the named path-refusal rule -
+                        // recording it would fail every `--engine native` run on its own bootstrap. A
+                        // guest `chdir` AFTER the exec (`execve_handled`) is unaffected: it is still
+                        // the unhandled path syscall it always was, and still gets its named refusal.
                     } else {
                         // Not a first execve and not a path this engine translates: a syscall the
                         // engine observed but does not handle.
@@ -1326,6 +1398,44 @@ fn ptrace_event_msg(pid: Pid) -> Result<Pid> {
         ));
     }
     Ok(Pid::from_raw(msg as nix::libc::pid_t))
+}
+
+/// Translate a `RunPlan::cwd` guest path to the host path the child should `chdir` into, or refuse
+/// it BY NAME (2026-11-09, p7 cwd).
+///
+/// Two refusals, both named rather than guessed:
+///
+///   * a cwd that is not absolute - the proot path always supplies the absolute default `/`, and a
+///     relative guest path depends on a `dirfd`/cwd the engine does not model;
+///   * a cwd containing a `..` component - `resolve` would join it under the rootfs and the KERNEL
+///     would then collapse the `..` to a path OUTSIDE the rootfs and its binds, i.e. the guest
+///     escaping its own container by naming its starting directory.
+///
+/// With a `rootfs` the path goes through the SAME `resolve` the execve rewrite uses, so a cwd inside
+/// a bind lands on the bind's host path too. Without a `rootfs` the plan names a host program, so
+/// the absolute cwd is taken as the host path it already is.
+fn resolve_cwd(plan: &RunPlan, guest: &str) -> Result<PathBuf> {
+    if !guest.starts_with('/') {
+        return Err(anyhow!(
+            "RunPlan::cwd must be an absolute guest path (got {:?}); the engine refuses a relative \
+             cwd rather than guessing one against a `dirfd` it does not model",
+            guest
+        ));
+    }
+    if Path::new(guest)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(anyhow!(
+            "RunPlan::cwd {:?} contains a `..` component and would resolve outside the rootfs; the \
+             engine refuses it by name rather than let the kernel escape the container",
+            guest
+        ));
+    }
+    Ok(match plan.rootfs.as_ref() {
+        Some(rootfs) => resolve(rootfs, guest, &plan.binds),
+        None => PathBuf::from(guest),
+    })
 }
 
 /// Guest path -> host path. A bind whose guest prefix matches wins over the rootfs; when several

@@ -273,6 +273,7 @@ fn a_dynamic_guest_runs_inside_the_rootfs() {
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
         binds: Vec::new(),
+        cwd: None,
     };
 
     // ---- capture the guest's stdout ----------------------------------------------------------

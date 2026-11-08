@@ -202,6 +202,7 @@ fn the_engine_owns_the_tracee_and_records_named_refusals() {
     let plan = RunPlan {
         rootfs: Some(rootfs_a),
         binds: host_runtime_binds(),
+        cwd: None,
     };
 
     let run = run_native(&argv, &plan, false).expect("traced run of the fixture");
@@ -290,6 +291,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     let plan_a = RunPlan {
         rootfs: Some(rootfs_a.clone()),
         binds: host_runtime_binds(),
+        cwd: None,
     };
     let a = run_native(&argv, &plan_a, false).expect("run against rootfs-a");
     eprintln!(
@@ -399,6 +401,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     let plan_b = RunPlan {
         rootfs: Some(rootfs_b.clone()),
         binds: host_runtime_binds(),
+        cwd: None,
     };
     let b = run_native(&argv, &plan_b, false).expect("run against rootfs-b");
     eprintln!(
@@ -429,6 +432,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     let plan_c = RunPlan {
         rootfs: Some(rootfs_c),
         binds: Vec::new(),
+        cwd: None,
     };
     let c = run_native(&argv, &plan_c, false);
     let err =
@@ -552,6 +556,7 @@ fn the_engine_traces_a_forked_child_and_translates_its_execve() {
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
         binds: host_runtime_binds(),
+        cwd: None,
     };
     let run = run_native(&argv, &plan, false).expect("traced run of the forking fixture");
     eprintln!(
@@ -608,6 +613,7 @@ fn a_bind_prefix_wins_over_the_rootfs_for_execve() {
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
         binds,
+        cwd: None,
     };
     let run = run_native(&argv, &plan, false).unwrap_or_else(|e| {
         panic!("the bind must supply the guest path, but the engine refused the run: {e:#}")
@@ -648,6 +654,151 @@ fn a_bind_prefix_wins_over_the_rootfs_for_execve() {
             "[bind] /proc/<pid>/exe was not readable; the exit code (7) and the translation carry \
              the verdict"
         ),
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ---------------------------------------------------------------------------------------------
+// p7 cwd: the guest's WORKING DIRECTORY (added 2026-11-09). Closes the FIRST of the three named
+// engine-parity gaps.
+// ---------------------------------------------------------------------------------------------
+
+/// The guest's starting working directory matches the proot engine's.
+///
+/// Measured before this increment (`scripts/engine_differential.py`, PDN 36ff688): under `--engine
+/// proot` (the default) the guest sees cwd `/`, while under `--engine native` it inherits the HOST
+/// process's cwd, because `RunPlan` had no cwd field and nothing was ever `chdir`'d in the child.
+/// The proot path sets the guest cwd from `container.config.working_dir.unwrap_or("/")`
+/// (`crates/proot-distro-core/src/container.rs:234-240`, `runtime.rs:152-158`); this proves the
+/// native engine now does the same.
+///
+/// The guest is a real compiled program whose only job is to report its OWN cwd: it `getcwd`s and
+/// writes the result to `/probe/cwd`, a guest path the plan binds to a host directory this test
+/// reads back. The positive arm sets `cwd: Some("/")` and must land the guest in
+/// `resolve(rootfs, "/")` - the rootfs root. The NEGATIVE CONTROL runs the SAME guest with the SAME
+/// binds and ONLY `cwd: None`: it must inherit this test process's own cwd instead, which is what
+/// proves the `chdir` (not the environment) produces the difference. A third arm proves a cwd that
+/// would escape the rootfs (`..`) and a relative cwd are refused BY NAME.
+#[test]
+fn the_engine_chdirs_the_guest_into_the_plans_cwd() {
+    let root = fixture_root("cwd");
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-cwd");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+
+    // The host directory the guest's report lands in, bound at `/probe` so the guest's `open` is
+    // translated HERE instead of into the rootfs.
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    // The guest: getcwd() into a buffer, then write it to /probe/cwd.
+    compile_c(
+        &rootfs.join("bin").join("cwd"),
+        r#"#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+int main(void) {
+    char buf[4096];
+    if (getcwd(buf, sizeof buf) == 0) { return 60; }
+    int fd = open("/probe/cwd", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 61; }
+    if (write(fd, buf, strlen(buf)) < 0) { return 62; }
+    close(fd);
+    return 0;
+}
+"#,
+    );
+
+    let argv = vec!["/bin/cwd".to_string()];
+    let mut binds = vec![("/probe".to_string(), probe.clone())];
+    binds.extend(host_runtime_binds());
+
+    // Read back what the guest wrote, naming the tag so a missing report is legible in the failure.
+    let read_report = |tag: &str| -> String {
+        std::fs::read_to_string(probe.join("cwd"))
+            .unwrap_or_else(|e| panic!("[{tag}] the guest did not report its cwd: {e}"))
+    };
+
+    // ---- positive arm: cwd: Some("/") lands the guest in the rootfs root ----------------------
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds: binds.clone(),
+        cwd: Some("/".to_string()),
+    };
+    let run = run_native(&argv, &plan, false).expect("traced run with a cwd");
+    let guest_cwd = read_report("some");
+    eprintln!(
+        "[cwd] cwd=Some(\"/\") exit={} guest_getcwd={} expected_rootfs={}",
+        run.exit_code,
+        guest_cwd,
+        rootfs.display()
+    );
+    assert_eq!(
+        run.exit_code, 0,
+        "the fixture must run to completion; a 126 means the engine's own chdir failed"
+    );
+    assert_eq!(
+        canon(Path::new(&guest_cwd)),
+        canon(&rootfs),
+        "with cwd: Some(\"/\") the guest's own getcwd() must be the translated host path of \"/\" \
+         (the rootfs root); got {} - a HOST cwd means the child was never chdir'd",
+        guest_cwd
+    );
+    // The engine's OWN pre-exec chdir is setup on an already-translated host path, NOT a guest path:
+    // it must not be recorded as an untranslated-path refusal, or `native_verdict` (podnext) would
+    // fail every `--engine native` run on the engine's own bootstrap.
+    assert!(
+        run.refusals.iter().all(|r| r.name != Some("SYS_chdir")),
+        "the engine's own pre-exec chdir must not be recorded as a refusal; got {:?}",
+        run.refusal_summary()
+    );
+
+    // ---- negative control: cwd: None must NOT put the guest at the rootfs ---------------------
+    // SAME guest, SAME binds; the ONLY difference is the cwd field. If this arm also landed at the
+    // rootfs root, the positive assertion above would prove nothing about the chdir.
+    let host_cwd = std::env::current_dir().expect("this test's own cwd");
+    let plan_none = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: None,
+    };
+    let run_none = run_native(&argv, &plan_none, false).expect("traced run without a cwd");
+    let guest_cwd_none = read_report("none");
+    eprintln!(
+        "[cwd] cwd=None       exit={} guest_getcwd={} host_cwd={}",
+        run_none.exit_code,
+        guest_cwd_none,
+        host_cwd.display()
+    );
+    assert_eq!(run_none.exit_code, 0, "the fixture must run to completion");
+    assert_ne!(
+        canon(Path::new(&guest_cwd_none)),
+        canon(&rootfs),
+        "NEGATIVE CONTROL: with cwd: None the guest must inherit the HOST cwd, never end up at the \
+         rootfs - if it does, the chdir is not what produced the positive arm's result"
+    );
+    assert_eq!(
+        canon(Path::new(&guest_cwd_none)),
+        canon(&host_cwd),
+        "with cwd: None the guest must inherit this process's own working directory"
+    );
+
+    // ---- refusal arm: a cwd that escapes the rootfs, and a relative cwd, are named refusals ----
+    for bad in ["/../etc", "relative/dir"] {
+        let plan_bad = RunPlan {
+            rootfs: Some(rootfs.clone()),
+            binds: Vec::new(),
+            cwd: Some(bad.to_string()),
+        };
+        let err = run_native(&argv, &plan_bad, false)
+            .expect_err("a cwd that is not a plain absolute under-rootfs path must be refused");
+        let msg = format!("{err:#}");
+        eprintln!("[cwd] refusal for {bad:?}: {msg}");
+        assert!(
+            msg.contains("cwd"),
+            "the refusal must name the cwd field, got: {msg}"
+        );
     }
 
     let _ = std::fs::remove_dir_all(&root);
