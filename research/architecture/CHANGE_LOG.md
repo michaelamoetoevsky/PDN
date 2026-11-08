@@ -738,3 +738,46 @@ SEIZE/INTERRUPT constants 97-114; `run_native` pipe+fork 288-306; `child_main` 3
 `crates/proot-core/tests/native_exec_translation.rs` (docs 11-40; fixture helpers 58-168;
 `#[ignore]` removed at 246; sync gate 280-328). Every change carries a dated
 `2026-11-08, p4 step 3b` comment in the source.
+
+## p1b: does `podnext kill` still claim a session it did not signal? (re-measured, ASEC3-PROC2-01)
+
+**Finding that prompted this (recorded 2026-11-08 earlier in the ASEC campaign).** With a session
+record whose pid was dead while a live holder kept the record, `podnext kill <container>` printed
+`Container '<n>' killed.`, returned 0, removed the session record - and no signal had been sent. The
+first attempted fix (`session_still_active`, commit 6a9cd2a) was WITHDRAWN in bb22ad0 because CI
+proved it fired on a test helper that holds the record itself
+(`a_guest_ignoring_term_is_escalated_term_quit_kill`, image_config_env.rs:497), and the remedy was
+reopened: it must distinguish the guest from any other descriptor holder, not refuse because
+"someone holds it".
+
+**What the tree already says.** `crates/proot-distro-core/src/session.rs:24-29` documents the
+contract: liveness is decided by the inherited descriptor (`active_sessions()`, C8), while
+`(pid, start_time)` only ADDRESS a session - "and let a signal be refused when the pid has since been
+recycled (B13, runc's `hasInit()`)". `signal_target()` (`session.rs:113-115`) is that refusal:
+`process_is_alive(record.pid, record.start_time).then_some(record.pid)`.
+
+**Action.** Instead of writing a fourth guard, the property was MEASURED. New harness
+`scripts/kill_honesty_probe.py` (199 lines) commits the reproduction: it seeds a fixture store
+through `scripts/pdn_fixture_guard.py`, proves the binary acts on that fixture before it is allowed to
+act at all (`assert_binary_honours_store`), then runs five arms over the same container - pid dead or
+live, crossed with the record unheld / held `LOCK_SH` / held `LOCK_EX` (the arm that used to lie is
+dead+EX) - and a positive control that must report a real signal. It refuses (exit 2) when the
+positive control is silent, because silence elsewhere then proves nothing.
+
+**Measured result at 328e464 (device, 2026-11-08 18:2x WIB).** Verdict line:
+`claims not backed by a live pid at claim time: 0`; `positive-control arms that reported a real
+signal: 1`. In detail: dead+none and dead+EX both print
+`Skipping session PID 26347 (probe-kill): its pid no longer names the process that registered it, so
+nothing can be signalled safely there.` with `Container 'probe-kill' is not running.` and NO kill
+claim - so the marked recipe is now refused by name; dead+SH and live+SH are silent with no claim;
+live+EX reports `Sent SIGTERM to session PID 26337 (probe-kill)` with that pid alive at claim time.
+The operator's store was untouched: 10 containers / 0 sessions before and after.
+
+**Ledger.** A new line `ASEC3-PROC2-01-V` (status VALIDATED, validates=ASEC3-PROC2-01) records the
+re-measurement; the earlier `-W` CORRECTED line stands as the record of the withdrawal.
+
+**Rule this adds.** A withdrawn fix is not evidence that the defect is open, and a defect that was
+real can stop being reachable when the surrounding mechanism changes: re-measure the ORIGINAL recipe
+before writing a second guard. And a silence-based probe needs a positive control in the same run -
+without an arm that must report, "no claim was printed" is indistinguishable from "the reporter never
+ran".
