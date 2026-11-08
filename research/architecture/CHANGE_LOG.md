@@ -545,6 +545,40 @@ registry pull may only fetch a layer plus a manifest), which decides whether pro
 into the metadata is a small wiring change or a feature. That question is what the remaining half of #76
 now rests on.
 
+---
+
+## p4 step 1 - the engine reads the syscall number (*771b817*)
+
+**Found.** `Tracee::read_syscall` and `read_retval` returned `0` for every stop, so the 155 handler
+patterns in `syscall.rs` could only ever be selected by `0`, and no `PTRACE_GETREGSET` call existed
+anywhere in the tree (the `PTRACE_CONT`/`PTRACE_SYSCALL`/`PTRACE_GETREGSET` search of the assessment was
+true of those three symbols; `ptrace` itself is used, see `NATIVE_ENGINE_STATE.md`).
+
+**Change (2026-11-08), files touched.**
+- `crates/proot-core/src/tracee.rs:110-190` - `read_registers()` reads the register file through
+  `PTRACE_GETREGSET` with `NT_PRSTATUS`; `read_syscall`/`read_retval` use it; `observe_syscall()` is public
+  so a test can stop a child at a known syscall. Four measured platform details are recorded in the code
+  because each one cost a compile cycle: nix 0.27 has no aarch64 `ptrace::getregs`; libc does not export
+  `NT_PRSTATUS` for this target (so it is named where it is used, with its ABI source); Android's
+  `libc::ptrace` takes `request: c_int` and is variadic; and `Registers` is the aarch64 layout, so on
+  x86_64 it is left at its default rather than filled with values that mean something else.
+- `crates/proot-core/tests/native_syscall_read.rs` (new) - stops a real child at `getpid` and asserts the
+  number the engine reports is `SYS_getpid`, not merely non-zero.
+
+**Verification, both directions on the same assertion.**
+- Real read: `cargo test -p proot-core --test native_syscall_read` -> `1 passed`, 
+  `the_engine_reports_the_syscall_the_tracee_made ... ok`.
+- Read stubbed (API intact): `FAILED`, `left: None right: Some(172)` - naming `SYS_getpid`, so the
+  assertion fails for the right reason.
+- A first attempt at the control was **invalid** and is recorded as such: reverting all of `tracee.rs`
+  produced `error[E0599]: no method named observe_syscall found`, which proved the API had gone, not that
+  the assertion can fail. The valid control stubs only the register read.
+
+**What this does not do.** It does not make the engine reachable: `ProotEngine::run()` still has no caller
+in any binary, and `syscall.rs`'s handlers still have no dispatch wired to the number this now reads.
+Steps 2-3 of the p4 plan are untouched.
+
+
 
 
 
