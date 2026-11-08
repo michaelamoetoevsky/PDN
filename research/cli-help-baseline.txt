@@ -160,6 +160,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -242,6 +248,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext backup --help =====
@@ -278,6 +290,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext backup config --help =====
 Show backup configuration
@@ -304,6 +317,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext backup create --help =====
 Create a backup
@@ -334,6 +348,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext backup delete --help =====
 Delete a backup
@@ -363,6 +378,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext backup list --help =====
 List backups
@@ -390,6 +406,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext backup restore --help =====
 Restore a backup
@@ -420,6 +437,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext backup status --help =====
 Show backup status
@@ -449,6 +467,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext boot --help =====
 [experimental] [System] Termux:Boot integration for background autostart
@@ -481,6 +500,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext boot disable --help =====
 Disable auto-start at boot
@@ -510,6 +530,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext boot enable --help =====
 Enable auto-start at boot
@@ -539,6 +560,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext boot status --help =====
 Show boot configuration
@@ -565,6 +587,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext build --help =====
 [experimental] [Advanced] Multi-arch build service
@@ -601,6 +624,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext build artifacts --help =====
 [experimental] Show build artifacts (refuses: no build service)
@@ -630,6 +654,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext build cancel --help =====
 [experimental] Cancel a build (refuses: no build service)
@@ -659,6 +684,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext build list --help =====
 [experimental] List builds (refuses: no build service)
@@ -686,6 +712,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext build local --help =====
 Build an OCI container image from a Dockerfile context directory.
@@ -768,6 +795,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext build logs --help =====
@@ -799,6 +832,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext build status --help =====
 [experimental] Show build status (refuses: no build service)
@@ -828,6 +862,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext build submit --help =====
 [experimental] Submit a build (refuses: no build service)
@@ -855,6 +890,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext completion --help =====
 [experimental] [Core] Generate shell completions
@@ -884,6 +920,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext compose --help =====
 Export one or more PDN service definition files to a single Docker Compose document.
@@ -965,6 +1002,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext config --help =====
@@ -1042,6 +1085,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext config validate --help =====
@@ -1072,6 +1121,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext copy --help =====
 Copy files or directories between the host and containers safely (strictly rejects path traversal escapes).
@@ -1156,6 +1206,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext daemon --help =====
@@ -1191,6 +1247,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext daemon logs --help =====
 Show daemon logs
@@ -1219,6 +1276,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext daemon reload --help =====
 Reload daemon configuration
@@ -1245,6 +1303,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext daemon start --help =====
 Start daemon
@@ -1271,6 +1330,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext daemon status --help =====
 Show daemon status
@@ -1297,6 +1357,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext daemon stop --help =====
 Stop daemon
@@ -1323,6 +1384,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dashboard --help =====
 [experimental] [System] Web dashboard management
@@ -1355,6 +1417,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dashboard start --help =====
 Start the dashboard server
@@ -1382,6 +1445,7 @@ Options:
   -e, --env <VAR=VALUE>      Set environment variable (repeatable)
   -v, --verbose...           Enable verbose debug output (repeatable)
       --format <FORMAT>      Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>      Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                 Print help
 ===== podnext dashboard status --help =====
 Show dashboard status
@@ -1408,6 +1472,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dashboard stop --help =====
 Stop the dashboard server
@@ -1434,6 +1499,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dbus --help =====
 [experimental] [System] D-Bus IPC & service brokering
@@ -1467,6 +1533,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dbus call --help =====
 Call D-Bus method
@@ -1501,6 +1568,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dbus list --help =====
 List D-Bus services
@@ -1527,6 +1595,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dbus monitor --help =====
 Monitor D-Bus signals
@@ -1556,6 +1625,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext dbus serve --help =====
 Run the D-Bus broker in the foreground
@@ -1626,6 +1696,12 @@ Options:
           Output format (table, json, yaml, text)
           
           [possible values: table, json, yaml, text]
+
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1705,6 +1781,12 @@ Options:
           Output format (table, json, yaml, text)
           
           [possible values: table, json, yaml, text]
+
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1787,6 +1869,12 @@ Options:
   -v, --verbose...
           Enable verbose debug output (repeatable)
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -1824,6 +1912,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext gitops drift --help =====
 Check for drift
@@ -1850,6 +1939,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext gitops reconcile --help =====
 Reconcile resources
@@ -1879,6 +1969,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext gitops resources --help =====
 List managed resources
@@ -1906,6 +1997,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext gitops status --help =====
 Show GitOps status
@@ -1932,6 +2024,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext gitops sync --help =====
 Sync with git repository
@@ -1959,6 +2052,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image --help =====
 [experimental] [Container] Manage OCI images and local cache
@@ -1995,6 +2089,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image history --help =====
 Show image history
@@ -2025,6 +2120,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image inspect --help =====
 Display detailed information on one or more images
@@ -2054,6 +2150,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image ls --help =====
 List images
@@ -2081,6 +2178,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image pull --help =====
 Pull an image from a registry
@@ -2112,6 +2210,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image push --help =====
 Push an image to a registry
@@ -2141,6 +2240,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image rm --help =====
 Remove one or more images
@@ -2172,6 +2272,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext image tag --help =====
 Tag an image
@@ -2202,6 +2303,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext info --help =====
 Display host kernel, system architecture, CPU cores, memory limits, and PDN capabilities.
@@ -2272,6 +2374,12 @@ Options:
 
   -v, --verbose...
           Enable verbose debug output (repeatable)
+
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2364,6 +2472,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext kill --help =====
@@ -2395,6 +2509,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext list --help =====
 List all installed distributions and containers with their status, real Linux OS, and architecture.
@@ -2473,6 +2588,12 @@ Options:
   -v, --verbose...
           Enable verbose debug output (repeatable)
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext log --help =====
@@ -2507,6 +2628,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext log flush --help =====
 Flush log buffer
@@ -2533,6 +2655,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext log query --help =====
 Query logs
@@ -2564,6 +2687,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext log stats --help =====
 Show log statistics
@@ -2590,6 +2714,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext log tail --help =====
 Tail logs (follow)
@@ -2618,6 +2743,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext login --help =====
 Start an interactive root/user shell inside an installed container with isolated environment.
@@ -2702,6 +2828,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext network --help =====
@@ -2738,6 +2870,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext network connect --help =====
 Connect a container to a network
@@ -2769,6 +2902,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext network create --help =====
 Create a network
@@ -2801,6 +2935,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext network disconnect --help =====
 Disconnect a container from a network
@@ -2831,6 +2966,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext network inspect --help =====
 Inspect a network
@@ -2860,6 +2996,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext network ls --help =====
 List networks
@@ -2886,6 +3023,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext network rm --help =====
 Remove one or more networks
@@ -2915,6 +3053,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext policy --help =====
 [experimental] [System] Policy engine (RBAC & capability limits)
@@ -2948,6 +3087,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext policy eval --help =====
 Evaluate policies for a service
@@ -2977,6 +3117,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext policy list --help =====
 List policy rules
@@ -3004,6 +3145,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext policy load --help =====
 Load policy from file
@@ -3031,6 +3173,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext policy presets --help =====
 Show policy presets
@@ -3057,6 +3200,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext ps --help =====
 [experimental] [Container] List active sessions
@@ -3083,6 +3227,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext quota --help =====
 [experimental] [System] Resource quota management (memory/cpu cgroups)
@@ -3116,6 +3261,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext quota get --help =====
 Get resource quotas
@@ -3145,6 +3291,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext quota list --help =====
 List all quotas
@@ -3171,6 +3318,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext quota set --help =====
 Set resource quota
@@ -3202,6 +3350,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext quota usage --help =====
 Show current resource usage
@@ -3231,6 +3380,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext remove --help =====
 Permanently remove an installed container and its rootfs from disk.
@@ -3311,6 +3461,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext rename --help =====
@@ -3389,6 +3545,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext reset --help =====
@@ -3462,6 +3624,12 @@ Options:
           Output format (table, json, yaml, text)
           
           [possible values: table, json, yaml, text]
+
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -3578,6 +3746,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext search --help =====
@@ -3663,6 +3837,12 @@ Options:
   -v, --verbose...
           Enable verbose debug output (repeatable)
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext service --help =====
@@ -3703,6 +3883,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service create --help =====
 Create service from TOML config
@@ -3733,6 +3914,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service disable --help =====
 Disable auto-start at boot
@@ -3762,6 +3944,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service enable --help =====
 Enable auto-start at boot
@@ -3791,6 +3974,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service list --help =====
 List all services
@@ -3817,6 +4001,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service load --help =====
 Load service from TOML config
@@ -3846,6 +4031,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service logs --help =====
 View service logs
@@ -3877,6 +4063,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service restart --help =====
 Restart a service
@@ -3906,6 +4093,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service start --help =====
 Start a service
@@ -3935,6 +4123,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service status --help =====
 Show service status
@@ -3964,6 +4153,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext service stop --help =====
 Stop a service
@@ -3994,6 +4184,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext sessions --help =====
 [stable] [Container] List active sessions (detailed)
@@ -4020,6 +4211,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext socket --help =====
 [experimental] [System] Socket activation (listen on host, wake container on demand)
@@ -4052,6 +4244,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext socket list --help =====
 List socket activations
@@ -4078,6 +4271,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext socket register --help =====
 Register socket activation
@@ -4105,6 +4299,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext socket unregister --help =====
 Unregister socket
@@ -4134,6 +4329,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext sync --help =====
 Fast delta directory synchronization between host and containers based on SHA256 content hashing.
@@ -4214,6 +4410,12 @@ Options:
           
           [possible values: table, json, yaml, text]
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext version --help =====
@@ -4286,6 +4488,12 @@ Options:
   -v, --verbose...
           Enable verbose debug output (repeatable)
 
+      --engine <ENGINE>
+          Container engine: proot (default) or native
+          
+          [default: proot]
+          [possible values: proot, native]
+
   -h, --help
           Print help (see a summary with '-h')
 ===== podnext volume --help =====
@@ -4321,6 +4529,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext volume create --help =====
 Create a volume
@@ -4352,6 +4561,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext volume inspect --help =====
 Inspect a volume
@@ -4381,6 +4591,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext volume ls --help =====
 List volumes
@@ -4407,6 +4618,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext volume prune --help =====
 Remove all unused volumes
@@ -4435,6 +4647,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext volume rm --help =====
 Remove one or more volumes
@@ -4466,6 +4679,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext wakelock --help =====
 [experimental] [System] Wake lock management (prevent Android sleep)
@@ -4498,6 +4712,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext wakelock acquire --help =====
 Acquire wake lock
@@ -4528,6 +4743,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext wakelock release --help =====
 Release wake lock
@@ -4557,6 +4773,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext wakelock status --help =====
 Show wake lock status
@@ -4583,6 +4800,7 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext watchdog --help =====
 [experimental] [System] Watchdog management & circuit breaker
@@ -4616,6 +4834,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext watchdog events --help =====
 Show watchdog events
@@ -4643,6 +4862,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext watchdog reset --help =====
 Reset watchdog state for a service
@@ -4672,6 +4892,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext watchdog setpolicy --help =====
 Set watchdog policy for a service
@@ -4704,6 +4925,7 @@ Options:
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
       --format <FORMAT>              Output format (table, json, yaml, text) [possible values: table, json, yaml, text]
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help
 ===== podnext watchdog status --help =====
 Show watchdog status
@@ -4730,4 +4952,5 @@ Options:
       --no-kill-on-exit              Don't kill processes on exit
   -e, --env <VAR=VALUE>              Set environment variable (repeatable)
   -v, --verbose...                   Enable verbose debug output (repeatable)
+      --engine <ENGINE>              Container engine: proot (default) or native [default: proot] [possible values: proot, native]
   -h, --help                         Print help

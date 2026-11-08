@@ -230,10 +230,13 @@ pub(crate) struct Cli {
     )]
     pub(crate) format: Option<OutputFormat>,
 
-    /// Engine used to run a guest (`run`, `login`).
-    ///
-    /// `proot` is the default and runs the host `proot` binary, unchanged. `native` runs the
-    /// guest under podnext's own in-tree ptrace engine and never touches a `proot` binary.
+    // `proot` (default) runs the host `proot` binary, unchanged; `native` runs the guest under
+    // podnext's own in-tree ptrace engine and never touches a `proot` binary. The detail lives in this
+    // plain comment on purpose: as a doc comment it became clap's `long_help`, and because this option
+    // is global a multi-line `long_help` switches EVERY screen to next-line layout (measured:
+    // research/cli-help-baseline.txt went 4733 -> 10168 lines for an 8-line option). One line keeps the
+    // published surface reviewable.
+    /// Container engine: `proot` (host binary, the default) or `native` (in-tree engine)
     #[arg(
         long = "engine",
         global = true,

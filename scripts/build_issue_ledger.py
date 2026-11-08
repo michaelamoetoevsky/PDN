@@ -301,7 +301,12 @@ CHECKS: list[dict] = [
          cmd="cargo test -p proot-distro-core --lib seccomp_profile_is_refused_not_dropped --locked"),
     # ── #69: the warning count has a ceiling and the gate can fail ────────────
     dict(issue="69", claim="the warning ratchet can actually fail, not merely report",
-         cmd="python3 scripts/check_warnings.py self-check", needle="fires on growth"),
+         # The needle follows the script's own wording. It was "fires on growth" until the self-check
+         # was rewritten to say "red on growth" and to refuse a partial measurement as well; the claim
+         # did not change, only the sentence that states it. Pinned wording must move with the sentence.
+         cmd="python3 scripts/check_warnings.py self-check", needle="red on growth"),
+    dict(issue="69", claim="a partial measurement is refused rather than read as zero for the unseen targets",
+         cmd="python3 scripts/check_warnings.py self-check", needle="refuses BOTH an empty and a partial"),
     dict(issue="69", claim="ceilings are stored per toolchain, so a rustc change reads as cannot-measure rather than as a pass",
          cmd="grep -F '\"baselines\"' scripts/warning_baseline.json", needle=None),
     dict(issue="69", claim="a toolchain with no recorded ceiling is not silently treated as clean",
