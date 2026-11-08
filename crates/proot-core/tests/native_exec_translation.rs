@@ -981,3 +981,93 @@ int main(void) {
         run_dotdot.refusal_summary()
     );
 }
+
+/// The guest receives EVERY argument, not only `argv[0]` (2026-11-09, p7 argv).
+///
+/// This engine published `argv[0]` and then terminated the pointer array, so a guest invoked with
+/// arguments saw `argc == 1` and silently fell back to its own defaults - measured, and undocumented.
+/// For the operator's goal the consequence is direct: `podnext --engine native run c -- /bin/sh -c 'cmd'`
+/// would run `/bin/sh` with no arguments and no error.
+#[test]
+fn the_guest_receives_every_argument() {
+    let root = fixture_root("argv");
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-argv");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    // Reports argc and every argv entry into the bound HOST directory, because the child's stdout and
+    // stderr are inherited and therefore unassertable from here.
+    compile_c(
+        &rootfs.join("bin").join("argv"),
+        r#"#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    char buf[2048];
+    int n = 0;
+    n += snprintf(buf + n, sizeof buf - n, "argc=%d", argc);
+    for (int i = 0; i < argc && n < (int)sizeof buf - 96; i++) {
+        n += snprintf(buf + n, sizeof buf - n, "|argv[%d]=%s", i, argv[i]);
+    }
+    int fd = open("/probe/argv-report", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 51; }
+    if (write(fd, buf, n) < 0) { return 52; }
+    close(fd);
+    return 0;
+}
+"#,
+    );
+
+    let mut binds = vec![("/probe".to_string(), probe.clone())];
+    binds.extend(host_runtime_binds());
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+    };
+
+    // An entry with a space and one with `=` are included on purpose: a naive re-split would mangle them.
+    let argv: Vec<String> = ["/bin/argv", "one", "two words", "--flag=value"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let run = run_native(&argv, &plan, false).expect("traced run with arguments");
+    let report = std::fs::read_to_string(probe.join("argv-report")).unwrap_or_else(|e| {
+        panic!(
+            "the guest did not report its argv (exit {}): {e}",
+            run.exit_code
+        )
+    });
+    eprintln!("[argv] exit={} report={report}", run.exit_code);
+    assert_eq!(run.exit_code, 0, "the guest must run to completion");
+    assert_eq!(
+        report, "argc=4|argv[0]=/bin/argv|argv[1]=one|argv[2]=two words|argv[3]=--flag=value",
+        "every argument must reach the guest, in order, unchanged - including spaces and `=`"
+    );
+
+    // ---- the two size limits are refused BY NAME, before the fork --------------------------------
+    // A silent truncation here would be the same defect in a different place: the guest would run with
+    // fewer arguments than the caller asked for and nothing would say so.
+    let too_many: Vec<String> = std::iter::once("/bin/argv".to_string())
+        .chain((0..80).map(|i| format!("a{i}")))
+        .collect();
+    let err = run_native(&too_many, &plan, false).expect_err("81 entries must be refused");
+    let msg = err.to_string();
+    eprintln!("[argv] too many -> {msg}");
+    assert!(
+        msg.contains("needs") && msg.contains("slots"),
+        "the refusal must name the slot limit; got {msg}"
+    );
+
+    let too_long: Vec<String> = vec!["/bin/argv".to_string(), "x".repeat(3000)];
+    let err =
+        run_native(&too_long, &plan, false).expect_err("a 3000-byte argument must be refused");
+    let msg = err.to_string();
+    eprintln!("[argv] too long -> {msg}");
+    assert!(
+        msg.contains("do not fit") && msg.contains("byte region"),
+        "the refusal must name the byte limit; got {msg}"
+    );
+}

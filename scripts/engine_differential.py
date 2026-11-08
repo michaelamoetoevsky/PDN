@@ -45,6 +45,10 @@ GUEST_SOURCE = r"""
 int main(int argc, char **argv) {
     char cwd[512];
     printf("differential-ok\n");
+    /* argc/argv: the engine used to publish ONLY argv[0], so a guest invoked with arguments saw
+     * argc == 1 and silently used its defaults (2026-11-09, p7 argv). Two entries, one of them with
+     * a space, are enough to catch a re-split or a dropped tail. */
+    printf("argc=%d\n", argc);
     for (int i = 0; i < argc; i++) printf("argv[%d]=%s\n", i, argv[i]);
     printf("cwd=%s\n", getcwd(cwd, sizeof cwd) ? cwd : "<none>");
     printf("envp=%s\n", getenv("PDN_DIFFERENTIAL_PROBE") ? getenv("PDN_DIFFERENTIAL_PROBE") : "<unset>");
@@ -208,8 +212,14 @@ def main() -> int:
     prefix_bin = os.environ.get("PREFIX", "/data/data/com.termux/files/usr") + "/bin"
     bind = ["-b", f"{prefix_bin}:/bin"]
     arms = (
-        ("proot (default)", [binary, "run", CONTAINER, *bind, "--", "/opt/hello"]),
-        ("native", [binary, "--engine", "native", "run", CONTAINER, *bind, "--", "/opt/hello"]),
+        (
+            "proot (default)",
+            [binary, "run", CONTAINER, *bind, "--", "/opt/hello", "alpha", "beta gamma"],
+        ),
+        (
+            "native",
+            [binary, "--engine", "native", "run", CONTAINER, *bind, "--", "/opt/hello", "alpha", "beta gamma"],
+        ),
     )
     results = {}
     for label, argv in arms:

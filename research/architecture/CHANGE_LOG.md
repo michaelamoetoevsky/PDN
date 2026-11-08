@@ -1427,4 +1427,42 @@ with `argv[1] = "../escaped-report"` observed `argc == 1` and silently fell back
 (it printed `[guest] name=relative-report cwd=...`), so the `..` name never reached the engine at all.
 The consequence for the operator goal is direct: `podnext --engine native run c -- /bin/sh -c 'cmd'` runs
 `/bin/sh` with NO arguments and no error. Recorded as the next increment (`p7-argv`); the test above works
-around it by compiling the name in, and says so in a comment rather than hiding it.
+around it by compiling the name in, and says so in a comment rather than hiding it.## p7 argv: the engine published only argv[0], and the guest never said so (2026-11-09 05:05 WIB)
+
+**Finding.** `native_run.rs` published `argv[0]` into the shared page and then terminated the pointer array
+(`*argv_slots.add(1) = std::ptr::null()`), with a comment that spoke only about argv[0] being the program's
+own name. Nothing documented that every LATER argument was dropped, and nothing reported it: the guest saw
+`argc == 1`, used its own defaults, and exited 0. Reproduced while writing a test for the `..` guard: a probe
+invoked with `argv[1] = "../escaped-report"` printed `[guest] name=relative-report` - its compiled-in default
+- so the `..` never reached the engine at all. For the operator's goal the consequence is direct:
+`podnext --engine native run c -- /bin/sh -c 'cmd'` runs `/bin/sh` with no arguments and no error.
+
+**Action.** The page already had 2,496 unused bytes after the header (`PAGE_BYTES = 4096`, last used region
+`[1536 .. 1600)`), so no layout change was needed, only a fifth documented region:
+`[1600 .. 4096)` holds the strings for `argv[1..]`, NUL-separated. New constants derive their values from
+the page rather than restating them (`ARGV_EXTRA_OFFSET = 1600`, `ARGV_EXTRA_CAPACITY = PAGE_BYTES -
+ARGV_EXTRA_OFFSET - 1`, `ARGV_SLOTS = (HEADER_OFFSET - ARGV_OFFSET) / size_of::<*const c_char>()` = 64).
+Both limits are checked in `run_native` BEFORE the fork, so exceeding them is an `Err` naming the limit
+("argv of 81 entries needs 82 slots ...", "argv strings after argv[0] total 3001 bytes and do not fit ...")
+instead of a child that exits 126 for a reason the caller cannot read. The child then copies each entry and
+writes the terminating null into the slot after the last.
+
+**Measured, three ways.**
+
+1. Regression test `the_guest_receives_every_argument` (7th test in `native_exec_translation.rs`): the guest
+   reports `argc` and every entry into a bound HOST directory, invoked as
+   `["/bin/argv", "one", "two words", "--flag=value"]`, and the report must equal
+   `argc=4|argv[0]=/bin/argv|argv[1]=one|argv[2]=two words|argv[3]=--flag=value` - a space and an `=` are in
+   the fixture because a naive re-split would mangle them. Two refusal arms cover the limits. Proven able to
+   fail: with the fix stashed the report is `argc=1|argv[0]=/bin/argv` and the assertion fires. Target:
+   7 passed.
+2. `scripts/engine_differential.py` now passes `alpha` and `beta gamma` to BOTH engines and the guest prints
+   `argc`, so this class is compared on every future run. Before rebuilding the CLI binary it read
+   `argc: DIFFERS proot='3' native='1'`; after `cargo build -p podnext --bin podnext` (mtime 05:02:26) it
+   reads `argc: same proot='3' native='3'` with identical `argv[0..2]` lines in both stdouts, including
+   `argv[2]=beta gamma`.
+3. The first differential run in (2) is itself evidence of the stale-binary trap: the source was fixed, the
+   binary was not, and the harness measured base behaviour. Rebuild before believing a CLI-level difference.
+
+**Still different, and measured every run:** `devnull`, `proc`, `sysfs` (gap 2: the proot arm gets them from
+proot's own defaults, not from podnext) and `uid`/`euid` (gap 3), plus `cwd` as an informational field.

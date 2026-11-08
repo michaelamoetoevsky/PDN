@@ -115,11 +115,23 @@ use crate::tracee::Tracee;
 ///   [1024 .. 1536) the argv pointer array, terminated by a null pointer
 ///   [1536 .. 1600) the child's self-report: magic, the pointer it will pass to `execve`, and the
 ///                  length of the path it wrote
+///   [1600 .. 4096) the strings for `argv[1..]`, NUL-separated (2026-11-09, p7 argv). Before this
+///                  region existed the engine published ONLY argv[0] and terminated the pointer
+///                  array after it, so a guest invoked with arguments saw `argc == 1` and silently
+///                  used its own defaults - measured, and undocumented.
 const PAGE_BYTES: usize = 4096;
 const PATH_OFFSET: usize = 0;
 const ARGV0_OFFSET: usize = 512;
 const ARGV_OFFSET: usize = 1024;
 const HEADER_OFFSET: usize = 1536;
+/// Where the strings for `argv[1..]` begin: immediately after the header, in the part of the page
+/// that was unused. The capacity is derived from the page size rather than written down twice.
+const ARGV_EXTRA_OFFSET: usize = 1600;
+const ARGV_EXTRA_CAPACITY: usize = PAGE_BYTES - ARGV_EXTRA_OFFSET - 1;
+/// Pointer slots the child's argv array can hold: the region between the array's start and the
+/// header, divided by the pointer size. The terminating null occupies one of them.
+const ARGV_SLOTS: usize =
+    (HEADER_OFFSET - ARGV_OFFSET) / std::mem::size_of::<*const nix::libc::c_char>();
 /// A translated path must fit below `ARGV0_OFFSET`; anything longer is refused by name rather than
 /// written over the guest's argv[0].
 const PATH_CAPACITY: usize = ARGV0_OFFSET - 1;
@@ -487,6 +499,32 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
         ));
     }
 
+    // The guest's argv (2026-11-09, p7 argv). Until this increment the engine published argv[0] ONLY
+    // and terminated the pointer array after it, so a guest invoked with arguments saw `argc == 1`
+    // and fell back to its own defaults - silently, and undocumented (measured: a probe passed
+    // `argv[1]` printed its compiled-in default name). Both limits are checked HERE, before the
+    // fork, so exceeding them is an `Err` from `run_native` rather than a child that exits 126 for
+    // a reason the caller cannot read.
+    let argv_slots_needed = argv.len() + 1; // the entries plus the terminating null
+    if argv_slots_needed > ARGV_SLOTS {
+        return Err(anyhow!(
+            "argv of {} entries needs {} slots with the terminating null, and this engine publishes \
+             {}: the extra arguments would be dropped rather than run",
+            argv.len(),
+            argv_slots_needed,
+            ARGV_SLOTS
+        ));
+    }
+    let argv_extra_bytes: usize = argv[1..].iter().map(|a| a.len() + 1).sum();
+    if argv_extra_bytes > ARGV_EXTRA_CAPACITY {
+        return Err(anyhow!(
+            "argv strings after argv[0] total {} bytes and do not fit the {} byte region this engine \
+             publishes for them",
+            argv_extra_bytes,
+            ARGV_EXTRA_CAPACITY
+        ));
+    }
+
     // The guest's starting directory, translated to its host path ONCE, here in the engine, so a
     // refusal is an `Err` from `run_native` (not a child exit code). `None` leaves the child in
     // whatever directory the engine process is in - the parity gap this increment closes.
@@ -604,9 +642,18 @@ fn child_main(
         write_cstr(page.add(ARGV0_OFFSET), &argv[0]);
         // argv as the guest should see it: argv[0] is the program's own (guest) name. Only the
         // syscall's path argument is translated, not what the program is told it was called.
+        // Every LATER entry is copied into the region after the header (2026-11-09, p7 argv). The
+        // sizes were validated in `run_native` before this fork, so these writes cannot run off the
+        // page; the terminating null goes into the slot after the last entry.
         let argv_slots = page.add(ARGV_OFFSET) as *mut *const nix::libc::c_char;
         *argv_slots = page.add(ARGV0_OFFSET) as *const nix::libc::c_char;
-        *argv_slots.add(1) = std::ptr::null();
+        let mut arg_cursor = page.add(ARGV_EXTRA_OFFSET);
+        for (slot, arg) in argv.iter().skip(1).enumerate() {
+            write_cstr(arg_cursor, arg);
+            *argv_slots.add(slot + 1) = arg_cursor as *const nix::libc::c_char;
+            arg_cursor = arg_cursor.add(arg.len() + 1);
+        }
+        *argv_slots.add(argv.len()) = std::ptr::null();
         // The self-report the engine believes instead of its own address arithmetic.
         let header = page.add(HEADER_OFFSET) as *mut u64;
         *header = HEADER_MAGIC;
