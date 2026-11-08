@@ -901,4 +901,107 @@ by the new boundary arm (64 held silent connections, the 65th refused by name) i
 working tree rather than separate worktrees (the briefs did not require isolation). They stayed
 file-disjoint so nothing was lost, but that is a real protocol deviation: two children in one tree can
 observe each other's half-applied state, and the parent should have required `git worktree add` per
-child as the delegation protocol says.
+child as the delegation protocol says.## p5 slice-2: a Dockerfile's WORKDIR is confined to the image rootfs (ASEc-001, ASEC1-A07-001, -C1)
+
+**Findings.** `podnext build local` applied a Dockerfile's `WORKDIR` without confining it to the image
+rootfs. Measured at the audit commit: `FROM scratch` + `WORKDIR ../../etc` exited 0 and created
+`<store>/containers/etc`, a sibling of the image directory (`ASEC1-A07-001`), and the parent's own run
+created a directory outside both the rootfs and the store (`ASEc-001`). A 1000x chained `../..` form
+escaped the fixture entirely, leaving `<fixture>/etc`, `<fixture>/.podnext/etc` and
+`<fixture>/.podnext/containers/etc` behind. `ASEC1-A07-001-C1` corrected the landing path for the
+ABSOLUTE form.
+
+**Where the write actually happens (this mattered).** `build.rs:276` only RECORDS the value
+(`c.config.working_dir = Some(wd.clone())`). The writer is the `create_dir_all(rootfs.join(abs))` in the
+same instruction arm. The guard therefore had to sit before that call, not around the record - and the
+re-measurement confirmed both landing paths, reconciling the two ledger rows rather than picking one:
+the RELATIVE form `../../etc` lands at `<store>/containers/etc` (the original row), while the ABSOLUTE
+form `/a/../../b` lands at `<store>/containers/t1/b`, one level above rootfs inside the container
+directory (the correction `-C1`). Both are now asserted in the same test file.
+
+**Action.** `crates/podnext/src/commands/build.rs` +12 at 252-263: a `..` path component is refused
+before any filesystem write, with the message `WORKDIR '<dir>' escapes the image root: '..' is not
+allowed in a WORKDIR path`. The decision was REFUSE, not normalise, for two reasons: `copy_into_rootfs`
+(`build.rs:369`, refusal at `:387`) already enforces exactly this rule and message shape, so a reader
+learns one rule instead of two; and refusing needs no model of Docker's normalisation to be safe. New
+test target `crates/podnext/tests/build_workdir_escape.rs` (245 lines, 13 assertions, 4 tests) drives the
+real CLI: the escape is refused, the 1000x chained form cannot leave the store, and two positive controls
+assert the landing path and the recorded `working_dir` for `/srv/app` and for the relative-chained
+`/app` then `src` -> `/app/src`.
+
+**Verification - the parent re-ran it on the worktree tree, it is not a child self-report.**
+`cargo test -p podnext --bin podnext` and the two test targets were run by the parent with a PRIVATE
+`CARGO_TARGET_DIR` inside the worktree (`wt-workdir/target`), because a shared target directory can serve
+a sibling worktree's artefact. The child's own pasted evidence: BEFORE (pre-fix binary, the ledger's
+recipe) `build exit status: 0` with `ESCAPED: <fixture>/home/.podnext/containers/etc`; AFTER `build exit
+status: 1` plus `Error: WORKDIR '../../etc' escapes the image root: '..' is not allowed in a WORKDIR
+path`, and the three candidate landing paths outside the rootfs all `absent`. Positive controls in the
+same run: `/srv/app` -> `<rootfs>/srv/app` with `"working_dir": "/srv/app"`; `/app` then `src` ->
+`<rootfs>/app/src` with `"working_dir": "/app/src"`. Negative control (guard made a no-op): two tests
+FAILED on the landing-path assertion (`a WORKDIR with '..' escaped the image root; build exit=Some(0)`,
+`/.../home/.podnext/containers/etc exists=true`), then restored and green - an assertion about the
+landing path, not a compile error.
+
+**Gates.** `cargo test -p podnext --bin podnext` -> 52 passed; `--test build_workdir_escape` -> 4 passed;
+`--test build_copy_escape` -> 2 passed (COPY/ADD behaviour unchanged); `cargo fmt --all -- --check`
+clean. All work ran through the memory guard (peak 1546 MB, exit 0).
+
+**Isolation.** The child worked on its own branch in its own worktree (`git worktree add` +
+`dept/workdir`, commit 76e6e30, never pushed); the parent verified `git status` of the main checkout is
+clean and that the diff touches only the two files above. This is the delegation protocol applied
+properly, after the previous wave's two children shared one tree.
+
+**Environment note, recorded because it cost the child time.** A sibling probe in another session
+exported `HOME` for a fixture and that export leaked into the SHARED terminal environment, so the
+child's `~` briefly resolved to a fixture directory. The child re-pinned `HOME` and used absolute paths;
+nothing was derived from the hijacked value and `~/.podnext` was never touched. The rule now in
+`hermes-harness`: pass fixture variables per command, never `export` them.
+## p6 slice-1: a refused archive member is now named and counted, and the extractor's defences are under test (A04-01..04, ASEC1-A07-007)
+
+**Findings.** Four audit rows measured `extract()` in `crates/proot-distro-core/src/untar.rs` against a
+hostile hand-built tar. The extractor already DEFENDED itself - nothing escaped - but the traversal arm
+skipped the escaping members SILENTLY: the loop hit `is_inside() == false` and `continue`d, so
+`extract()` returned `Ok(())` with no record at all. A refused write that leaves no trace is a security
+event the operator cannot see, and it makes "archive contained nothing" indistinguishable from "archive
+contained three members we refused". The other three rows were already correct: a planted-symlink write
+was refused by name, `strip` matched the reference for absolute and doubled-slash names, and a whiteout
+over a symlink removed the link while its target survived. `ASEC1-A07-007` covered malformed archives
+(truncated tar, gzip-not-a-tar, truncated deflate), which fail with a named error.
+
+**Action.** `crates/proot-distro-core/src/untar.rs:58-102` adds `Refusal { path, reason }` (its `Display`
+renders `refusing entry \`<name>\`: <reason>`) and `ExtractReport { refused }` with `refused()`,
+`refusal_count()` and `is_clean()`. `extract`, `extract_with_strip`, `extract_entries` and
+`extract_entries_stripped` now return `Result<ExtractReport>` (lines 113, 125, 131, 136); both refusal
+sites call `report.refuse(...)` before continuing (lines 167, 183) and the success path returns
+`Ok(report)` (line 258). Call sites whose signature changed were updated as a consequence:
+`archive.rs:127,266`, `compress.rs:171,176,181,186`, and `pn-next/src/backup_restore/mod.rs:1027`
+(`.map(|_| ())`). Tests in the same file now cover traversal-by-name-and-count (814), a clean archive
+reporting zero refusals as the positive control (859), strip 0 vs 1 for absolute and doubled-slash
+members (888), truncated tar (925), gzip-that-is-not-a-tar (955), truncated deflate (987), declared
+4 GiB (1028), the planted-symlink refusal asserted through the report (643), and the whiteout over a
+symlink retained (591). Assertions in `untar.rs`: 24 -> 56.
+
+**Verification - the parent re-ran the suite on the worktree tree.** `cargo test -p proot-distro-core
+--lib` -> `112 passed; 0 failed`; `--test deep_fs_recursion` -> `3 passed; 0 failed`; `cargo check -p
+pn-next` exit 0; `cargo fmt --all -- --check` clean. The child's own BEFORE/AFTER on the audit's own
+fixtures: BEFORE `result=Ok` with the escaping members silently skipped; AFTER `result=Ok
+refusal_count=3` with three named refusals (`refusing entry \`../escape-target\`: resolved path ...
+escapes destination ...`) and `escape-target/escape2 exists=false`; the planted-symlink arm reports
+`refusal_count=1` with its named reason. Negative control (the `refuse` method sabotaged to a no-op):
+the traversal test FAILS on `refusals: []` with `left: 0, right: 3` - an assertion about the missing
+record, not a compile error - then restored green.
+
+**Limits, stated rather than implied.** (a) "No partial tree" is NOT guaranteed at the extractor level:
+`extract` writes incrementally, so a tar cut mid-entry leaves a short file; the full guarantee lives in
+the install path's staging directory, which is a different component. The new tests assert extraction
+fails loudly and that the cut entry did not fully materialise, plus an empty destination for the
+gzip-not-a-tar case - which is what the extractor can actually promise. (b) `archive.rs:200` is
+`Vec::with_capacity(size as usize)` for a member named `index.json`, so a hostile 4 GiB-declared
+`index.json` WOULD allocate; that is outside this row family (the measured case used a different member
+name) and was noted rather than widened into this diff. (c) `pn-next/src/backup_restore/mod.rs:1027`
+discards the report with `.map(|_| ())`; the refusals still happen (so the security property holds) but
+the restore path cannot see them - a follow-up should surface `!is_clean()` there.
+
+**Isolation.** Own worktree and branch (`dept/untar` @ 8ff1a3c), never pushed, main checkout untouched by
+the child; the parent verified the branch, the commit, the four files and the test names before
+integrating.
