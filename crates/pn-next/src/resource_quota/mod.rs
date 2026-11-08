@@ -162,6 +162,14 @@ pub struct QuotaViolation {
     /// Timestamp
     pub timestamp: chrono::DateTime<chrono::Utc>,
     /// Action taken
+    ///
+    /// This records the action the **configuration** calls for (`config.violation_action`, default
+    /// `Throttle`), not one that was applied: `check_quotas` detects and stamps this value at five
+    /// sites without throttling anything, and the code that actually writes a cgroup limit is
+    /// `apply_throttle` (`resource_quota/mod.rs:599`, reached from `:563`). A violation log therefore
+    /// states which action is configured, and reading it as "this was done" is the mistake
+    /// `ASEC3-ORCH-002` recorded (measured 2026-11-08: a guest at `VmHWM 564672 kB` under a 512 MiB
+    /// limit stayed `running`).
     pub action_taken: QuotaViolationAction,
 }
 
