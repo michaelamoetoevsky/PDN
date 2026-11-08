@@ -9,7 +9,7 @@ This is a ratchet, not a cleanup. `scripts/warning_baseline.json` records what e
 a stated toolchain; the gate fails when a target goes above its recorded number. Numbers only move
 down, and a deliberate re-record is a visible commit, not a quiet edit.
 
-  compare : measure and compare against the baseline       (0 within, 1 grew, 2 cannot measure)
+  compare : measure and compare against the baseline       (default; 0 within, 1 grew, 2 cannot measure)
   record  : measure and rewrite the baseline entry          (only with a reason to move it)
   self-check : exercise the decision on fixed data, no cargo
 
@@ -17,10 +17,13 @@ down, and a deliberate re-record is a visible commit, not a quiet edit.
   --from-log FILE take the counts from a saved `cargo check` stderr instead of running cargo
   --toolchain KEY select the baseline entry (`--toolchain show` lists what is recorded)
 
-Measured on a WARM target directory, `cargo check` re-emits nothing for targets it does not rebuild,
-so the counts fall towards zero. That direction cannot produce a false failure, but zero is not
-evidence of a clean tree - which is why CI measures cold and why `self-check` uses fixed data rather
-than a cargo run to prove the gate fires.
+A WARM target directory is measured, not trusted. Cargo replays a fresh crate's cached diagnostics
+(measured here: a second `cargo check --workspace` on an untouched tree re-emits the same 261
+warnings), so a warm run usually reports the real number - but that is a property of cargo's cache,
+not of the tree, and a partially populated or truncated run would silently omit targets. Two
+refusals stand in front of that: an EMPTY measurement (nothing parsed at all) and a PARTIAL one (a
+baseline target missing from a non-cold run) are both **exit 2: cannot measure**, never a pass. CI
+measures cold, which needs neither.
 
 **The toolchain is part of the measurement, and the runner's is not ours.** rustc adds and removes
 lints between versions, and `dtolnay/rust-toolchain@stable` moves on its own, so a baseline is stored
@@ -140,14 +143,48 @@ def measure(cold: bool) -> dict[str, int]:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def compare(measured: dict[str, int], base: dict) -> tuple[int, list[str]]:
+def unseen_targets(measured: dict[str, int], base_crates: dict, complete: bool) -> list[str]:
+    """Baseline targets a non-cold measurement did not report. Pure; empty when the run is cold.
+
+    A cold `cargo check` emits a summary for every target that has >=1 warning, so a target it does
+    NOT mention really is at zero. A warm, cached or truncated run cannot tell that from a target
+    that was never re-built, so any baseline target it omits is an unknown, not a zero.
+    """
+    if complete:
+        return []
+    return sorted(set(base_crates) - set(measured))
+
+
+def compare(measured: dict[str, int], base: dict, complete: bool = True,
+            source: str = "") -> tuple[int, list[str]]:
     """Pure: measured counts against one baseline entry. Returns (exit code, lines to print).
 
-    Separate from measurement so the decision can be exercised on fixed data, and because a warm
-    cargo run measures zero: a gate whose only evidence is a warm run cannot fail, and one that
-    cannot fail is worse than none.
+    Separate from measurement so the decision can be exercised on fixed data. Two refusals live
+    HERE rather than in the caller, because they are properties of the COMPARISON and must be
+    provable without a build:
+
+      * an EMPTY measurement is not a clean tree - it is a measurement that did not happen, and
+        flowing it through the numeric comparison as zero for every target PASSES against any
+        ceiling. Exit 2.
+      * a PARTIAL measurement that omits a baseline target is the same trap one crate wide (a warm
+        or truncated run reads the omitted target as "fell to zero"). Exit 2, unless the run is
+        cold, where an omission genuinely means zero warnings.
     """
     lines: list[str] = []
+    if not measured:
+        lines.append("cannot measure: no per-target warning summaries were parsed"
+                     + (f" (source: {source})" if source else ""))
+        lines.append("  An empty measurement is not evidence of zero warnings - the build may have")
+        lines.append("  emitted no diagnostics at all (target dir unwritable, toolchain unresolvable).")
+        return 2, lines
+    missing = unseen_targets(measured, base["crates"], complete)
+    if missing:
+        lines.append("cannot measure: partial measurement - these baseline targets reported nothing"
+                     + (f" (source: {source})" if source else "") + ":")
+        lines += [f"    {c}" for c in missing]
+        lines.append("  A warm/cached or truncated run cannot tell 0 warnings from not re-built.")
+        lines.append("  Measure cold (add --cold), or feed a complete saved log.")
+        return 2, lines
     grew = [(c, was, measured.get(c, 0))
             for c, was in base["crates"].items() if measured.get(c, 0) > was]
     if grew:
@@ -180,7 +217,9 @@ def entry_for(doc: dict, tc: str) -> dict | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["compare", "record", "self-check"])
+    ap.add_argument("mode", nargs="?", default="compare",
+                    choices=["compare", "record", "self-check"],
+                    help="what to do (default: compare)")
     ap.add_argument("--cold", action="store_true", help="fresh target dir, nothing cached")
     ap.add_argument("--from-log", metavar="FILE", help="read counts from a saved cargo check stderr")
     ap.add_argument("--toolchain", metavar="KEY", help="baseline entry to use, or 'show'")
@@ -234,6 +273,14 @@ def main() -> int:
         return 2
 
     if args.mode == "record":
+        existing = entry_for(doc, tc)
+        missing = unseen_targets(measured, existing["crates"], bool(args.cold)) if existing else []
+        if missing:
+            print("cannot record: partial measurement - a warm/cached run omits these targets, so")
+            print("recording it would freeze a too-low ceiling. Re-run with --cold:")
+            for c in missing:
+                print(f"    {c}")
+            return 2
         doc.setdefault("baselines", {})[tc] = {"cold": args.cold, "total": total, "crates": measured}
         doc["note"] = ("Warning ceilings. One entry per toolchain, because rustc's lint set changes "
                        "between versions and the CI runner uses `stable`, which moves on its own.")
@@ -257,7 +304,8 @@ def main() -> int:
         print("  exit 2: cannot measure. Record this toolchain deliberately, or the comparison is fiction.")
         return 2
 
-    rc, lines = compare(measured, base)
+    desc = args.from_log or ("cargo check --cold" if args.cold else "cargo check")
+    rc, lines = compare(measured, base, complete=bool(args.cold), source=desc)
     print(f"measured: {total} warnings{source} (ceiling {base['total']} on this toolchain, cold={args.cold})")
     for line in lines:
         print(line)
@@ -271,12 +319,21 @@ def self_check() -> int:
     would have "passed" while proving nothing.
     """
     base = {"total": 30, "crates": {"a (lib)": 20, "b (lib)": 10}}
-    assert compare({"a (lib)": 20, "b (lib)": 10}, base)[0] == 0, "equality must pass"
+    assert compare({"a (lib)": 20, "b (lib)": 10}, base)[0] == 0, "equality must pass (quiet)"
     rc, lines = compare({"a (lib)": 21, "b (lib)": 10}, base)
     assert rc == 1 and any("a (lib): 20 -> 21" in l for l in lines), "growth must fail and name it"
     assert compare({"a (lib)": 19, "b (lib)": 10}, base)[0] == 0, "fewer must pass"
+    # An EMPTY measurement is not a clean tree: it must refuse (2), never pass. The old gate read it
+    # as "every target fell to zero" and returned 0 against any ceiling.
     rc, lines = compare({}, base)
-    assert rc == 0 and any("lower than the baseline" in l for l in lines), "a warm run must not fail"
+    assert rc == 2 and any("empty measurement" in l for l in lines), "empty must refuse, not pass"
+    # A PARTIAL measurement (a baseline target unseen) is the same trap one crate wide: refuse
+    # unless the run is cold, where an omission really means zero warnings.
+    rc, lines = compare({"a (lib)": 20}, base, complete=False)
+    assert rc == 2 and any("b (lib)" in l for l in lines), "partial must refuse and name the target"
+    assert compare({"a (lib)": 20}, base, complete=True)[0] == 0, "cold may omit a now-clean target"
+    assert unseen_targets({"a (lib)": 20}, base["crates"], complete=True) == [], "cold: no unseen"
+    assert unseen_targets({"a (lib)": 20}, base["crates"], complete=False) == ["b (lib)"], "warm: unseen"
     assert entry_for({"baselines": {"X": base}}, "X") is base, "keyed lookup"
     assert entry_for({"baselines": {"X": base}}, "Y") is None, "an unrecorded toolchain is not a pass"
     assert entry_for({"toolchain": "X", "crates": base["crates"]}, "X") is not None, "reads the old flat file"
@@ -296,7 +353,8 @@ def self_check() -> int:
     assert not base_dir.endswith("/tmp/tmp"), f"temp base must not double the tmp segment: {base_dir}"
     if os.environ.get("PREFIX"):
         assert base_dir.startswith(os.environ["PREFIX"]), base_dir
-    print("self-check: ok - fires on growth, quiet on equality, sums per target, refuses an unknown toolchain")
+    print("self-check: ok - red on growth, quiet on equality, sums per target, refuses an unknown")
+    print("  toolchain, and refuses BOTH an empty and a partial measurement (exit 2, never a pass)")
     print(f"  temp base here: {base_dir}")
     return 0
 
