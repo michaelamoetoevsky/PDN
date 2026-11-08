@@ -350,14 +350,47 @@ fn run_native_engine(
         argv
     };
 
+    // The synthetic mounts the PROOT path gets, reproduced here (2026-11-09, p7 gap 2). Measured: the
+    // proot arm hands proot `--bind=/dev`, `--bind=/proc`, `--bind=/sys` itself
+    // (`proot-core/src/lib.rs:244-246`, `:386-388`) and then appends the sysdata masks and the guest
+    // runtime directories (`runtime.rs:141-149`); the native path ran none of that, so its guest saw
+    // /dev/null, /proc/self/exe and /sys as ABSENT while the proot guest saw them.
+    //
+    // This is a deliberate widening of what a native run exposes, and it is stated rather than inherited:
+    // binding the host /proc lets the guest read the process table of the same uid, exactly as the proot
+    // path already does. The sysdata masks (which can hide /proc/net, /proc/1 and every numeric
+    // /proc/<pid>) are appended afterwards and win by LONGEST PREFIX in `resolve`, so a mask is never
+    // shadowed by the identity bind no matter the order.
+    let mut binds: Vec<(String, std::path::PathBuf)> = container
+        .config
+        .bind_mounts
+        .iter()
+        .map(|b| (b.target.clone(), std::path::PathBuf::from(&b.source)))
+        .collect();
+    for guest in ["/dev", "/proc", "/sys"] {
+        binds.push((guest.to_string(), std::path::PathBuf::from(guest)));
+    }
+    if let Some(container_dir) = container.rootfs_path.parent() {
+        let specs = proot_distro_core::sysdata::bindings(container_dir)
+            .into_iter()
+            .chain(proot_distro_core::guestdirs::bindings(container_dir));
+        for spec in specs {
+            // `host:guest`, with an optional `!` meaning "do not dereference a symlink" - a proot argv
+            // convention this engine has no equivalent for, so the flag is stripped and the bind kept.
+            let Some((host, guest)) = spec.rsplit_once(':') else {
+                continue;
+            };
+            let guest = guest.trim_end_matches('!');
+            if host.is_empty() || guest.is_empty() {
+                continue;
+            }
+            binds.push((guest.to_string(), std::path::PathBuf::from(host)));
+        }
+    }
+
     let plan = RunPlan {
         rootfs: Some(container.rootfs_path.clone()),
-        binds: container
-            .config
-            .bind_mounts
-            .iter()
-            .map(|b| (b.target.clone(), std::path::PathBuf::from(&b.source)))
-            .collect(),
+        binds,
         // The configured working directory, defaulting to `/` - the SAME value the proot path gives
         // proot (`container.config.working_dir.unwrap_or("/")`, see `container.rs:234-240` and
         // `runtime.rs:152-158`), so the guest's cwd no longer depends on which engine ran it.

@@ -1465,4 +1465,45 @@ writes the terminating null into the slot after the last.
    binary was not, and the harness measured base behaviour. Rebuild before believing a CLI-level difference.
 
 **Still different, and measured every run:** `devnull`, `proc`, `sysfs` (gap 2: the proot arm gets them from
-proot's own defaults, not from podnext) and `uid`/`euid` (gap 3), plus `cwd` as an informational field.
+proot's own defaults, not from podnext) and `uid`/`euid` (gap 3), plus `cwd` as an informational field.## p7 gap 2: /dev and /proc now match; /sys is measured but NOT explained (2026-11-09 05:55 WIB)
+
+**Correction of my own record, first.** The step-7 addendum above says the guest's `/proc`, `/dev` and `/sys` under the
+proot arm "come from proot's own default setup" and that "podnext never runs that code". The first half is
+WRONG: podnext hands proot `--bind=/dev`, `--bind=/proc` and `--bind=/sys` itself
+(`crates/proot-core/src/lib.rs:244-246`, and again at `:386-388`), and only then appends the sysdata masks and
+the guest runtime directories (`runtime.rs:141-149`). The native path builds its plan from the container
+record alone, which is why it was missing all of it - the conclusion stood, the attribution did not.
+
+**Action.** `run_native_engine` (`crates/podnext/src/native/session.rs`) now reproduces that set: identity binds
+for `/dev`, `/proc`, `/sys`; then `sysdata::bindings(container_dir)` and `guestdirs::bindings(container_dir)`
+parsed from `host:guest` (a trailing `!` is a proot-only "do not dereference" flag, stripped and the bind
+kept), with `container_dir = container.rootfs_path.parent()` - the same expression the proot path uses.
+Ordering is safe by construction: `resolve` picks the LONGEST matching prefix and, on a tie, the first entry,
+so a sysdata mask like `{stub}:/proc/net` always beats the identity `/proc` bind regardless of position.
+
+The widening is stated in the code rather than inherited: binding the host `/proc` lets a native guest read
+the process table of its own uid, exactly as the proot path already does.
+
+**Measured (`scripts/engine_differential.py`, same fixture, 3 runs per arm, new CLI binary built 05:48:44):**
+
+| field | before | after |
+|---|---|---|
+| `devnull` | `writable` vs `absent` | **same** (`writable`) |
+| `proc` | `readable` vs `absent` | **same** (`readable`) |
+| `sysfs` | `readable` vs `absent` | still differs |
+| `argc` | - | same (3) |
+| `uid`/`euid` | `0/0` vs `10396/10396` | still differs |
+
+**`/sys` is open, and NOT explained.** Two facts measured, one hypothesis unwritten: (a) the host `/sys` is not
+readable by this uid (`test -r /sys` fails, `ls /sys` exits 2), so `absent` on the native side is consistent
+with the host; (b) inside the PROOT arm the same probe returns `readable-rc=0`, i.e. `access("/sys", R_OK)`
+succeeds there. Mode bits on `/sys` are 0555, so `access` answering 0 is plausible while a real `readdir` is
+denied - which is exactly why `sysdata` exists (it masks `/sys` with an empty directory when the host one
+cannot be read, and its staging directory does not exist in this fixture). What is NOT established is why the
+native arm's `access("/sys")` answers differently from proot's. The next experiment is bounded and written
+down: a compiled guest that calls `stat("/sys")` and `open("/sys", O_RDONLY|O_DIRECTORY)` and reports both
+errno values, run under each engine - the sh-based probe used here is invalid for the native arm because
+`/bin` is a bind to the host and the guest shell cannot resolve `libc.so`.
+
+Claim discipline for this increment: two of the three fields flipped and are quoted; the third is reported as
+open with the facts that are known, not folded into a parity claim.
