@@ -781,3 +781,124 @@ real can stop being reachable when the surrounding mechanism changes: re-measure
 before writing a second guard. And a silence-based probe needs a positive control in the same run -
 without an arm that must report, "no claim was printed" is indistinguishable from "the reporter never
 ran".
+## p4c slice 1+2: the native engine follows forks and honours bind mounts (measured 2026-11-08)
+
+**Findings this closes (from the engine's own declaration of its gaps, native_run.rs lines 49-64 before
+this change).** (a) `TRACE_OPTIONS` carried only `TRACESYSGOOD | TRACEEXEC`, so a grandchild produced by
+`fork()`/`clone()` was never traced and its `execve` was never translated: any workload that runs a
+shell (which forks for every command) silently escaped translation. (b) `pub fn resolve(rootfs, guest,
+binds)` honoured a bind list that NO caller ever filled, so bind mounts were inert - the CLI's
+`--bind` had no effect on the native path. Both gaps were declared in prose, which is why neither was
+hidden; but a declared gap is still a gap.
+
+**Action taken.** Slice 1: `TRACE_OPTIONS` now unions `PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK |
+PTRACE_O_TRACECLONE` (native_run.rs:114-119) and `parent_loop` was rebuilt as a per-tracee slot table
+driven by `waitpid(-1, __WALL | __WNOTHREAD)` (native_run.rs:410-748): it reads the new pid from
+`PTRACE_GETEVENTMSG` on the fork event, consumes that tracee's birth stop, resumes it with
+`PTRACE_SYSCALL`, tracks entry/exit and the exec event per tracee, and returns only when every slot
+is gone. Slice 2: `RunPlan` carries a bind list (native_run.rs:145-146) and `resolve`
+(native_run.rs:1068-1084) now selects the LONGEST matching prefix instead of the first in list order,
+with the rootfs fallback unchanged. Translation for a tracee that is not the original child goes
+through `translate_execve_remote` (native_run.rs:823-1065: `PTRACE_GETREGSET`/`SETREGSET`, `PEEKDATA`
+to read the guest path, `POKEDATA` to write the translated path into a stack scratch at `sp-0x200`,
+and arg0 redirect), because the shared-page trick only works for the child the engine forked itself.
+
+**Files.** `crates/proot-core/src/native_run.rs` (+598/-115), `crates/proot-core/tests/
+native_exec_translation.rs` (+188, zero deletions). The module's own doc comment (lines 49-64) was
+rewritten from "binds and forks are not done" to what now works, so the prose cannot drift from the code.
+
+**Verification - the parent re-ran it, it is not a child self-report.**
+`cargo test -p proot-core --test native_exec_translation -- --nocapture` ->
+`test result: ok. 4 passed; 0 failed; 0 ignored` (exit 0, 96 s, 83 MB peak), with the engine's own report
+lines: `[fork] exit=1 translations=[{guest:"/bin/forker"}, {guest:"/bin/child", host:"<fixture>/
+rootfs-fork/bin/child"}] executed=Some("<fixture>/rootfs-fork/bin/child")` and
+`[bind] exit=7 translations=[{guest:"/bin/forker", host:"<fixture>/rootfs-bind/bin/forker"},
+{guest:"/opt/tool", host:"<fixture>/bind-target/tool"}] executed=Some("<fixture>/bind-target/tool")`.
+`cargo test -p proot-core --lib` -> `13 passed; 0 failed`. `cargo fmt -p proot-core -- --check` clean.
+Assertions 26 -> 32, `#[ignore]` 0 (was 2 before p4-3b).
+
+**Negative controls (child, pasted in its transcript, and required by the brief).** With bind
+resolution sabotaged the bind test fails on the assertion
+`the bind must supply the guest path, but the engine refused the run: translated path does not exist:
+/opt/tool -> <fixture>/rootfs-bind/opt/tool`; with the fork options removed the fork test fails on
+`the forked child exec'd the rootfs /bin/child (exit 1) ...; 90 means the child's execve was never
+translated and failed`. Both are assertions about behaviour, not compile errors; both restored green.
+
+**Two real defects the implementer hit and fixed (recorded because they will bite the next tracer).**
+`waitpid(-1)` cross-reaped children of OTHER tests running concurrently in the same process (`ESRCH`);
+`__WALL | __WNOTHREAD` confines it to the calling thread's children. And a tracee killed while
+ptrace-stopped leaves a zombie that the next `waitpid(-1)` returns, so `Exited`/`Signaled` for unknown
+pids must be ignored - a blocking post-loop `waitpid(child)` deadlocks instead, because the forker
+waits on a child ptrace will not let die.
+
+**Limits stated, not hidden.** The stack scratch at `sp-0x200` fits `PATH_CAPACITY+1`; a tracee whose
+SP is within 0x200 of the bottom of its stack mapping makes `POKEDATA` fail and the run ERRORS rather
+than corrupting memory (not exercised by the fixtures). A fork-descendant's `at_entry` starts as
+`false` because the kernel reports the clone-exit first; this affects only the `entries`/refusal labels,
+because entry-versus-exit for translation is decided by whether the guest path is readable
+(`peek_cstr` succeeding), so a wrong guess cannot cause a missed translation. `resolve`'s bind match is
+still plain `starts_with` (no path-component boundary), preserving the pre-existing semantics - only
+first-match became longest-match. Production callers still do NOT use this engine; it remains
+experimental until parity is measured on the same load.## p5 slice-1: the daemon's socket IPC bounded and named (ASEC2-API-005/006/007/008, measured 2026-11-08)
+
+**Findings.** Four recorded items on one mechanism - the line-oriented JSON control protocol the CLI and
+the dashboard both speak over a unix socket. Measured at the audit commit: the socket inherited the
+ambient umask (`mode 0o777` under `umask 0000`) because `run()` called `UnixListener::bind` with no
+`set_permissions`; startup unlinked ANY existing socket path unconditionally, so a second daemon silently
+stole a live daemon's socket; `read_line` on an uncapped `BufReader` accepted a 10,485,784-byte frame and
+answered it; and there was no cap on concurrent connections (128/128 served) and no read deadline (an
+unterminated frame pinned a handler until the peer chose to finish).
+
+**Action.** One mechanism, four fixes in `crates/podnext/src/daemon.rs` (+389/-12), with the numbers named
+as constants rather than scattered literals (lines 30-52): `MAX_FRAME_BYTES = 64 * 1024`,
+`READ_DEADLINE = 2 s`, `MAX_CONCURRENT_CONNECTIONS = 64`, `SOCKET_MODE = 0o600`,
+`LIVE_PROBE_TIMEOUT = 500 ms`, plus stable refusal tokens `FRAME_TOO_LARGE`, `READ_DEADLINE_EXCEEDED`,
+`SERVER_AT_CAPACITY` so tests assert the token, not a sentence. -005: `perms.set_mode(0o600)` +
+`set_permissions` immediately after bind (line 330), imitating what `daemon_runtime` already did. -006:
+before binding, an existing path is probed by connect + ping (`daemon_is_live`, lines 412-438); a live
+answer refuses startup by name (line 264, quoting the socket and how it decided), a genuinely stale path
+is reclaimed. -007: each frame is read through `(&mut reader).take(MAX_FRAME_BYTES)` (lines 440-489) and
+an over-cap frame is refused by name and the connection closed, because an over-cap frame cannot be
+resynchronised. -008: `Arc<Semaphore>(64)` with `try_acquire_owned` (lines 341-395) refuses the 65th
+connection by name instead of queueing it, and every read is wrapped in `timeout(READ_DEADLINE)`.
+
+**Verification - the probe's own artifacts, read by the parent, BEFORE vs AFTER.**
+`workbench/asec/evidence/asec2-api/probe_results.{BEFORE,AFTER}-fix.json`:
+`socket_stat.mode` `0o777` -> `0o600` (both runs under `umask 0000`, so the mode is explicit);
+`bigline_10MiB.resp` `{"type":"pong"}` -> `{"type":"error","message":"frame too large: exceeds the
+65536-byte frame limit"}`; `bigline_10MiB_garbage` now named as a frame refusal instead of a JSON syntax
+error, so the two are distinguishable; `second_daemon_on_live_socket.state` `still_running_no_refusal` ->
+`exited` while `live_daemon_after_second.resp` `<connect failed: [Errno 2]>` -> `{"type":"pong"}`, i.e.
+both halves of -006; `stale_socket_daemon.bound true` with `ping_resp pong` (stale path still reclaimed);
+`conn_cap_boundary.over_cap_resp` `{"type":"pong"}` -> `{"type":"error","message":"server at capacity: 64
+concurrent connections in use"}`; `read_deadline.waited_s` `8.0` -> `2.0`;
+`partial_no_newline.early_recv` `<TIMEOUT>` -> `{"type":"error","message":"read deadline: no complete
+frame within 2s"}`. No regression in `ping`, `list`, `start_fixture_svc`, `load_fixture_svc`, `malformed`.
+
+**Parent's own runs on the integrated tree (not the child's numbers).**
+`cargo test -p podnext --bin podnext-daemon -- --test-threads=2` -> `test result: ok. 8 passed; 0 failed`
+(2 pre-existing + 6 contract tests at daemon.rs:811-947); `cargo test -p podnext --bin podnext --
+--test-threads=2` -> `52 passed; 0 failed`; `cargo fmt --all -- --check` clean. Negative control (child,
+required by the brief): all four sabotaged at once produced five assertion failures that name the
+behaviour - `socket mode must be the explicit 0600, got 700`, `a second daemon neither refused nor exited:
+it started`, `oversized frame must be refused by name, got pong`, `the connection over the cap must be
+refused by name, got pong`, `daemon did not close an idle connection within the deadline` - then restored
+green. Assertions about behaviour, not compile errors.
+
+**Behaviour change stated plainly.** `READ_DEADLINE` is a PER-READ deadline, so a client that writes its
+frame more than 2 s after connecting is now closed (`partial_completed` went from `pong` to
+`<closed: Broken pipe>` in the probe). That is the intended consequence of bounding a hostile peer; the
+CLI opens one connection per command and writes immediately, and the dashboard is local, so neither is
+affected - but a slow third-party client would be. The per-connection cap means a legitimate burst above
+64 simultaneous connections is refused rather than queued.
+
+**Limits.** `SOCKET_MODE` restricts the socket itself; the parent directory stays umask-derived (the
+finding names the socket). `flood_128_concurrent` still reports 128/128 because those connections are
+short-lived and permits free faster than the accept loop saturates - the cap is proven deterministically
+by the new boundary arm (64 held silent connections, the 65th refused by name) instead.
+
+**Process note.** Both this change and the concurrent native-engine change were developed in the SAME
+working tree rather than separate worktrees (the briefs did not require isolation). They stayed
+file-disjoint so nothing was lost, but that is a real protocol deviation: two children in one tree can
+observe each other's half-applied state, and the parent should have required `git worktree add` per
+child as the delegation protocol says.

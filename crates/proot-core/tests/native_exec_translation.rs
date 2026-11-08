@@ -416,3 +416,191 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------------------------
+// p4 step 4: fork tracing and bind mounts (added 2026-11-08). These two tests are new; the two
+// tests above are UNCHANGED. Each has a negative control (sabotage the feature, watch the test go
+// red for a behaviour reason) documented in the module report, not in code.
+// ---------------------------------------------------------------------------------------------
+
+/// Resolve the C compiler the same way `compile_exit_fixture` does, so a fixture build is never
+/// silently skipped.
+fn compiler() -> String {
+    std::env::var("CC").unwrap_or_else(|_| match std::env::var("PREFIX") {
+        Ok(p) => {
+            let abs = Path::new(&p).join("bin").join("cc");
+            if abs.exists() {
+                abs.to_string_lossy().into_owned()
+            } else {
+                "cc".to_string()
+            }
+        }
+        Err(_) => "cc".to_string(),
+    })
+}
+
+/// Compile `source` into `dst`, or fail LOUDLY. A missing compiler is a RED test, never a silent
+/// skip: a skipped fixture build would let the test pass having proven nothing.
+fn compile_c(dst: &Path, source: &str) {
+    let src = dst.with_extension("c");
+    std::fs::write(&src, source)
+        .unwrap_or_else(|e| panic!("write fixture source {}: {}", src.display(), e));
+    let cc = compiler();
+    let out = std::process::Command::new(&cc)
+        .arg(&src)
+        .arg("-o")
+        .arg(dst)
+        .output()
+        .unwrap_or_else(|e| panic!("run {} to build the fixture: {}", cc, e));
+    assert!(
+        out.status.success(),
+        "{} failed to build the fixture {}: {}",
+        cc,
+        dst.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_file(&src);
+}
+
+/// A fixture that forks and whose CHILD execs `child_path` (a guest path); the parent waits and
+/// returns the child's exit status, so the run's exit code IS the exec'd program's. The child is
+/// compiled so its exec is a real `execve`, and it is run with the engine's empty environment (no
+/// `LD_PRELOAD`), so the syscall reaches the tracer.
+fn make_forker(dst: &Path, child_path: &str) {
+    let source = format!(
+        r#"#include <unistd.h>
+#include <sys/wait.h>
+int main(void) {{
+    pid_t p = fork();
+    if (p == 0) {{
+        char *const a[] = {{ (char *)"{0}", 0 }};
+        char *const e[] = {{ 0 }};
+        execve("{0}", a, e);
+        _exit(90);
+    }}
+    if (p < 0) {{ return 91; }}
+    int st = 0;
+    if (waitpid(p, &st, 0) < 0) {{ return 93; }}
+    if (WIFEXITED(st)) {{ return WEXITSTATUS(st); }}
+    if (WIFSIGNALED(st)) {{ return 128 + WTERMSIG(st); }}
+    return 92;
+}}
+"#,
+        child_path
+    );
+    compile_c(dst, &source);
+}
+
+/// A forked grandchild is traced at all: its own `execve` is translated into the rootfs. Without
+/// fork tracing (`TRACEFORK`/`VFORK`/`CLONE`) the grandchild's execve is never seen, so no
+/// translation names `/bin/child` and the guest path it execs does not exist on the host (the
+/// forker then exits 90).
+#[test]
+fn the_engine_traces_a_forked_child_and_translates_its_execve() {
+    let root = fixture_root("fork");
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-fork");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    make_forker(&rootfs.join("bin").join("forker"), "/bin/child");
+    compile_exit_fixture(&rootfs.join("bin").join("child"), 1);
+
+    let argv = vec!["/bin/forker".to_string()];
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds: Vec::new(),
+    };
+    let run = run_native(&argv, &plan, false).expect("traced run of the forking fixture");
+    eprintln!(
+        "[fork] exit={} translations={:?} executed={:?} stops={}",
+        run.exit_code, run.translations, run.executed, run.stops
+    );
+
+    assert_eq!(
+        run.exit_code, 1,
+        "the forked child exec'd the rootfs /bin/child (exit 1), which the forker propagated; 90 \
+         means the child's execve was never translated and failed, 127/1 on the host would mean the \
+         engine ran a host binary"
+    );
+    let t = run
+        .translations
+        .iter()
+        .find(|t| t.guest == "/bin/child")
+        .unwrap_or_else(|| {
+            panic!(
+                "the grandchild's execve must be translated into the rootfs; translations={:?}",
+                run.translations
+            )
+        });
+    assert_eq!(
+        canon(&t.host),
+        canon(&rootfs.join("bin").join("child")),
+        "the grandchild's translation must land inside the requested rootfs"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A bind mount wins over the rootfs, for a fork descendant's `execve`: `/opt/tool` exists ONLY in
+/// the bind target, and the engine's report names the bind host path it executed. With binds
+/// ignored, `resolve` falls to `<rootfs>/opt/tool`, which does not exist, so the run is refused.
+#[test]
+fn a_bind_prefix_wins_over_the_rootfs_for_execve() {
+    let root = fixture_root("bind");
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-bind");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let bind_dir = root.join("bind-target");
+    std::fs::create_dir_all(&bind_dir).expect("create bind target");
+    // /opt exists NOWHERE in the rootfs; the guest path is supplied entirely by the bind.
+    make_forker(&rootfs.join("bin").join("forker"), "/opt/tool");
+    let bind_tool = bind_dir.join("tool");
+    compile_exit_fixture(&bind_tool, 7);
+
+    let argv = vec!["/bin/forker".to_string()];
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds: vec![("/opt".to_string(), bind_dir.clone())],
+    };
+    let run = run_native(&argv, &plan, false).unwrap_or_else(|e| {
+        panic!("the bind must supply the guest path, but the engine refused the run: {e:#}")
+    });
+    eprintln!(
+        "[bind] exit={} translations={:?} executed={:?}",
+        run.exit_code, run.translations, run.executed
+    );
+
+    assert_eq!(
+        run.exit_code, 7,
+        "the bind-target binary exits 7 and the forker propagated it; a refusal or another code \
+         means the bind did not supply the guest path"
+    );
+    let t = run
+        .translations
+        .iter()
+        .find(|t| t.guest == "/opt/tool")
+        .unwrap_or_else(|| {
+            panic!(
+                "the bind path must be translated, not left to the host; translations={:?}",
+                run.translations
+            )
+        });
+    assert_eq!(
+        canon(&t.host),
+        canon(&bind_tool),
+        "the bind target must win over the rootfs"
+    );
+    match run.executed.as_ref() {
+        Some(p) => assert_eq!(
+            canon(p),
+            canon(&bind_tool),
+            "the kernel executed {} which is not the bind target",
+            p.display()
+        ),
+        None => eprintln!(
+            "[bind] /proc/<pid>/exe was not readable; the exit code (7) and the translation carry \
+             the verdict"
+        ),
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}

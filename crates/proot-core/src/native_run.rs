@@ -46,18 +46,28 @@
 //! `PTRACE_SYSCALL` does not resume syscall-stops), and there is no fork race: the child cannot pass
 //! its `execve` until the engine owns it.
 //!
+//! REWRITE FOR A TRACEE THE ENGINE DID NOT FORK (2026-11-08, p4 step 4): the engine now follows
+//! forks (`TRACEFORK`/`VFORK`/`CLONE`), so a process the tracee forks is a tracee too. Such a
+//! descendant's `execve` path does NOT live in the shared page - the page was unmapped when the
+//! tracee exec'd - so `translate_execve_remote` reads the path out of the descendant with
+//! `PTRACE_PEEKDATA`, resolves it through the same `resolve` (binds first, then the rootfs), and
+//! points `execve`'s argument register at a copy written onto the descendant's own stack through
+//! `PTRACE_POKEDATA` + `PTRACE_SETREGSET`. This is the proot technique the shared page exists to
+//! avoid for the engine's OWN child; the shared page is still the rewrite path for that child.
+//!
+//! BIND MOUNTS (2026-11-08, p4 step 4): `RunPlan::binds` is honoured by `translate_execve` and
+//! `translate_execve_remote` through `resolve`: a bind whose guest prefix matches wins over the
+//! rootfs, and the longest matching prefix wins. A guest path outside every bind resolves under
+//! the rootfs exactly as before. This module has no caller that fills `binds`; a caller (or a
+//! test) supplies them in the `RunPlan`.
+//!
 //! NOT DONE HERE, named so the gap is explicit rather than implied (all of it is p4 step 3b+):
-//! bind mounts and the other five argv features; traces of tracees that fork (`CLONE`/`FORK` are
-//! refusals, not followed); argument translation for any syscall other than `execve`; the guest's
-//! environment (an empty `envp` is passed on purpose - see `child_main`); and a tracee the engine
-//! did NOT fork. That last one is the real difference from proot: proot attaches to a process whose
-//! memory it does not own, so it needs `PTRACE_SETREGSET` plus a writable scratch address inside
-//! the tracee. Here the string lives in a page the engine and the child share, which is why the
-//! rewrite is a plain memory write.
+//! the other five argv features; argument translation for any syscall other than `execve`; the
+//! guest's environment (an empty `envp` is passed on purpose - see `child_main`).
 
 use anyhow::{anyhow, Result};
 use nix::sys::ptrace::{self, Options};
-use nix::sys::wait::{waitpid, WaitStatus};
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{fork, ForkResult, Pid};
 use std::path::{Path, PathBuf};
 
@@ -98,10 +108,14 @@ pub const OBSERVED_CAP: usize = 24;
 /// The single place the engine's trace options are set - now at `PTRACE_SEIZE` time rather than at a
 /// `PTRACE_TRACEME` stop, so they are in force from the engine's first stop. `TRACESYSGOOD` is what
 /// distinguishes a syscall stop from a signal stop; `TRACEEXEC` gives the `PTRACE_EVENT_EXEC` stop
-/// used to read `/proc/<pid>/exe`; `EXITKILL` kills the tracee if the engine dies (2026-11-08,
-/// p4 step 3b).
+/// used to read `/proc/<pid>/exe`; `TRACEFORK`/`TRACEVFORK`/`TRACECLONE` make a process the tracee
+/// forks a tracee too, so a grandchild's `execve` is translated like the child's; `EXITKILL` kills
+/// the tracee if the engine dies (2026-11-08, p4 step 3b; fork tracing added 2026-11-08, p4 step 4).
 const TRACE_OPTIONS: Options = Options::PTRACE_O_TRACESYSGOOD
     .union(Options::PTRACE_O_TRACEEXEC)
+    .union(Options::PTRACE_O_TRACEFORK)
+    .union(Options::PTRACE_O_TRACEVFORK)
+    .union(Options::PTRACE_O_TRACECLONE)
     .union(Options::PTRACE_O_EXITKILL);
 
 /// `PTRACE_SEIZE`/`PTRACE_INTERRUPT` are NOT declared by the Android/AArch64 `libc` crate (it
@@ -128,8 +142,8 @@ pub struct ChildView {
 #[derive(Debug, Clone, Default)]
 pub struct RunPlan {
     pub rootfs: Option<PathBuf>,
-    /// Extra guest->host prefixes (bind mounts). Empty in this increment: only the rootfs rule is
-    /// implemented, and `binds` exists so the shape of the next step is visible.
+    /// Extra guest->host prefixes (bind mounts): `(guest_prefix, host_path)` pairs. Honoured by
+    /// `resolve` before the rootfs, longest matching prefix first (2026-11-08, p4 step 4).
     pub binds: Vec<(String, PathBuf)>,
 }
 
@@ -390,7 +404,9 @@ fn child_main(page: *mut u8, guest_path: &str, argv: &[String], pipe_r: nix::lib
     }
 }
 
-/// The tracer half.
+/// The tracer half. Drives EVERY tracee - the engine's own child and every process it forks - for
+/// as long as at least one tracee is alive, translating each `execve` it sees (through the shared
+/// page for the engine's own child, in the tracee's memory for a fork descendant).
 fn parent_loop(
     child: Pid,
     page: *mut u8,
@@ -475,130 +491,254 @@ fn parent_loop(
         ));
     }
 
-    let mut tracee = Tracee::new(child, Arch::from_host());
-    // TRUE: the trace resumes from a PTRACE_INTERRUPT group-stop, where the child is parked in its
-    // opening `read()`, and the kernel re-reports that `read` as a fresh syscall ENTRY. So the first
-    // stop this loop sees is the ENTRY of the child's release `read` (measured 2026-11-08, p4 step
-    // 3b: `observed` begins with the child's own `close`/`read`/`close`, then its raw `getpid`
-    // marker, then its `execve`). A `false` here shifts every entry/exit pair by one, so return
-    // values are read as arguments and the real `execve` entry stop is never examined.
-    let mut at_entry = true;
-    let mut execve_handled = false;
+    // One slot per tracee: the engine's own child and every fork descendant now traced. The
+    // engine's child starts at a syscall ENTRY: the trace resumes from a PTRACE_INTERRUPT
+    // group-stop where the child is parked in its opening `read()`, which the kernel re-reports as
+    // a fresh ENTRY (measured 2026-11-08, p4 step 3b: `observed` begins with the child's own
+    // close/read/close, then its raw `getpid` marker, then its `execve`). A fork descendant starts
+    // at a syscall EXIT, because the kernel reports the new child's first syscall stop as the exit
+    // of the `clone`/`fork` it was born in. `started` is false until a descendant's birth stop has
+    // been consumed.
+    struct TraceeSlot {
+        pid: Pid,
+        at_entry: bool,
+        execve_handled: bool,
+        started: bool,
+    }
+    let mut slots: Vec<TraceeSlot> = vec![TraceeSlot {
+        pid: child,
+        at_entry: true,
+        execve_handled: false,
+        started: true,
+    }];
+    let mut original_exit: Option<i32> = None;
+
+    // Resume the engine's own child once; from here the loop is wait-then-resume for whichever
+    // tracee stopped, so a fork descendant is driven exactly like the original child.
+    ptrace::syscall(child, None)?;
 
     loop {
         if report.stops > STOP_BUDGET {
-            let _ = ptrace::kill(child);
+            for s in &slots {
+                let _ = ptrace::kill(s.pid);
+            }
             return Err(anyhow!(
-                "stopped tracing after {} syscall stops without the tracee exiting",
+                "stopped tracing after {} syscall stops without every tracee exiting",
                 STOP_BUDGET
             ));
         }
-        ptrace::syscall(child, None)?;
-        match waitpid(child, None) {
-            Ok(WaitStatus::PtraceSyscall(_)) => {
-                report.stops += 1;
-                if at_entry {
-                    report.entries += 1;
-                    // The child writes its self-report after its opening `read()` returns, i.e. only
-                    // after the engine releases it, so the header is read on the first entry stop at
-                    // which it exists (2026-11-08, p4 step 3b). Reading it before the release would
-                    // see unwritten memory.
-                    if report.child_view.is_none() {
-                        report.child_view = read_child_view(page);
-                    }
-                    tracee.observe_syscall()?;
-                    let (number, arg0) = match tracee.syscall_info.as_ref() {
-                        Some(info) => (info.number, info.args[0]),
-                        None => {
-                            let _ = ptrace::kill(child);
-                            return Err(anyhow!(
-                                "observe_syscall reported success but left no syscall_info"
-                            ));
-                        }
-                    };
-                    if report.observed.len() < OBSERVED_CAP {
-                        report.observed.push((number, arg0));
-                    }
-                    if number == nix::libc::SYS_execve as i64 {
-                        if execve_handled {
-                            // A second execve is how a script's interpreter is started. Translating
-                            // it here would be guesswork about which path is a guest path, so it is
-                            // recorded instead.
-                            report.refusals.push(Refusal {
-                                number,
-                                name: syscall_name(number),
-                                reason: "a later execve (an interpreter for a script) is not translated",
-                            });
-                        } else if !path_pointer_is_ours(&report, arg0) {
-                            // The engine only rewrites the path it published, and it learns where
-                            // that is from the CHILD, not from its own mapping of the shared page
-                            // (measured 2026-11-08: the two addresses differ). Anything else needs
-                            // PTRACE_SETREGSET plus a writable address inside the tracee's memory,
-                            // so it is recorded with the observed pointer and the run continues
-                            // exactly as the kernel would have run it.
-                            report.refusals.push(Refusal {
-                                number,
-                                name: syscall_name(number),
-                                reason: "execve's path pointer is not the one this engine prepared, so it cannot be rewritten yet",
-                            });
-                        } else {
-                            execve_handled = true;
-                            if let Err(e) = translate_execve(page, plan, &mut report) {
-                                let _ = ptrace::kill(child);
-                                return Err(e);
-                            }
-                        }
-                    } else {
-                        let refusal = Refusal {
-                            number,
-                            name: syscall_name(number),
-                            reason: "passed through, not emulated",
-                        };
-                        if strict {
-                            report.strict_failure = Some(refusal.label());
-                            report.refusals.push(refusal);
-                            // The program was NOT run: no translation happened, so leave nothing
-                            // that could be mistaken for a partial success.
-                            report.translations.clear();
-                            let _ = ptrace::kill(child);
-                            break;
-                        }
-                        report.refusals.push(refusal);
-                    }
-                }
-                // `execve` succeeds without an exit stop (the image is replaced), so the parity
-                // between entry and exit stops is re-established by the exec event below.
-                at_entry = !at_entry;
-            }
-            Ok(WaitStatus::PtraceEvent(_, _, event)) if event == nix::libc::PTRACE_EVENT_EXEC => {
-                // Direct evidence of WHICH binary ran, rather than an inference from an exit code.
-                report.executed = std::fs::read_link(format!("/proc/{}/exe", child.as_raw())).ok();
-                // FALSE, not true: the next `PTRACE_SYSCALL` stop is the execve's own syscall-EXIT
-                // (the syscall has already succeeded and the image is replaced), so the stop AFTER
-                // that is the first ENTRY of the new program. Measured 2026-11-08, p4 step 3b:
-                // `PTRACE_GET_SYSCALL_INFO` reported op=EXIT on the stop right after the exec event.
-                at_entry = false;
-            }
-            Ok(WaitStatus::Exited(_, code)) => {
-                report.exit_code = code;
-                break;
-            }
-            Ok(WaitStatus::Signaled(_, sig, _)) => {
-                report.exit_code = 128 + sig as i32;
-                break;
-            }
-            Ok(_) => {}
+        // `__WNOTHREAD`: wait only for children of THIS thread, so the engine never reaps a child
+        // that another thread of the same process forked (cargo runs these tests concurrently in one
+        // process, each forking its own tracees - measured 2026-11-08: a plain `waitpid(-1)`
+        // cross-reaped them and every run failed with ESRCH). `__WALL` is the ptrace requirement
+        // that stopped `clone` children are waited for too.
+        let status = match waitpid(
+            Pid::from_raw(-1),
+            Some(WaitPidFlag::__WALL | WaitPidFlag::__WNOTHREAD),
+        ) {
+            Ok(s) => s,
+            // ECHILD: every tracee has been reaped, so the run is over.
             Err(nix::Error::ECHILD) => break,
             Err(e) => {
-                let _ = ptrace::kill(child);
+                for s in &slots {
+                    let _ = ptrace::kill(s.pid);
+                }
                 return Err(anyhow!(
                     "waitpid failed while tracing the native run: {}",
                     e
                 ));
             }
+        };
+        let Some(pid) = status.pid() else { continue };
+
+        // A pid with no slot is USUALLY a fork descendant whose event the engine has not recorded
+        // yet: the parent's FORK event and the child's birth stop become ready together and either
+        // may be returned first. Record it unstarted so its first stop is consumed as the birth
+        // stop. But a pid that has ALREADY EXITED is a corpse left by an earlier run of this engine
+        // that killed its tracee without reaping it (a killed, stopped tracee stays a zombie of this
+        // thread) - ignore it, because resuming a dead pid is ESRCH (measured 2026-11-08).
+        let idx = match slots.iter().position(|s| s.pid == pid) {
+            Some(i) => i,
+            None => match status {
+                WaitStatus::Exited(..) | WaitStatus::Signaled(..) => continue,
+                _ => {
+                    slots.push(TraceeSlot {
+                        pid,
+                        at_entry: false,
+                        execve_handled: false,
+                        started: false,
+                    });
+                    slots.len() - 1
+                }
+            },
+        };
+
+        // Birth stop of a fork descendant: the kernel stops a freshly attached tracee, and leaving
+        // it stopped hangs the workload. Consume it and resume with PTRACE_SYSCALL, exactly as the
+        // engine consumed its own child's group-stop before this slice.
+        if !slots[idx].started {
+            slots[idx].started = true;
+            ptrace::syscall(pid, None)?;
+            continue;
+        }
+
+        match status {
+            WaitStatus::PtraceSyscall(_) => {
+                report.stops += 1;
+                let mut tracee = Tracee::new(pid, Arch::from_host());
+                tracee.observe_syscall()?;
+                let (number, arg0) = match tracee.syscall_info.as_ref() {
+                    Some(info) => (info.number, info.args[0]),
+                    None => {
+                        let _ = ptrace::kill(pid);
+                        return Err(anyhow!(
+                            "observe_syscall reported success but left no syscall_info"
+                        ));
+                    }
+                };
+                let is_execve = number == nix::libc::SYS_execve as i64;
+
+                if slots[idx].at_entry {
+                    report.entries += 1;
+                    // The child writes its self-report after its opening `read()` returns, i.e.
+                    // only after the engine releases it, so the header is read on the first entry
+                    // stop at which it exists (2026-11-08, p4 step 3b). Reading it before the
+                    // release would see unwritten memory.
+                    if report.child_view.is_none() {
+                        report.child_view = read_child_view(page);
+                    }
+                    if report.observed.len() < OBSERVED_CAP {
+                        report.observed.push((number, arg0));
+                    }
+                }
+
+                if is_execve && !slots[idx].execve_handled {
+                    if path_pointer_is_ours(&report, arg0) {
+                        // The engine's OWN child: the path lives in the shared page, so the
+                        // rewrite is a plain memory write through `translate_execve`. Only
+                        // meaningful at an entry stop, where the published pointer appears as arg0.
+                        if slots[idx].at_entry {
+                            slots[idx].execve_handled = true;
+                            if let Err(e) = translate_execve(page, plan, &mut report) {
+                                let _ = ptrace::kill(pid);
+                                return Err(e);
+                            }
+                        }
+                    } else {
+                        // A path the engine did NOT publish: a fork descendant's own `execve`. The
+                        // string lives in the tracee's memory, so it is read and rewritten there
+                        // (PTRACE_PEEKDATA / POKEDATA + SETREGSET). A non-entry stop, where arg0 is
+                        // a return value instead of a pointer, is not readable and is `false`.
+                        match translate_execve_remote(pid, arg0, plan, &mut report) {
+                            Ok(true) => slots[idx].execve_handled = true,
+                            Ok(false) => {
+                                if slots[idx].at_entry {
+                                    report.refusals.push(Refusal {
+                                        number,
+                                        name: syscall_name(number),
+                                        reason: "execve's path could not be read from the tracee, so it was not translated",
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                let _ = ptrace::kill(pid);
+                                return Err(e);
+                            }
+                        }
+                    }
+                } else if slots[idx].at_entry {
+                    // Not a first execve: a syscall the engine observed but does not handle.
+                    let refusal = if is_execve {
+                        // A second execve is how a script's interpreter is started. Translating it
+                        // here would be guesswork about which path is a guest path, so it is
+                        // recorded instead.
+                        Refusal {
+                            number,
+                            name: syscall_name(number),
+                            reason:
+                                "a later execve (an interpreter for a script) is not translated",
+                        }
+                    } else {
+                        Refusal {
+                            number,
+                            name: syscall_name(number),
+                            reason: "passed through, not emulated",
+                        }
+                    };
+                    if strict && !is_execve {
+                        report.strict_failure = Some(refusal.label());
+                        report.refusals.push(refusal);
+                        // The program was NOT run: no translation happened, so leave nothing that
+                        // could be mistaken for a partial success.
+                        report.translations.clear();
+                        for s in &slots {
+                            let _ = ptrace::kill(s.pid);
+                        }
+                        break;
+                    }
+                    report.refusals.push(refusal);
+                }
+                // `execve` succeeds without an exit stop (the image is replaced), so the parity
+                // between entry and exit stops is re-established by the exec event below.
+                slots[idx].at_entry = !slots[idx].at_entry;
+                ptrace::syscall(pid, None)?;
+            }
+            WaitStatus::PtraceEvent(_, _, event)
+                if event == nix::libc::PTRACE_EVENT_FORK
+                    || event == nix::libc::PTRACE_EVENT_VFORK
+                    || event == nix::libc::PTRACE_EVENT_CLONE =>
+            {
+                // A new tracee was created: read its pid and record it unstarted. Its birth stop
+                // arrives as its own waitpid event and is consumed there.
+                let new_pid = ptrace_event_msg(pid)?;
+                if new_pid.as_raw() > 0 && !slots.iter().any(|s| s.pid == new_pid) {
+                    slots.push(TraceeSlot {
+                        pid: new_pid,
+                        at_entry: false,
+                        execve_handled: false,
+                        started: false,
+                    });
+                }
+                ptrace::syscall(pid, None)?;
+            }
+            WaitStatus::PtraceEvent(_, _, event) if event == nix::libc::PTRACE_EVENT_EXEC => {
+                // Direct evidence of WHICH binary ran, rather than an inference from an exit code.
+                // For a fork descendant this names the bind/rootfs binary the grandchild executed.
+                report.executed = std::fs::read_link(format!("/proc/{}/exe", pid.as_raw())).ok();
+                // FALSE, not true: the next `PTRACE_SYSCALL` stop is the execve's own syscall-EXIT
+                // (the syscall has already succeeded and the image is replaced), so the stop AFTER
+                // that is the first ENTRY of the new program. Measured 2026-11-08, p4 step 3b.
+                slots[idx].at_entry = false;
+                ptrace::syscall(pid, None)?;
+            }
+            WaitStatus::Exited(_, code) => {
+                // The engine's own child's status is the run's exit code; a descendant's status is
+                // reaped by whoever forked it and is not this report's verdict.
+                if pid == child {
+                    original_exit = Some(code);
+                }
+                slots.retain(|s| s.pid != pid);
+            }
+            WaitStatus::Signaled(_, sig, _) => {
+                if pid == child {
+                    original_exit = Some(128 + sig as i32);
+                }
+                slots.retain(|s| s.pid != pid);
+            }
+            // A signal-delivery-stop (including a SIGSTOP group-stop) is suppressed, exactly as the
+            // module resumed its single tracee before this slice: the signal is not delivered.
+            _ => {
+                ptrace::syscall(pid, None)?;
+            }
+        }
+
+        // The run is over only when EVERY tracee has exited.
+        if slots.is_empty() {
+            break;
         }
     }
 
+    report.exit_code = original_exit.unwrap_or(-1);
     Ok(report)
 }
 
@@ -678,15 +818,267 @@ fn translate_execve(page: *mut u8, plan: &RunPlan, report: &mut NativeRunReport)
     Ok(())
 }
 
-/// Guest path -> host path. Longest bind prefix first, then the rootfs rule. A guest path that is
-/// not absolute is joined under the rootfs as well, so a relative exec cannot escape it.
+/// `NT_PRSTATUS` is 1 in the Linux ptrace ABI (`include/uapi/linux/elf.h`); named here because
+/// `libc` does not export it for every target, exactly as `tracee.rs` names it.
+const NT_PRSTATUS: nix::libc::c_uint = 1;
+
+/// Read the tracee's register file through `PTRACE_GETREGSET`/`NT_PRSTATUS`. The struct is
+/// per-architecture (`tracee.rs` reads the same one); only the two supported targets are used.
+fn get_regs(pid: Pid) -> Result<nix::libc::user_regs_struct> {
+    let mut raw: nix::libc::user_regs_struct = unsafe { std::mem::zeroed() };
+    let mut iov = nix::libc::iovec {
+        iov_base: &mut raw as *mut _ as *mut nix::libc::c_void,
+        iov_len: std::mem::size_of::<nix::libc::user_regs_struct>(),
+    };
+    // `as _`: the request parameter is `c_int` in Android's libc and `c_uint` in the libc the CI
+    // runner links against (measured on run 42449343311 - `as c_int` broke the runner build).
+    let ret = unsafe {
+        nix::libc::ptrace(
+            nix::libc::PTRACE_GETREGSET as _,
+            pid.as_raw(),
+            NT_PRSTATUS as *mut nix::libc::c_void,
+            &mut iov as *mut nix::libc::iovec as *mut nix::libc::c_void,
+        )
+    };
+    if ret < 0 {
+        return Err(anyhow!(
+            "PTRACE_GETREGSET (NT_PRSTATUS) failed for pid {}: {}",
+            pid,
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(raw)
+}
+
+/// Write a tracee's register file back through `PTRACE_SETREGSET`/`NT_PRSTATUS`.
+fn set_regs(pid: Pid, mut raw: nix::libc::user_regs_struct) -> Result<()> {
+    let mut iov = nix::libc::iovec {
+        iov_base: &mut raw as *mut _ as *mut nix::libc::c_void,
+        iov_len: std::mem::size_of::<nix::libc::user_regs_struct>(),
+    };
+    let ret = unsafe {
+        nix::libc::ptrace(
+            nix::libc::PTRACE_SETREGSET as _,
+            pid.as_raw(),
+            NT_PRSTATUS as *mut nix::libc::c_void,
+            &mut iov as *mut nix::libc::iovec as *mut nix::libc::c_void,
+        )
+    };
+    if ret < 0 {
+        return Err(anyhow!(
+            "PTRACE_SETREGSET (NT_PRSTATUS) failed for pid {}: {}",
+            pid,
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// Read a NUL-terminated string out of a STOPPED tracee's memory, word by word through
+/// `PTRACE_PEEKDATA`, bounded by `PATH_CAPACITY`.
+///
+/// `Ok(None)` means the FIRST word was not readable - which is what an `execve` syscall-EXIT stop
+/// looks like (`arg0` is a return value, not a pointer), so it is the signal that this stop is not
+/// a translatable `execve` entry. A word that fails mid-string is the same answer.
+fn peek_cstr(pid: Pid, addr: u64) -> Result<Option<String>> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut at = addr;
+    while out.len() < PATH_CAPACITY {
+        // errno must be cleared before the call: a valid word can read as -1, and ptrace signals
+        // failure through errno, so the return value alone cannot be trusted (std reads errno, which
+        // exists on every target, unlike `libc::__errno` - see the `child_main` note).
+        nix::errno::Errno::clear();
+        let word = unsafe {
+            nix::libc::ptrace(
+                nix::libc::PTRACE_PEEKDATA as _,
+                pid.as_raw(),
+                at as *mut nix::libc::c_void,
+                std::ptr::null_mut::<nix::libc::c_void>(),
+            )
+        };
+        if std::io::Error::last_os_error().raw_os_error().unwrap_or(0) != 0 {
+            return Ok(None);
+        }
+        for b in word.to_ne_bytes() {
+            if b == 0 {
+                return Ok(Some(String::from_utf8_lossy(&out).into_owned()));
+            }
+            out.push(b);
+            if out.len() >= PATH_CAPACITY {
+                break;
+            }
+        }
+        at = at.wrapping_add(8);
+    }
+    Err(anyhow!(
+        "the tracee's path is not NUL-terminated within {} bytes",
+        PATH_CAPACITY
+    ))
+}
+
+/// Write `bytes` and a NUL terminator into a STOPPED tracee at `addr`, word by word through
+/// `PTRACE_POKEDATA`. The final word is zero-padded so the terminator is part of what the kernel
+/// will read.
+fn poke_cstr(pid: Pid, addr: u64, bytes: &[u8]) -> Result<()> {
+    let mut buf = bytes.to_vec();
+    buf.push(0);
+    let mut i = 0usize;
+    while i < buf.len() {
+        let mut chunk = [0u8; 8];
+        let n = std::cmp::min(8, buf.len() - i);
+        chunk[..n].copy_from_slice(&buf[i..i + n]);
+        let word = i64::from_ne_bytes(chunk);
+        let rc = unsafe {
+            nix::libc::ptrace(
+                nix::libc::PTRACE_POKEDATA as _,
+                pid.as_raw(),
+                addr.wrapping_add(i as u64) as *mut nix::libc::c_void,
+                word as *mut nix::libc::c_void,
+            )
+        };
+        if rc < 0 {
+            return Err(anyhow!(
+                "PTRACE_POKEDATA failed writing the translated path into pid {}: {}",
+                pid,
+                std::io::Error::last_os_error()
+            ));
+        }
+        i += 8;
+    }
+    Ok(())
+}
+
+/// Write the translated path into the tracee and make `execve`'s path argument point at it.
+///
+/// The scratch lives `0x200` bytes below the tracee's stack pointer: the translated path is at most
+/// `PATH_CAPACITY + 1` (= 512) bytes, so it fits in `[sp - 0x200, sp)`, a region the tracee is not
+/// using while it is stopped in a syscall. The pointer is published through `PTRACE_SETREGSET` so
+/// the kernel reads the host path instead of the guest one.
+///
+/// CEILING: the argument register differs per architecture, so only the two supported targets are
+/// named (aarch64 `x0` = `regs[0]`; x86_64 `rdi`); any other target would need its own arm.
+fn write_path_and_redirect_arg0(pid: Pid, bytes: &[u8]) -> Result<()> {
+    const SCRATCH_BELOW_SP: u64 = 0x200;
+    let mut raw = get_regs(pid)?;
+    #[cfg(target_arch = "aarch64")]
+    {
+        let scratch = raw.sp.wrapping_sub(SCRATCH_BELOW_SP) & !0xf;
+        poke_cstr(pid, scratch, bytes)?;
+        raw.regs[0] = scratch;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let scratch = raw.rsp.wrapping_sub(SCRATCH_BELOW_SP) & !0xf;
+        poke_cstr(pid, scratch, bytes)?;
+        raw.rdi = scratch;
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        let _ = bytes;
+        return Err(anyhow!(
+            "execve argument rewriting is not implemented for this target architecture"
+        ));
+    }
+    set_regs(pid, raw)?;
+    Ok(())
+}
+
+/// Rewrite the `execve` path argument of a tracee whose path the engine did NOT publish (a fork
+/// descendant). Reads the guest path from the tracee at `arg0`, resolves it through the SAME
+/// `resolve` the shared-page translation uses (binds first, then the rootfs), and points `arg0` at
+/// a copy of the host path written into the tracee's own memory.
+///
+/// Returns `Ok(false)` when `arg0` does not point at a readable string (a non-entry stop) or when
+/// there is no plan, so the caller can tell "nothing to do here" from a real refusal.
+fn translate_execve_remote(
+    pid: Pid,
+    arg0: u64,
+    plan: &RunPlan,
+    report: &mut NativeRunReport,
+) -> Result<bool> {
+    let Some(rootfs) = plan.rootfs.as_ref() else {
+        // No plan: the guest path is used as-is by the kernel. Not an error - it is the control arm
+        // showing that the translation is what makes a rootfs-relative run work.
+        return Ok(false);
+    };
+    let Some(guest) = peek_cstr(pid, arg0)? else {
+        return Ok(false);
+    };
+    if guest.is_empty() {
+        return Ok(false);
+    }
+    let host = resolve(rootfs, &guest, &plan.binds);
+    if !host.exists() {
+        // The honest failure, identical to the shared-page translation: no fallback to the host
+        // filesystem, because a silent fallback is exactly how a container would appear to work
+        // while running a host binary.
+        return Err(anyhow!(
+            "translated path does not exist: {} -> {} (this engine does not fall back to the host \
+             filesystem)",
+            guest,
+            host.display()
+        ));
+    }
+    let bytes = host.as_os_str().as_encoded_bytes();
+    if bytes.len() > PATH_CAPACITY {
+        return Err(anyhow!(
+            "translated path of {} bytes does not fit the {} byte translation area: {}",
+            bytes.len(),
+            PATH_CAPACITY,
+            host.display()
+        ));
+    }
+    write_path_and_redirect_arg0(pid, bytes)?;
+    report.translations.push(Translation {
+        guest,
+        host,
+        syscall: "SYS_execve",
+    });
+    Ok(true)
+}
+
+/// Read the new pid the kernel reported at a `PTRACE_EVENT_FORK`/`VFORK`/`CLONE` stop, through
+/// `PTRACE_GETEVENTMSG`. `nix` gates its own wrapper to `target_os = "linux"` where Android differs,
+/// and libc declares the request as `c_int` on Android and `c_uint` on linux-gnu, so the request is
+/// cast `as _` (the same asymmetry `tracee.rs` documents for `PTRACE_GETREGSET`).
+fn ptrace_event_msg(pid: Pid) -> Result<Pid> {
+    let mut msg: nix::libc::c_ulong = 0;
+    let rc = unsafe {
+        nix::libc::ptrace(
+            nix::libc::PTRACE_GETEVENTMSG as _,
+            pid.as_raw(),
+            std::ptr::null_mut::<nix::libc::c_void>(),
+            &mut msg as *mut nix::libc::c_ulong as *mut nix::libc::c_void,
+        )
+    };
+    if rc < 0 {
+        return Err(anyhow!(
+            "PTRACE_GETEVENTMSG failed for pid {}: {}",
+            pid,
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(Pid::from_raw(msg as nix::libc::pid_t))
+}
+
+/// Guest path -> host path. A bind whose guest prefix matches wins over the rootfs; when several
+/// binds match, the LONGEST prefix wins (so a more specific mount beats a broader one). A guest path
+/// outside every bind resolves under the rootfs exactly as before, and a relative guest path is
+/// joined under the rootfs too, so an exec cannot escape it.
 pub fn resolve(rootfs: &Path, guest: &str, binds: &[(String, PathBuf)]) -> PathBuf {
-    for (from, to) in binds {
-        if let Some(rest) = guest.strip_prefix(from.as_str()) {
-            return to.join(rest.trim_start_matches('/'));
+    let mut chosen: Option<&(String, PathBuf)> = None;
+    for b in binds {
+        if guest.starts_with(b.0.as_str()) && chosen.map_or(true, |c| b.0.len() > c.0.len()) {
+            chosen = Some(b);
         }
     }
-    rootfs.join(guest.trim_start_matches('/'))
+    match chosen {
+        Some((from, to)) => {
+            let rest = guest.strip_prefix(from.as_str()).unwrap_or(guest);
+            to.join(rest.trim_start_matches('/'))
+        }
+        None => rootfs.join(guest.trim_start_matches('/')),
+    }
 }
 
 unsafe fn write_cstr(dst: *mut u8, s: &str) {

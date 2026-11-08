@@ -6,10 +6,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use pn_next::{ServiceSupervisor, SupervisorBuilder, SupervisorConfig, SupervisorEvent};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::signal::unix::{signal, Signal, SignalKind};
 use tokio::sync::broadcast;
@@ -19,6 +19,37 @@ use tracing_subscriber::EnvFilter;
 
 /// Bounded grace period for in-flight connections after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+
+/// Largest single request frame accepted (bytes, newline included).
+///
+/// The protocol is line-delimited JSON whose commands are tens of bytes; the CLI and the
+/// dashboard are the only clients. 64 KiB is orders of magnitude of headroom for a real
+/// command while bounding what one peer can make a handler buffer (an oversized frame is
+/// refused by name instead of being buffered whole). This is the leading token of that
+/// refusal, kept stable so tests assert the contract rather than the exact wording.
+const MAX_FRAME_BYTES: usize = 64 * 1024;
+const FRAME_TOO_LARGE: &str = "frame too large";
+
+/// How long a connection may take to deliver a complete frame before the daemon answers
+/// with a refusal and closes it. A well-behaved peer on a local socket writes the whole
+/// frame immediately, so 2 s bounds a stalled or hostile peer without touching a busy one.
+const READ_DEADLINE: Duration = Duration::from_secs(2);
+const READ_DEADLINE_EXCEEDED: &str = "read deadline";
+
+/// Most connections served at once. Beyond this the daemon refuses the excess by name
+/// rather than queueing them forever; the CLI opens one short-lived connection per command,
+/// so 64 leaves wide headroom while bounding the accept loop's fan-out.
+const MAX_CONCURRENT_CONNECTIONS: usize = 64;
+const SERVER_AT_CAPACITY: &str = "server at capacity";
+
+/// The socket's mode, set explicitly so its protection cannot depend on the ambient umask.
+/// 0600 = owner read/write only: only the daemon's own uid may connect.
+const SOCKET_MODE: u32 = 0o600;
+
+/// How long to wait for an existing socket's owner to answer a `ping` before calling it
+/// stale. Short: a live local daemon answers in microseconds, and this delay is paid only
+/// when a socket file already exists at startup.
+const LIVE_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Daemon command protocol
 #[derive(Debug, Serialize, Deserialize)]
@@ -223,8 +254,19 @@ async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Res
     std::fs::create_dir_all(&runtime_dir)?;
     std::fs::create_dir_all(&log_dir)?;
 
-    // Remove existing socket
+    // Reclaim an existing socket path only if nothing is listening on it. A socket file
+    // outlives a crashed daemon, so refusing to start over a corpse would wedge the
+    // service; but if a live daemon owns it, unlinking it would silently steal that
+    // daemon's endpoint. Decide by asking its owner, not by the file's existence.
     if socket.exists() {
+        if daemon_is_live(&socket).await {
+            anyhow::bail!(
+                "refusing to start: the socket {:?} is owned by a live daemon \
+                 (decided by connecting and receiving a pong to a ping). Stop the \
+                 running daemon, or start this one with a different --socket.",
+                socket
+            );
+        }
         std::fs::remove_file(&socket)?;
     }
 
@@ -276,23 +318,60 @@ async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Res
     let listener =
         UnixListener::bind(&socket).with_context(|| format!("Failed to bind to {:?}", socket))?;
 
+    // Set an explicit restrictive mode so the socket's protection does not depend on the
+    // ambient umask (mirroring `daemon_runtime`'s explicit chmod, but restrictive: a
+    // 0777 & ~umask bind under `umask 000` would leave the control socket world-accessible).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&socket)
+            .with_context(|| format!("Failed to stat the bound socket {:?}", socket))?
+            .permissions();
+        perms.set_mode(SOCKET_MODE);
+        std::fs::set_permissions(&socket, perms)
+            .with_context(|| format!("Failed to set the mode on {:?}", socket))?;
+    }
+
     info!("podnext-daemon listening on {:?}", socket);
 
     tokio::pin!(shutdown);
 
     // Accept connections until a shutdown signal arrives.
     let mut connections: JoinSet<()> = JoinSet::new();
+    // Bound the number of connections served at once: a flood is refused at accept time
+    // rather than spawning an unbounded task per peer.
+    let permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
     loop {
         tokio::select! {
             _ = &mut shutdown => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    let state = state.clone();
-                    connections.spawn(async move {
-                        if let Err(e) = handle_connection(stream, state).await {
-                            warn!("Connection error: {}", e);
+                    match permits.clone().try_acquire_owned() {
+                        Ok(permit) => {
+                            let state = state.clone();
+                            connections.spawn(async move {
+                                // Hold the slot for the connection's whole life.
+                                let _permit = permit;
+                                if let Err(e) = handle_connection(stream, state).await {
+                                    warn!("Connection error: {}", e);
+                                }
+                            });
                         }
-                    });
+                        Err(_) => {
+                            warn!(
+                                "Refusing connection: at capacity ({} concurrent)",
+                                MAX_CONCURRENT_CONNECTIONS
+                            );
+                            let mut stream = stream;
+                            let resp = DaemonResponse::Error {
+                                message: format!(
+                                    "{}: {} concurrent connections in use",
+                                    SERVER_AT_CAPACITY, MAX_CONCURRENT_CONNECTIONS
+                                ),
+                            };
+                            let _ = send_response(&mut stream, &resp).await;
+                        }
+                    }
                 }
                 Err(e) => {
                     error!("Accept error: {}", e);
@@ -330,19 +409,77 @@ async fn run(args: Args, shutdown: impl std::future::Future<Output = ()>) -> Res
     Ok(())
 }
 
+/// Decide whether an existing socket path is owned by a live daemon.
+///
+/// "Live" means a peer accepted the connection AND answered with a well-formed reply -
+/// not merely that the path exists: a crashed daemon leaves its socket file behind, and
+/// treating a corpse as live would wedge startup. Any connect error, silent peer, or
+/// timeout is read as stale.
+async fn daemon_is_live(socket: &Path) -> bool {
+    let probe = async {
+        let mut stream = UnixStream::connect(socket).await.ok()?;
+        stream.write_all(b"{\"cmd\":\"ping\"}\n").await.ok()?;
+        stream.flush().await.ok()?;
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.ok()?;
+        // Any well-formed reply proves a live daemon: `pong` from a served ping, or a
+        // named refusal (e.g. `server at capacity`) when the accept loop is saturated.
+        // A stale socket never reaches here - its connect is refused.
+        serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+        Some(())
+    };
+    tokio::time::timeout(LIVE_PROBE_TIMEOUT, probe)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 /// Handle a single client connection
 async fn handle_connection(stream: UnixStream, state: Arc<DaemonState>) -> Result<()> {
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
 
     loop {
-        line.clear();
-        let bytes_read = reader.read_line(&mut line).await?;
+        // Read one frame, bounded in size and in time. `take` caps the bytes buffered, so
+        // an oversized frame is refused without allocating it whole; the timeout stops a
+        // peer that opens a connection and never completes a frame from pinning a handler.
+        let mut line: Vec<u8> = Vec::new();
+        let bytes_read = {
+            let mut limited = (&mut reader).take(MAX_FRAME_BYTES as u64);
+            match tokio::time::timeout(READ_DEADLINE, limited.read_until(b'\n', &mut line)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => {
+                    let resp = DaemonResponse::Error {
+                        message: format!(
+                            "{}: no complete frame within {}s",
+                            READ_DEADLINE_EXCEEDED,
+                            READ_DEADLINE.as_secs()
+                        ),
+                    };
+                    let _ = send_response(&mut reader.get_mut(), &resp).await;
+                    return Ok(());
+                }
+            }
+        };
         if bytes_read == 0 {
             break; // Connection closed
         }
+        // A frame that fills the cap with no newline was truncated by `take`, so the rest
+        // is still on the wire and cannot be resynchronised: refuse by name and close.
+        if line.len() >= MAX_FRAME_BYTES && !line.ends_with(b"\n") {
+            let resp = DaemonResponse::Error {
+                message: format!(
+                    "{}: exceeds the {}-byte frame limit",
+                    FRAME_TOO_LARGE, MAX_FRAME_BYTES
+                ),
+            };
+            let _ = send_response(&mut reader.get_mut(), &resp).await;
+            return Ok(());
+        }
 
-        let cmd: DaemonCommand = match serde_json::from_str(line.trim()) {
+        let cmd: DaemonCommand = match serde_json::from_str(String::from_utf8_lossy(&line).trim()) {
             Ok(cmd) => cmd,
             Err(e) => {
                 let resp = DaemonResponse::Error {
@@ -591,5 +728,245 @@ mod tests {
             "clean shutdown should return Ok, got {result:?}"
         );
         assert!(!socket.exists(), "socket file was not removed on shutdown");
+    }
+
+    // --- helpers for the socket-contract tests (ASEC2-API-005/006/007/008) ---
+
+    /// `Args` for a daemon rooted entirely in the test's tempdir.
+    fn test_args(dir: &std::path::Path, socket: std::path::PathBuf) -> Args {
+        Args {
+            socket: socket.display().to_string(),
+            services_dir: dir.join("services").display().to_string(),
+            runtime_dir: dir.join("run").display().to_string(),
+            log_dir: dir.join("log").display().to_string(),
+            interval_ms: 1000,
+            enable_cgroups: false,
+            foreground: true,
+        }
+    }
+
+    /// Poll until the daemon answers a ping, so a test never races the bind, the chmod,
+    /// or the accept loop.
+    async fn await_ready(socket: &std::path::Path) -> bool {
+        for _ in 0..300 {
+            if let Ok(mut s) = UnixStream::connect(socket).await {
+                if s.write_all(b"{\"cmd\":\"ping\"}\n").await.is_ok() {
+                    let mut r = BufReader::new(s);
+                    let mut line = String::new();
+                    if let Ok(n) = r.read_line(&mut line).await {
+                        if n > 0 && line.contains("pong") {
+                            return true;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    /// Start a daemon on `socket` and wait until it serves.
+    async fn spawn_daemon(
+        dir: &std::path::Path,
+        socket: std::path::PathBuf,
+    ) -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<Result<()>>,
+    ) {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(run(test_args(dir, socket.clone()), async move {
+            let _ = rx.await;
+        }));
+        assert!(
+            await_ready(&socket).await,
+            "daemon never served on {socket:?}"
+        );
+        (tx, handle)
+    }
+
+    /// Send one raw frame and return the first reply line ("" on a bare EOF). A refusal
+    /// may close the socket mid-send, so send errors are tolerated: the reply, if any,
+    /// is still readable.
+    async fn request(socket: &std::path::Path, payload: &[u8]) -> String {
+        let mut s = UnixStream::connect(socket).await.expect("connect");
+        let _ = s.write_all(payload).await;
+        let _ = s.flush().await;
+        let mut r = BufReader::new(s);
+        let mut line = String::new();
+        let _ = r.read_line(&mut line).await;
+        line
+    }
+
+    /// Ask a daemon to stop and wait for it to finish.
+    async fn stop_daemon(
+        stop: tokio::sync::oneshot::Sender<()>,
+        handle: tokio::task::JoinHandle<Result<()>>,
+    ) {
+        let _ = stop.send(());
+        let _ = handle.await;
+    }
+
+    // ASEC2-API-005: the socket's protection is explicit, not left to the ambient umask.
+    #[tokio::test]
+    async fn socket_mode_is_explicitly_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let (stop, handle) = spawn_daemon(dir.path(), socket.clone()).await;
+
+        let mode = std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "socket mode must be the explicit 0600, got {mode:o}"
+        );
+
+        stop_daemon(stop, handle).await;
+    }
+
+    // ASEC2-API-007: an oversized frame is refused by name, without reading as a JSON
+    // syntax error, and a normal frame still works.
+    #[tokio::test]
+    async fn oversized_frame_is_refused_by_name_not_as_a_syntax_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let (stop, handle) = spawn_daemon(dir.path(), socket.clone()).await;
+
+        let pong = request(&socket, b"{\"cmd\":\"ping\"}\n").await;
+        assert!(
+            pong.contains("pong"),
+            "a normal frame must still be served, got {pong:?}"
+        );
+
+        let mut big = Vec::from(&b"{\"cmd\":\"ping\",\"pad\":\""[..]);
+        big.extend(std::iter::repeat(b'a').take(MAX_FRAME_BYTES + 4096));
+        big.extend_from_slice(b"\"}\n");
+        let resp = request(&socket, &big).await;
+        assert!(
+            resp.contains(FRAME_TOO_LARGE),
+            "oversized frame must be refused by name, got {resp:?}"
+        );
+        assert!(
+            !resp.contains("Invalid command"),
+            "oversized refusal must be distinguishable from a JSON error: {resp:?}"
+        );
+
+        stop_daemon(stop, handle).await;
+    }
+
+    // ASEC2-API-006(a): a second daemon on a socket a live daemon owns refuses by name,
+    // and the live daemon keeps serving.
+    #[tokio::test]
+    async fn second_daemon_on_a_live_socket_refuses_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let (stop, handle) = spawn_daemon(dir.path(), socket.clone()).await;
+
+        // Bounded: a daemon that fails to refuse must be cancelled, not hang the test.
+        let second = tokio::time::timeout(
+            Duration::from_secs(3),
+            run(
+                test_args(dir.path(), socket.clone()),
+                std::future::pending(),
+            ),
+        )
+        .await;
+        let err = match second {
+            Ok(Ok(_)) => panic!("a second daemon on a live socket must not start"),
+            Ok(Err(e)) => e,
+            Err(_) => panic!("a second daemon neither refused nor exited: it started"),
+        };
+        assert!(
+            err.to_string().contains("live daemon"),
+            "the refusal must name a live daemon, got {err}"
+        );
+        assert!(
+            socket.exists(),
+            "the live daemon's socket was removed by the refusal"
+        );
+
+        let pong = request(&socket, b"{\"cmd\":\"ping\"}\n").await;
+        assert!(
+            pong.contains("pong"),
+            "the live daemon stopped serving after the refusal: {pong:?}"
+        );
+
+        stop_daemon(stop, handle).await;
+    }
+
+    // ASEC2-API-006(b): a genuinely stale socket (file present, no listener) is reclaimed
+    // and the daemon starts.
+    #[tokio::test]
+    async fn a_stale_socket_is_reclaimed_and_the_daemon_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        {
+            let stale = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+            drop(stale);
+        }
+        assert!(socket.exists(), "fixture did not leave a stale socket file");
+
+        let (stop, handle) = spawn_daemon(dir.path(), socket.clone()).await;
+        let pong = request(&socket, b"{\"cmd\":\"ping\"}\n").await;
+        assert!(
+            pong.contains("pong"),
+            "the reclaimed socket should serve, got {pong:?}"
+        );
+
+        stop_daemon(stop, handle).await;
+    }
+
+    // ASEC2-API-008(a): the connection count is bounded; the one over the cap is refused
+    // by name while the ones under it are held and served.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn excess_connections_are_refused_by_name_at_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let (stop, handle) = spawn_daemon(dir.path(), socket.clone()).await;
+
+        // Hold the whole budget open with silent, never-completing connections.
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_CONNECTIONS {
+            held.push(UnixStream::connect(&socket).await.expect("hold connect"));
+        }
+        // Let the accept loop take every permit (well inside the read deadline).
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let resp = request(&socket, b"{\"cmd\":\"ping\"}\n").await;
+        assert!(
+            resp.contains(SERVER_AT_CAPACITY),
+            "the connection over the cap must be refused by name, got {resp:?}"
+        );
+
+        drop(held);
+        stop_daemon(stop, handle).await;
+    }
+
+    // ASEC2-API-008(b): an idle connection is refused by name and closed within the
+    // deadline, so a peer cannot pin a handler indefinitely.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_idle_connection_is_closed_by_the_read_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let (stop, handle) = spawn_daemon(dir.path(), socket.clone()).await;
+
+        let s = UnixStream::connect(&socket).await.expect("connect");
+        let mut r = BufReader::new(s);
+        let mut line = String::new();
+        let read = tokio::time::timeout(
+            // Independent of READ_DEADLINE so a sabotaged (huge) deadline still fails here.
+            Duration::from_secs(5),
+            r.read_line(&mut line),
+        )
+        .await;
+        assert!(
+            read.is_ok(),
+            "daemon did not close an idle connection within the deadline"
+        );
+        assert!(
+            line.contains(READ_DEADLINE_EXCEEDED),
+            "idle connection must be refused by name, got {line:?}"
+        );
+
+        stop_daemon(stop, handle).await;
     }
 }
