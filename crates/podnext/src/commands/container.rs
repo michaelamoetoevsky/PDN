@@ -538,6 +538,23 @@ fn signal_label(sig: i32) -> String {
     .to_string()
 }
 
+/// Is this session still live by the registry's own rule?
+///
+/// [`proot_distro_core::session::active_sessions`] proves liveness from the inherited descriptor
+/// (C8) by probing the session file's lock, so it answers "is anything from this session still
+/// running" - which is the question `kill` must answer before it claims success and removes the
+/// record (ASEC3-PROC2-01, 2026-11-08). The registered pid is only an address: it can be gone while
+/// a guest that outlived its supervisor still holds the descriptor.
+fn session_still_active(s: &proot_distro_core::session::SessionRecord) -> bool {
+    proot_distro_core::session::active_sessions()
+        .map(|active| {
+            active
+                .iter()
+                .any(|a| a.pid == s.pid && a.container_name == s.container_name)
+        })
+        .unwrap_or(false)
+}
+
 /// Wait for a session process to actually go, without touching its files.
 ///
 /// The ladder decides the next rung off this, and the store sweep that follows
@@ -637,11 +654,24 @@ pub async fn cmd_kill(container: String, signal: Option<String>) -> Result<()> {
     // or transcript, and neither can one killed by SIGKILL, so the killer waits
     // for the process to go and then removes them. A named signal gets no
     // teardown: `kill -s STOP` names a pause, not a removal.
+    let mut survivors: Vec<&proot_distro_core::session::SessionRecord> = Vec::new();
     if requested.is_none() {
         for s in &killed {
+            // ASEC3-PROC2-01 (2026-11-08): `wait_and_clear` decides by the *registered pid*, but a
+            // session stays live while anything still holds its inherited descriptor (C8) - the
+            // guest that outlived its supervisor does. Clearing on the pid alone deletes the record
+            // and lets this command report success with the guest still running (measured in vitro:
+            // a descriptor holder kept the session live by the registry's own rule, the record was
+            // removed, "Container 'x' killed." was printed, rc=0, and `podnext ps` went blind). Ask
+            // the registry the same question `ps` asks, and keep the record while the answer is yes.
+            if session_still_active(s) {
+                survivors.push(s);
+                continue;
+            }
             if proot_distro_core::session::wait_and_clear(s.pid, s.start_time, KILL_LADDER_GRACE) {
                 continue;
             }
+            survivors.push(s);
             eprintln!(
                 "Warning: session PID {} ({}) is still running after {}; its files in {} were \
                  left in place.",
@@ -655,6 +685,25 @@ pub async fn cmd_kill(container: String, signal: Option<String>) -> Result<()> {
                 proot_distro_core::session::sessions_dir().display()
             );
         }
+    }
+    // Report success only when nothing survived. A survivor means the session is still live by the
+    // descriptor rule, so saying "killed" would be the exact dishonesty this fix exists to remove.
+    if !survivors.is_empty() {
+        let ids: Vec<String> = survivors
+            .iter()
+            .map(|s| format!("PID {} ({})", s.pid, s.container_name))
+            .collect();
+        anyhow::bail!(
+            "session {} survived the full ladder ({}) and still holds its session descriptor, so \
+             the container is still running; its record was kept and `podnext ps` still lists it. \
+             Nothing was reported as killed.",
+            ids.join(", "),
+            KILL_LADDER
+                .iter()
+                .map(|s| signal_label(*s))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     if all {
         if killed.is_empty() {

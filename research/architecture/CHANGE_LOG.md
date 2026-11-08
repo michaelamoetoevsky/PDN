@@ -65,3 +65,57 @@ following a leaf link when copying *out* of a container, because that is `cp` se
 check now covers it. `sync.rs`'s other write paths (`mirror_dir`, `prune_extras`) reach the same
 `guest_to_host` translation through the command layer, so they inherit the fix; verifying that each of them
 calls it before writing is recorded as a follow-up rather than assumed here.
+
+---
+
+## ASEC3-PROC2-01 — `kill` reported success and deleted the session record while the session was still live
+
+**Found.** `cmd_kill` decided "gone" from the **registered pid** alone: after the ladder it pushed every
+signalled session into `killed`, and the teardown called `session::wait_and_clear(pid, start_time, …)`,
+which returns true as soon as `process_is_alive(pid)` is false — then deletes the record, the socket and the
+transcript. But the registry's own liveness rule is the **inherited descriptor** (`active_sessions` probes
+the session file's `flock`), and a guest that outlived its supervisor keeps that descriptor. So the record
+could go while the session was still live by the rule `ps` uses: `Container 'x' killed.` printed, exit 0, and
+`podnext ps` blind to a running container.
+
+**Reproduced 2026-11-08, 08:15 WIB**, against the binary built before this change, using the same primitive
+the code itself uses for liveness — `flock` on the session file — as an in-vitro stand-in for the surviving
+guest:
+
+| step | observation |
+|---|---|
+| live session in a real PTY (`tmux` + `podnext login fixt`, fixture store via `PN_TEST_ROOT`) | `podnext ps` → `sess-17425 fixt Running`, record `17425.json`, tree `tmux → podnext login → proot` |
+| a second process takes `flock -x` on `17425.json` | "lock tertahan oleh proses lain" — the registry would call this session live |
+| registered pid signalled, then `podnext kill fixt` | `Sent SIGTERM`, `Sent SIGQUIT`, **`Container 'fixt' killed.`**, **rc=0** |
+| immediately after | session directory **empty** — the record was deleted — while the descriptor holder was still alive |
+
+The first honest `kill` (no holder) was also measured and was **not** dishonest: the whole process tree
+disappeared, the record was cleared, `ps` was empty, rc=0. So the defect is specifically the
+pid-only liveness decision, not the ladder.
+
+**Action.** Before clearing anything, ask the registry the same question `ps` asks, and keep the record while
+the answer is yes; report success only when nothing survived.
+
+**Change.** `crates/podnext/src/commands/container.rs`
+- new `session_still_active()` next to `wait_until_gone` (around line 546): true when `active_sessions()`
+  still lists this `(pid, container_name)`.
+- in `cmd_kill`'s teardown (around lines 640–692): a session that is still active is pushed to `survivors`
+  and skipped **before** `wait_and_clear`, so its files survive; a failed `wait_and_clear` also records a
+  survivor; and a `survivors` list that is not empty ends the command with `anyhow::bail!` naming the PIDs
+  and the ladder, instead of the success line.
+
+**Verification** (fixed binary, 08:18, heavy label `p1b-bin`, build exit 0, peak 1410 MB):
+
+| case | expected | measured |
+|---|---|---|
+| descriptor holder alive | refuse, keep the record | `rc=1`; `Error: session PID 7131 (fixt) survived the full ladder (SIGTERM, SIGQUIT, SIGKILL) and still holds its session descriptor, so the container is still running; its record was kept and podnext ps still lists it. Nothing was reported as killed.`; `7131.json` still present; `podnext ps` still lists `sess-7131` |
+| fresh live session, no holder | succeed, no false refusal | `rc=0`; `Container 'fixt' killed.`; record cleared; 0 guest processes left |
+
+Both cases used the real PTY harness. `cargo fmt --all -- --check` → rc=0. Repo gate: `local_gate.sh --cargo`
+(log `~/.hermes/logs/heavy/20261108T012046Z-p1b-gate.log`).
+
+**Note on the control's honesty.** The refusal case models a surviving guest with a lock holder rather than
+producing one; what it tests is the *decision rule* the code uses, and on that rule the old binary was wrong
+and the new one is right. A guest that survives its supervisor end-to-end was not produced in this harness
+(it needs the detached-session path, which exits 1 in a fixture store — recorded as a separate anomaly).
+
