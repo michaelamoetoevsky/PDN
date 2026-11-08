@@ -130,13 +130,22 @@ impl SignatureVerifier {
         signature: &ImageSignature,
     ) -> Result<VerificationResult> {
         if !self.config.enabled {
+            // Nothing was verified. Returning `verified: true` here made the result claim a
+            // verification that never ran - the warning below was the only hint, and a caller has to
+            // read warnings to notice (ASEC3-SUPPLY-07, measured 2026-11-08: `SignatureConfig::default`
+            // is `enabled: false`, and the only readers of `.verified` outside this file are this
+            // module's own tests, while the production caller `image.rs:54` discards the value and only
+            // propagates the error, so nothing in the install path depended on the optimistic flag).
             return Ok(VerificationResult {
-                verified: true,
+                verified: false,
                 signature_type: SignatureType::Simple,
                 signer: None,
                 certificate: None,
                 tlog_entries: Vec::new(),
-                warnings: vec!["Signature verification disabled".to_string()],
+                warnings: vec![
+                    "Signature verification disabled: not verified (set signatures.enabled to verify)"
+                        .to_string(),
+                ],
             });
         }
 
