@@ -461,20 +461,57 @@ mod tests {
         let config = WakeLockConfig::default();
         let manager = WakeLockManager::new(config);
 
-        manager
+        // Measured 2026-11-08: `acquire_platform` refuses by name when the facility is
+        // absent, which is the intended behaviour, so this test branches on the facility
+        // instead of assuming success - the assumption made it fail on a Linux runner,
+        // where `termux-wake-lock` does not exist (Rust Host Build step 10, PRoot Distro
+        // Integration Test step 8).
+        match manager
             .acquire("test-service", Some(WakeLockType::Partial))
             .await
-            .unwrap();
-        assert!(manager.is_held("test-service").await);
+        {
+            Ok(()) => {
+                assert!(manager.is_held("test-service").await);
+                manager.release("test-service").await.unwrap();
+                assert!(!manager.is_held("test-service").await);
+            }
+            Err(error) => {
+                assert!(
+                    !facility_on_path(),
+                    "acquire failed even though termux-wake-lock is on PATH: {error}"
+                );
+                assert!(
+                    error.to_string().contains("wake-lock facility"),
+                    "the refusal must name the missing facility, got: {error}"
+                );
+                assert!(!manager.is_held("test-service").await);
+            }
+        }
+    }
 
-        manager.release("test-service").await.unwrap();
-        assert!(!manager.is_held("test-service").await);
+    /// Whether `termux-wake-lock` is reachable, so a test can say which outcome it expects
+    /// rather than assuming the host.
+    fn facility_on_path() -> bool {
+        std::env::var_os("PATH").is_some_and(|paths| {
+            std::env::split_paths(&paths).any(|dir| dir.join("termux-wake-lock").is_file())
+        })
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_ref_counting() {
         let config = WakeLockConfig::default();
         let manager = WakeLockManager::new(config);
+
+        if !facility_on_path() {
+            // Same contract as above: refuse by name, and record nothing as held.
+            let error = manager
+                .acquire("test-service", Some(WakeLockType::Partial))
+                .await
+                .expect_err("acquire must refuse when the facility is absent");
+            assert!(error.to_string().contains("wake-lock facility"));
+            assert!(!manager.is_held("test-service").await);
+            return;
+        }
 
         manager
             .acquire("test-service", Some(WakeLockType::Partial))

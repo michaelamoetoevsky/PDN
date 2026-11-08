@@ -391,18 +391,34 @@ async fn test_wake_lock_keeps_services_alive() -> Result<()> {
         .await?;
     env.start_service("wake-service").await?;
 
-    // Acquire wake lock
-    let acquired = env.acquire_wake_lock("wake-service", "Partial").await?;
-    assert!(acquired, "Failed to acquire wake lock");
+    // Acquire wake lock. Measured 2026-11-08: the lock is real as of 84ab501, so on a host
+    // without the facility - a Linux CI runner, where termux-wake-lock does not exist - the
+    // contract is a refusal that NAMES the facility, not an acquisition. Accepting only
+    // "acquired" is what made this contract test fail on the runner (Rust Host Build step 10,
+    // whose stdout carried `no wake-lock facility available for 'wake-service'`).
+    match env.acquire_wake_lock("wake-service", "Partial").await {
+        Ok(true) => {
+            let held = env.is_wake_lock_held("wake-service").await?;
+            assert!(held, "Wake lock not held");
 
-    // Verify held
-    let held = env.is_wake_lock_held("wake-service").await?;
-    assert!(held, "Wake lock not held");
-
-    // Release
-    env.release_wake_lock("wake-service").await?;
-    let held = env.is_wake_lock_held("wake-service").await?;
-    assert!(!held, "Wake lock not released");
+            env.release_wake_lock("wake-service").await?;
+            let held = env.is_wake_lock_held("wake-service").await?;
+            assert!(!held, "Wake lock not released");
+        }
+        Ok(false) => panic!("acquire reported neither success nor a reason"),
+        Err(error) => {
+            let message = error.to_string();
+            assert!(
+                message.contains("wake-lock facility"),
+                "the refusal must name the missing facility, got: {message}"
+            );
+            let held = env.is_wake_lock_held("wake-service").await?;
+            assert!(
+                !held,
+                "a refused acquisition must not report the lock as held"
+            );
+        }
+    }
 
     info!("✓ Wake lock management works");
 
