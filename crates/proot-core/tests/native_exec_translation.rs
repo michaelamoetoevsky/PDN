@@ -803,3 +803,181 @@ int main(void) {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A RELATIVE guest path is translatable ONCE the engine knows the guest's starting directory
+/// (2026-11-09, p7 relative). Regression guard for a defect this engine's own differential harness
+/// found: after `RunPlan::cwd` was introduced, a relative open still produced an untranslated-path
+/// refusal, and podnext turns that refusal into a failed run even though the write landed correctly
+/// inside the rootfs (measured: `exit 1` on three consecutive runs with the file present).
+///
+/// The guest here starts in `/probe` (a bind to a HOST directory) and writes a report with a RELATIVE
+/// name. Three arms, same guest, same binds - only the plan differs:
+///   * `cwd: Some("/probe")`  -> the relative name resolves through the cwd, lands in the host bind,
+///     and NO refusal is recorded;
+///   * `cwd: None`            -> the kernel would resolve it against the HOST cwd, so it must still be
+///     refused by name (the refusal was correct before the cwd existed, and must stay correct);
+///   * `cwd: Some("/probe")` with a `..` component -> refused, because collapsing `.`/`..` is lexical
+///     work the engine does not do, and guessing it is how a path escapes the rootfs.
+#[test]
+fn a_relative_path_is_translated_against_the_plans_cwd() {
+    let root = fixture_root("relative");
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-relative");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    // Writes "relative-ok" (or "dotdot-ok") to a RELATIVE name, then reports which arm it took.
+    compile_c(
+        &rootfs.join("bin").join("rel"),
+        r#"#include <fcntl.h>
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+int main(int argc, char **argv) {
+    const char *name = (argc > 1) ? argv[1] : "relative-report";
+    char cwd[4096];
+    // Diagnostics go to the inherited stderr, so the test log says what the GUEST saw rather than
+    // leaving the harness to infer it from files that may or may not exist.
+    fprintf(stderr, "[guest] name=%s cwd=%s\n", name,
+            getcwd(cwd, sizeof cwd) ? cwd : "<no cwd>");
+    int fd = open(name, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { fprintf(stderr, "[guest] open failed errno=%d\n", errno); return 41; }
+    if (write(fd, "relative-ok", 11) < 0) { return 42; }
+    close(fd);
+    fprintf(stderr, "[guest] wrote %s\n", name);
+    return 0;
+}
+"#,
+    );
+
+    // SECOND guest for the `..` arm, with the name HARDCODED: this engine publishes only `argv[0]`
+    // into the shared page (`native_run.rs:604-609`, where `argv_slots[1]` is set to null), so a guest
+    // that reads `argv[1]` sees `argc == 1` and silently falls back to its default. Measured here: the
+    // dotdot arm wrote `relative-report` because argv[1] never arrived. Passing the name as a compiled-in
+    // constant keeps THIS test about path translation; the dropped arguments are recorded as the next
+    // increment rather than papered over.
+    compile_c(
+        &rootfs.join("bin").join("reldotdot"),
+        r#"#include <fcntl.h>
+#include <unistd.h>
+int main(void) {
+    int fd = open("../escaped-report", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 41; }
+    if (write(fd, "relative-ok", 11) < 0) { return 42; }
+    close(fd);
+    return 0;
+}
+"#,
+    );
+
+    let mut binds = vec![("/probe".to_string(), probe.clone())];
+    binds.extend(host_runtime_binds());
+
+    // ---- arm 1: the cwd is known, so the relative name IS translatable ---------------------------
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds: binds.clone(),
+        cwd: Some("/probe".to_string()),
+    };
+    let run = run_native(
+        &["/bin/rel".to_string(), "relative-report".to_string()],
+        &plan,
+        false,
+    )
+    .expect("traced run with a cwd");
+    let landed = probe.join("relative-report");
+    eprintln!(
+        "[rel] cwd=Some(\"/probe\") exit={} landed={} translations={:?} refusals={:?}",
+        run.exit_code,
+        landed.display(),
+        run.translations
+            .iter()
+            .map(|t| (&t.guest, t.syscall))
+            .collect::<Vec<_>>(),
+        run.refusal_summary()
+    );
+    assert_eq!(
+        run.exit_code, 0,
+        "the guest must reach its write; a non-zero code here means the engine refused the run"
+    );
+    assert!(
+        landed.is_file(),
+        "the relative name must resolve through the cwd into the bound HOST directory; {} is absent",
+        landed.display()
+    );
+    assert!(
+        run.translations
+            .iter()
+            .any(|t| t.guest == "/probe/relative-report"),
+        "the report must name the cwd-JOINED guest path, not the bare relative one; got {:?}",
+        run.translations
+            .iter()
+            .map(|t| (&t.guest, &t.host))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        run.refusals.iter().all(|r| r.name != Some("SYS_openat")),
+        "a relative path that was translated must NOT also be recorded as an untranslated refusal; \
+         got {:?}",
+        run.refusal_summary()
+    );
+
+    // ---- arm 2: negative control - no known cwd, so the same open must still be refused -----------
+    // Without this arm the assertion above would also pass if the engine simply stopped refusing
+    // relative paths everywhere, which would be a host-fallback regression.
+    let plan_none = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds: binds.clone(),
+        cwd: None,
+    };
+    let run_none = run_native(
+        &["/bin/rel".to_string(), "relative-report".to_string()],
+        &plan_none,
+        false,
+    )
+    .expect("traced run without a cwd");
+    eprintln!(
+        "[rel] cwd=None exit={} refusals={:?}",
+        run_none.exit_code,
+        run_none.refusal_summary()
+    );
+    // The refusal does not BLOCK the syscall in non-strict mode: the kernel resolves the relative name
+    // against this test process's own cwd, which is why `relative-report` appears in the crate directory
+    // and why the CLI fails the whole run on such a refusal. Remove it here so the test leaves nothing
+    // behind - the same "a fixture cleans what it creates" rule the Drop guard follows elsewhere.
+    let _ = std::fs::remove_file("relative-report");
+    assert!(
+        run_none
+            .refusals
+            .iter()
+            .any(|r| r.name == Some("SYS_openat")),
+        "with no known cwd the kernel would resolve the relative name against the HOST cwd, so the \
+         engine must still refuse it by name; got {:?}",
+        run_none.refusal_summary()
+    );
+
+    // ---- arm 3: a `..` component is refused rather than joined ------------------------------------
+    // NON-STRICT, because strict mode cannot reach this point: the engine's own bootstrap read on the
+    // release pipe is a pass-through refusal, so `strict` stops on the engine itself (measured here:
+    // exit -1 with only `SYS_read` in the report). What this arm asserts is therefore the REFUSAL, not
+    // the file's absence: in non-strict mode the kernel still resolves the untranslated name (measured:
+    // the `..` write lands on the host side of the bind), and that is precisely why the CLI fails a whole
+    // run when it sees a path refusal - `native_verdict` is the layer that turns this into a non-run.
+    let run_dotdot = run_native(&["/bin/reldotdot".to_string()], &plan, false)
+        .expect("traced run with a dotdot name");
+    eprintln!(
+        "[rel] dotdot exit={} refusals={:?}",
+        run_dotdot.exit_code,
+        run_dotdot.refusal_summary()
+    );
+    assert!(
+        run_dotdot
+            .refusals
+            .iter()
+            .any(|r| r.name == Some("SYS_openat")),
+        "a relative name with `..` must be refused by name, not joined and normalised; got {:?}",
+        run_dotdot.refusal_summary()
+    );
+}

@@ -1387,4 +1387,44 @@ only because the differential compares EFFECTS rather than strings.
 **Stale prose, clarified rather than left alone:** `native_dynamic_guest.rs:411-413` and
 `podnext/src/native.rs:311-314` describe `SYS_chdir` as "a path-taking syscall with no translator". Still
 true of a GUEST `chdir`; the clause added says the engine's own pre-exec `chdir` is exempt because it is
-handed an already-translated host path.
+handed an already-translated host path.## p7 relative paths: the over-refusal fixed, and two findings it exposed (2026-11-09 04:20 WIB)
+
+**Fix: a relative guest path is now translated when the engine knows the guest's starting directory.**
+`native_run.rs`: `path_syscall` returns a `PathSyscall { name, arg_index, dirfd_arg }` instead of a
+2-tuple, so the table that already names each syscall now also says where its dirfd lives - one source of
+truth, not a second list that can drift. `translate_path_remote` joins a relative name onto
+`RunPlan::cwd` and goes through the same `resolve`, but ONLY when (a) the syscall resolves the name
+against the cwd - `arg0 == AT_FDCWD` for the `*at` family, or no dirfd at all for legacy
+`open`/`stat`/`access` - and (b) the name carries no `.`/`..` component. Both conditions earn their place:
+for any other fd the kernel resolves the name against THAT directory, so joining it onto the cwd would
+silently open a different file, and collapsing `.`/`..` is the lexical work the cwd guard already does.
+
+**Measured on the harness that found the defect** (`scripts/engine_differential.py`, same fixture, same
+argv, 3 runs per arm): before, the native arm exited **1** with
+`the native engine did not translate 1 path syscall(s): SYS_openat (56)` while `rootfs/relative-marker.txt`
+was present; after, `exit: same (7 = 7)`, `relmarker: same`, `marker: same`, and **zero** occurrences of
+"did not translate". Remaining differences are the two untouched gaps: `devnull`/`proc`/`sysfs` and
+`uid`/`euid`.
+
+**Regression test**, `a_relative_path_is_translated_against_the_plans_cwd` (in
+`crates/proot-core/tests/native_exec_translation.rs`), three arms on one guest: relative name with
+`cwd: Some("/probe")` -> lands in the bound HOST directory and the report names the cwd-joined guest path
+`/probe/relative-report` with no `SYS_openat` refusal; `cwd: None` -> the same open is still refused
+(negative control, without which "stopped refusing everywhere" would pass); a `..` name -> refused. Proven
+able to fail: with the fix stashed the test fails on
+`the report must name the cwd-JOINED guest path, not the bare relative one`. Whole target: **6 passed**.
+
+**Finding A - `strict` mode cannot reach a user syscall at all.** The first attempt at the `..` arm used
+`strict = true` and the run died with `exit = -1` and a report holding only `SYS_read (63)`: the engine's
+own bootstrap read on the release pipe is itself a pass-through refusal, so strict stops on the engine.
+That matches the documented limitation ("the only mode a dynamically linked guest survives"), but it means
+strict is unusable as a test arm for anything the engine bootstraps through.
+
+**Finding B - the engine passes ONLY `argv[0]` to the guest, silently.** `native_run.rs:604-609` publishes
+`argv[0]` into the page, sets `argv_slots[1] = null`, and the comment beside it talks only about argv[0]
+being the program's own name; nothing says the rest are dropped. Measured while testing: a guest invoked
+with `argv[1] = "../escaped-report"` observed `argc == 1` and silently fell back to its compiled-in default
+(it printed `[guest] name=relative-report cwd=...`), so the `..` name never reached the engine at all.
+The consequence for the operator goal is direct: `podnext --engine native run c -- /bin/sh -c 'cmd'` runs
+`/bin/sh` with NO arguments and no error. Recorded as the next increment (`p7-argv`); the test above works
+around it by compiling the name in, and says so in a comment rather than hiding it.

@@ -280,44 +280,107 @@ const SYS_NEWFSTATAT: i64 = 79;
 /// those arms are `x86_64`-only for the same reason the name table above is partial: a constant the
 /// target does not declare does not compile, and the runner would accept a wider table - the
 /// device-only compile error that CI then has to explain.
-fn path_syscall(number: i64) -> Option<(&'static str, usize)> {
+/// A path-taking syscall the engine CAN translate: its `name`, the `arg_index` holding the path, and
+/// the `dirfd_arg` when the syscall resolves a RELATIVE path against a directory fd.
+///
+/// The dirfd is part of the entry on purpose (2026-11-09, p7 relative): a relative path is only
+/// translatable against `RunPlan::cwd` when the syscall resolves it there, i.e. when `arg0` is
+/// `AT_FDCWD` or when the syscall has no dirfd at all (the legacy `open`/`stat`/`access` family). For
+/// any other fd the kernel resolves the name against THAT directory, so joining it onto the cwd would
+/// silently point at a different file - worse than refusing. Keeping this in the same table is what
+/// stops a second list from drifting away from the first.
+struct PathSyscall {
+    name: &'static str,
+    arg_index: usize,
+    dirfd_arg: Option<usize>,
+}
+
+fn path_syscall(number: i64) -> Option<PathSyscall> {
     if number == nix::libc::SYS_openat as i64 {
-        return Some(("SYS_openat", 1));
+        return Some(PathSyscall {
+            name: "SYS_openat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
     }
     if number == nix::libc::SYS_openat2 as i64 {
-        return Some(("SYS_openat2", 1));
+        return Some(PathSyscall {
+            name: "SYS_openat2",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
     }
     if number == SYS_NEWFSTATAT {
-        return Some(("SYS_newfstatat", 1));
+        return Some(PathSyscall {
+            name: "SYS_newfstatat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
     }
     if number == nix::libc::SYS_statx as i64 {
-        return Some(("SYS_statx", 1));
+        return Some(PathSyscall {
+            name: "SYS_statx",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
     }
     if number == nix::libc::SYS_readlinkat as i64 {
-        return Some(("SYS_readlinkat", 1));
+        return Some(PathSyscall {
+            name: "SYS_readlinkat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
     }
     if number == nix::libc::SYS_faccessat as i64 {
-        return Some(("SYS_faccessat", 1));
+        return Some(PathSyscall {
+            name: "SYS_faccessat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
     }
     if number == nix::libc::SYS_faccessat2 as i64 {
-        return Some(("SYS_faccessat2", 1));
+        return Some(PathSyscall {
+            name: "SYS_faccessat2",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
     }
     #[cfg(target_arch = "x86_64")]
     {
         if number == nix::libc::SYS_open as i64 {
-            return Some(("SYS_open", 0));
+            return Some(PathSyscall {
+                name: "SYS_open",
+                arg_index: 0,
+                dirfd_arg: None,
+            });
         }
         if number == nix::libc::SYS_stat as i64 {
-            return Some(("SYS_stat", 0));
+            return Some(PathSyscall {
+                name: "SYS_stat",
+                arg_index: 0,
+                dirfd_arg: None,
+            });
         }
         if number == nix::libc::SYS_lstat as i64 {
-            return Some(("SYS_lstat", 0));
+            return Some(PathSyscall {
+                name: "SYS_lstat",
+                arg_index: 0,
+                dirfd_arg: None,
+            });
         }
         if number == nix::libc::SYS_readlink as i64 {
-            return Some(("SYS_readlink", 0));
+            return Some(PathSyscall {
+                name: "SYS_readlink",
+                arg_index: 0,
+                dirfd_arg: None,
+            });
         }
         if number == nix::libc::SYS_access as i64 {
-            return Some(("SYS_access", 0));
+            return Some(PathSyscall {
+                name: "SYS_access",
+                arg_index: 0,
+                dirfd_arg: None,
+            });
         }
     }
     None
@@ -370,7 +433,7 @@ pub fn is_untranslated_path_refusal(number: i64) -> bool {
 pub fn syscall_name(number: i64) -> Option<&'static str> {
     // A path syscall has a name whether the engine translates it or refuses it; keeping the two
     // tables as the single source of those names stops the report and the dispatcher drifting.
-    if let Some((name, _)) = path_syscall(number) {
+    if let Some(PathSyscall { name, .. }) = path_syscall(number) {
         return Some(name);
     }
     if let Some(name) = unhandled_path_syscall(number) {
@@ -834,10 +897,16 @@ fn parent_loop(
                     // dynamic loader's own opens land inside the rootfs. `Ok(false)` is a path the
                     // engine could not translate (unreadable, empty, relative, or no rootfs plan);
                     // it is recorded as a named refusal rather than left to the host silently.
-                    if let Some((name, arg_index)) = path_syscall(number) {
+                    if let Some(PathSyscall {
+                        name,
+                        arg_index,
+                        dirfd_arg,
+                    }) = path_syscall(number)
+                    {
                         match translate_path_remote(
                             pid,
                             arg_index,
+                            dirfd_arg,
                             name,
                             number,
                             &args,
@@ -1273,6 +1342,7 @@ fn write_path_and_redirect_arg(pid: Pid, arg_index: usize, bytes: &[u8]) -> Resu
 fn translate_path_remote(
     pid: Pid,
     arg_index: usize,
+    dirfd_arg: Option<usize>,
     name: &'static str,
     number: i64,
     args: &[u64; 6],
@@ -1287,12 +1357,42 @@ fn translate_path_remote(
     let Some(arg) = args.get(arg_index) else {
         return Ok(false);
     };
-    let Some(guest) = peek_cstr(pid, *arg)? else {
+    let Some(raw) = peek_cstr(pid, *arg)? else {
         return Ok(false);
     };
-    if guest.is_empty() || !guest.starts_with('/') {
+    if raw.is_empty() {
         return Ok(false);
     }
+    // A RELATIVE guest path (2026-11-09, p7 relative). Once `RunPlan::cwd` is applied the guest's
+    // starting directory is INSIDE the rootfs, so a relative name resolved there cannot reach the host
+    // and the engine CAN translate it: join it onto the known guest-absolute cwd and go through the same
+    // `resolve`. Until the cwd existed this case was a genuine host-fallback risk and refusing was the
+    // right answer; afterwards the refusal failed runs that were correct (measured: a relative open
+    // wrote into the rootfs and the run still exited 1).
+    //
+    // Two conditions keep the join honest. The syscall must resolve the name against the cwd - `AT_FDCWD`
+    // (`arg0 == -100`) or a legacy no-dirfd syscall - because for any other fd the kernel resolves it
+    // against THAT directory and joining onto the cwd would silently open a different file. And the name
+    // must carry no `.`/`..` component: collapsing those is the lexical work the cwd guard already does,
+    // and guessing it here would be a new guess rather than a translation.
+    let guest = if raw.starts_with('/') {
+        raw
+    } else {
+        let against_cwd = match dirfd_arg {
+            Some(i) => args
+                .get(i)
+                .map(|v| *v as i32 == nix::libc::AT_FDCWD)
+                .unwrap_or(false),
+            None => true,
+        };
+        let needs_normalising = raw.split('/').any(|c| c == "." || c == "..");
+        match plan.cwd.as_deref() {
+            Some(cwd) if against_cwd && !needs_normalising => {
+                format!("{}/{}", cwd.trim_end_matches('/'), raw)
+            }
+            _ => return Ok(false),
+        }
+    };
     let host = resolve(rootfs, &guest, &plan.binds);
     if host.as_path() == Path::new(&guest) {
         // The rewrite would not change anything: either the guest path is already the host path
