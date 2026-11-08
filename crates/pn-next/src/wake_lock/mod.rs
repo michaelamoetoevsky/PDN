@@ -190,6 +190,17 @@ impl WakeLockManager {
     /// Release a wake lock for a service
     pub async fn release(&self, service_name: &str) -> Result<()> {
         let mut locks = self.locks.write().await;
+        if !locks.contains_key(service_name) {
+            // The platform's lock is app-level, not per-process, and it outlives this process, so a
+            // fresh `podnext wakelock release` carries an empty map. The old path then did nothing
+            // and still printed "Wake lock released for 'x'" - measured 2026-11-08: after
+            // `release c1` the platform still listed `PARTIAL_WAKE_LOCK 'termux:service-wakelock'`,
+            // while `termux-wake-unlock` run directly removed it. Ask the platform anyway: that is
+            // exactly what the caller is asking for, and a failure is reported instead of hidden.
+            self.release_platform(service_name, WakeLockType::Partial)
+                .await?;
+            return Ok(());
+        }
         self.release_internal(service_name, &mut locks).await
     }
 
@@ -220,48 +231,76 @@ impl WakeLockManager {
         Ok(())
     }
 
-    /// Platform-specific acquire
+    /// Acquire the platform wake lock through the facility the platform actually offers.
+    ///
+    /// Measured on this device, 2026-11-08: `termux-wake-lock` starts `com.termux`'s service and
+    /// `/system/bin/dumpsys power` then lists
+    /// `PARTIAL_WAKE_LOCK 'termux:service-wakelock' ACQ=-2s (uid=10396 pkg=com.termux)`, which
+    /// `termux-wake-unlock` removes. The previous body logged `Would acquire ...` and returned
+    /// `Ok(())` on every platform, so `acquire()` recorded the lock as held and
+    /// `podnext wakelock acquire` printed success for a lock nothing had taken.
+    ///
+    /// The facility provides a PARTIAL lock only, so `Full` and `DozeExemption` are refused by name
+    /// rather than silently downgraded to something they are not; on a host without the facility
+    /// (a CI runner, say) the call fails with the reason instead of reporting a lock.
     async fn acquire_platform(&self, service_name: &str, lock_type: WakeLockType) -> Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            // Real implementation would call PowerManager.newWakeLock()
-            debug!(
-                "Android: Would acquire {:?} wake lock for {}",
-                lock_type, service_name
+        if lock_type != WakeLockType::Partial {
+            anyhow::bail!(
+                "the wake-lock facility on this platform provides a partial lock only, so {:?} \
+                 cannot be honoured for '{}'; ask for Partial, or keep the service alive another way",
+                lock_type,
+                service_name
             );
         }
 
-        #[cfg(not(target_os = "android"))]
-        {
-            // On non-Android, simulate with a file lock or no-op
-            debug!(
-                "Non-Android: Simulated acquire {:?} wake lock for {}",
-                lock_type, service_name
+        let output = std::process::Command::new("termux-wake-lock")
+            .output()
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "no wake-lock facility available for '{}' (termux-wake-lock: {}); nothing was \
+                     acquired",
+                    service_name,
+                    error
+                )
+            })?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "termux-wake-lock failed for '{}' with {}: {}",
+                service_name,
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
             );
         }
-
+        debug!(
+            "Acquired the platform partial wake lock for {}",
+            service_name
+        );
         Ok(())
     }
 
-    /// Platform-specific release
-    async fn release_platform(&self, service_name: &str, lock_type: WakeLockType) -> Result<()> {
-        #[cfg(target_os = "android")]
-        {
-            // Real implementation would call wakeLock.release()
-            debug!(
-                "Android: Would release {:?} wake lock for {}",
-                lock_type, service_name
+    /// Release the platform wake lock, reporting success only when the facility agreed.
+    async fn release_platform(&self, service_name: &str, _lock_type: WakeLockType) -> Result<()> {
+        let output = std::process::Command::new("termux-wake-unlock")
+            .output()
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "no wake-lock facility available to release '{}' (termux-wake-unlock: {})",
+                    service_name,
+                    error
+                )
+            })?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "termux-wake-unlock failed for '{}' with {}: {}",
+                service_name,
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
             );
         }
-
-        #[cfg(not(target_os = "android"))]
-        {
-            debug!(
-                "Non-Android: Simulated release {:?} wake lock for {}",
-                lock_type, service_name
-            );
-        }
-
+        debug!(
+            "Released the platform partial wake lock for {}",
+            service_name
+        );
         Ok(())
     }
 
@@ -384,6 +423,31 @@ impl WakeLockManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lock type the platform cannot provide must be refused, and the manager must not record it
+    /// as held. The replaced body returned `Ok(())` for every type on every platform, which is how
+    /// `podnext wakelock acquire --type full` came to print success for a lock nothing had taken.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unsupported_lock_type_is_refused_and_not_recorded() {
+        let manager = WakeLockManager::new(WakeLockConfig::default());
+        let error = manager
+            .acquire("svc", Some(WakeLockType::Full))
+            .await
+            .expect_err("Full is not offered by the wake-lock facility on this platform");
+        assert!(
+            format!("{error}").contains("partial lock only"),
+            "the refusal must name the reason: {error}"
+        );
+        let held = manager
+            .get_state("svc")
+            .await
+            .map(|state| state.held)
+            .unwrap_or(false);
+        assert!(
+            !held,
+            "a refused acquire must not leave the lock marked held"
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_wake_lock_manager_creation() {

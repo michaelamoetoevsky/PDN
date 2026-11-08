@@ -280,6 +280,55 @@ had already returned `None` and flagged `measured = false`, which is the honest 
 denied. The tests now assert the contract instead of assuming availability, and they print which sources
 answered rather than implying all three did.
 
+---
+
+## Media/UX 010 (wake lock) — the manager reported success for a lock that was never taken
+
+**Found.** `acquire_platform` (`crates/pn-next/src/wake_lock/mod.rs:224-247`) logged `"Android: Would
+acquire … wake lock"` on Android and `"Non-Android: Simulated acquire …"` elsewhere, then returned `Ok(())`.
+`acquire()` therefore set `held = true` and `podnext wakelock acquire <name> <type>` printed
+`Wake lock acquired for '<name>'` - for a lock nothing had taken.
+
+**The facility exists, so this was fixable rather than merely disclosable.** Measured 2026-11-08:
+`termux-wake-lock` exists at `$PREFIX/bin/termux-wake-lock`, and with the full path to the observer,
+`/system/bin/dumpsys power` then lists
+`PARTIAL_WAKE_LOCK 'termux:service-wakelock' ACQ=-2s86ms (uid=10396 pid=23284 pkg=com.termux)`, which
+`termux-wake-unlock` removes. A trap on the way: `dumpsys` is **not on PATH** for a Termux shell
+(`rc=127 No such file or directory`), so an earlier "0 matching lines" was a tool that could not run, not
+evidence of absence.
+
+**Change (2026-11-08).** `crates/pn-next/src/wake_lock/mod.rs`
+- `:224-262` - `acquire_platform` runs `termux-wake-lock` and returns an error when the facility is
+  missing or the command exits non-zero; `Full` and `DozeExemption` are refused by name because the
+  facility provides a **partial** lock only, rather than being silently downgraded.
+- `:264-286` - `release_platform` runs `termux-wake-unlock` with the same failure discipline.
+- `:190-202` - `release` now asks the platform even when the in-process map has no record for the name.
+  The lock is **app-level and outlives the process**, so a fresh `podnext wakelock release` always had an
+  empty map: the old path did nothing and the CLI printed `Wake lock released for 'x'` anyway.
+- `:407-428` - a test that an unsupported lock type is refused **and not recorded as held**.
+
+**Verification, on the device.** `cargo test -p pn-next wake_lock` -> `4 passed; 0 failed` (heavy label
+`wl2`, 80 s). End to end with the real binary, counting the platform's own lock through
+`/system/bin/dumpsys power`:
+
+| step | count of `PARTIAL_WAKE_LOCK … termux:service-wakelock` |
+|---|---|
+| before | 0 |
+| `podnext wakelock acquire e1 partial` | 1 (`ACQ=-2s220ms pkg=com.termux`) |
+| `podnext wakelock acquire demo3 full` | refused, `rc=1`, the name is in the message, count unchanged |
+| `podnext wakelock release e1` | 0 |
+
+Two of my own measurements were wrong before this and are recorded because they cost a round each: the
+CLI takes the lock type **positionally** (`wakelock acquire <NAME> <LOCK_TYPE>`), so `acquire demo` and
+`--type full` were rejected by clap and exercised nothing; and the first release check used a `release
+<name> <type>` form that does not exist, so the release path went untested while the lock stayed.
+
+**Limitation stated rather than hidden.** The app-level lock is process-agnostic: there is no unit test
+that can assert "the platform lock is gone" without a device, so the release arm is proved by the table
+above and by nothing else. Both directions were also observed to be genuinely observable (the count went
+0 -> 1 -> 0 with the observer, not inferred from the CLI's own message).
+
+
 
 
 
