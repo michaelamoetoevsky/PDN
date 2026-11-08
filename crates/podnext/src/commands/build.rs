@@ -249,6 +249,18 @@ pub async fn build_local_image(
             }
             Instr::Workdir(dir) => {
                 let dir = dir.trim_matches('"').to_string();
+                // A `..` component climbs out of whatever the path is joined
+                // onto, and this path is joined onto the image rootfs just below:
+                // `WORKDIR ../../etc` created `<store>/containers/etc`, a sibling
+                // of the image directory, and enough of them leave the store
+                // entirely (ASEc-001, ASEC1-A07-001). Refused by name rather than
+                // normalised, so the same rule covers every path a Dockerfile
+                // supplies (see `copy_into_rootfs`).
+                if dir.split('/').any(|c| c == "..") {
+                    bail!(
+                        "WORKDIR '{dir}' escapes the image root: '..' is not allowed in a WORKDIR path"
+                    );
+                }
                 // Docker resolves a relative WORKDIR "relative to whatever the
                 // previous working directory is", so `WORKDIR /app` then
                 // `WORKDIR src` is `/app/src`, not `/src`
