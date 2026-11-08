@@ -47,6 +47,8 @@ int main(int argc, char **argv) {
     printf("cwd=%s\n", getcwd(cwd, sizeof cwd) ? cwd : "<none>");
     printf("envp=%s\n", getenv("PDN_DIFFERENTIAL_PROBE") ? getenv("PDN_DIFFERENTIAL_PROBE") : "<unset>");
     printf("proc=%s\n", access("/proc/self/exe", R_OK) == 0 ? "readable" : "absent");
+    printf("devnull=%s\n", access("/dev/null", W_OK) == 0 ? "writable" : "absent");
+    printf("sysfs=%s\n", access("/sys", R_OK) == 0 ? "readable" : "absent");
     printf("uid=%d\n", (int)getuid());
     printf("euid=%d\n", (int)geteuid());
     FILE *f = fopen("/differential-marker.txt", "w");

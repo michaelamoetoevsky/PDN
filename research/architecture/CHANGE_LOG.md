@@ -1295,4 +1295,39 @@ teardown now - a manual cleanup beside a guard reads as if both are needed.
 **Why the leak mattered at all:** dashboard tests and every `cargo test -p proot-core` run used the same
 `$PREFIX/tmp` root, so an unbounded leak is a slow disk-eating defect on a device with 11 GB of RAM and a
 shared filesystem, and a stale `p7-loader-*` tree is indistinguishable from a live fixture to anyone
-debugging by hand.
+debugging by hand.## p7 step 7 addendum: the gap inventory completed, and a correction to the cwd claim (2026-11-09 03:20 WIB)
+
+The differential guest now also reports `/dev/null` writability and `/sys` readability, so the three
+per-syscall gaps are no longer the whole inventory. Same harness, same invocation, before any fix:
+
+| field | proot (default) | native | verdict |
+|---|---|---|---|
+| exit, stdout-head, marker file | 7 / `differential-ok` / `written-by-guest` | identical | same |
+| `cwd` | `/` | the fixture ROOTFS path this run | differs |
+| `envp` probe | `<unset>` | `<unset>` | same |
+| `devnull` | `writable` | `absent` | **differs** |
+| `proc` (`/proc/self/exe`) | `readable` | `absent` | differs |
+| `sysfs` (`/sys`) | `readable` | `absent` | **differs** |
+| `uid` / `euid` | `0` / `0` | `10396` / `10396` | differs |
+
+Verdict line: `DIFFERENTIAL: NOT EQUAL - stdout, cwd, devnull, euid, proc, sysfs, uid differ.`
+
+**Correction.** The step-7 entry above says the native guest "inherits the host working directory
+(`/data/data/com.termux/files/home/workspace/PDN`)". That value was measured, but the generalisation is
+wrong: on this run the same field read `/data/.../engdiff7-32520/.podnext/containers/engine-differential/
+rootfs`. The native guest therefore inherits **whatever cwd the podnext process happens to have at fork
+time**, which is neither `/` nor stable - a stronger and more useful statement than naming the directory I
+happened to observe. The gap is the same; the sentence describing it was too narrow.
+
+**Where the proot path's `/proc`, `/dev` and `/sys` come from - read, not assumed.** Not from podnext:
+`sysdata::bindings` (`crates/proot-distro-core/src/sysdata.rs:527-604`) only MASKs parts of `/proc`
+(`/proc/net`, `/proc/mounts`, `/proc/1`, every numeric `/proc/<pid>`) and returns an empty vector when its
+staging directory is absent, and `guestdirs::bindings`
+(`crates/proot-distro-core/src/guestdirs.rs:57-70`) binds only `/dev/shm` and `/tmp`. Those binds are added
+to the proot engine's argv in `runtime.rs:141-149`, and the native path never runs that code: it builds
+`RunPlan` from `container.config.bind_mounts` alone. So the guest-visible `/proc`, `/dev` and `/sys` on the
+proot arm come from **proot's own default setup**, which means native parity has to be produced
+deliberately (bind them, or emulate them) rather than inherited from the container record.
+
+This is now five causes behind six differing fields: cwd (no chdir), devnull, proc, sysfs (no synthetic
+mounts), and uid/euid (no id mapping). Env is the one field that already agrees.
