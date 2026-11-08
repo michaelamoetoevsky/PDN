@@ -504,6 +504,7 @@ CHECKS: list[dict] = [
 
 # Issues with no honest automated check, and why. Every key is an issue that exists.
 NO_CHECK_REASON = {
+    "78": "CLOSED defect (p4 step 3b, 2026-11-08); the native engine now translates execve's path, proven by crates/proot-core/tests/native_exec_translation.rs (2 passed, 0 failed, 0 ignored) with a sabotage control that goes red when the rewrite is made a no-op. No predicate lives on the issue itself: its acceptance is carried by that test target, and a check belongs there rather than here.",
     "1": "OPEN feature request (PowerShell completion) — nothing on the tree to verify.",
     "2": "OPEN documentation task (example service configs) — no code fix to assert.",
     "3": "OPEN documentation task (tutorial) — no code fix to assert.",

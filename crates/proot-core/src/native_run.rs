@@ -10,8 +10,9 @@
 //!
 //! SCOPE OF THIS INCREMENT - small on purpose, so that capability is MEASURABLE rather than claimed:
 //!
-//!   * spawn a child with `PTRACE_TRACEME`, so the engine owns the tracee and no external binary
-//!     is involved;
+//!   * spawn a child that parks in a pipe `read`, `PTRACE_SEIZE` + `PTRACE_INTERRUPT` it so the
+//!     engine owns the tracee before it can exec, and no external binary is involved (2026-11-08,
+//!     p4 step 3b: `PTRACE_TRACEME` was dropped - its stop is delivered only at `execve`);
 //!   * trace syscall stops with `PTRACE_SYSCALL` and report the number the tracee is stopped on
 //!     through the existing `Tracee` (p4 step 1, commit 771b817, made that number real rather than
 //!     the constant 0 it used to be);
@@ -33,6 +34,17 @@
 //! one page of shared memory - only the ADDRESS is per-process. Refusing on the address alone made
 //! arm A of the test execute the HOST's `/bin/true` (Termux has `/bin` -> `$PREFIX/bin`), which is
 //! exactly the false positive the module exists to prevent.
+//!
+//! SECOND MEASUREMENT THAT SHAPED THE TRACE (2026-11-08, p4 step 3b): `PTRACE_TRACEME`'s initial
+//! stop is delivered at the child's `execve`, not before it, so the trace began on the STARTUP of
+//! an already-exec'd program (`faccessat`, `openat`, `read`) and the child's own pre-exec syscalls
+//! - the markers and the `execve` whose path must be rewritten - were never observed. The engine now
+//! does NOT use `PTRACE_TRACEME`: the child's FIRST syscall is a blocking `read` on a pipe, the
+//! engine `PTRACE_SEIZE`s it (options in force from the first stop) and `PTRACE_INTERRUPT`s it,
+//! consumes the `PTRACE_EVENT_STOP` group-stop, then releases the child by writing one byte into the
+//! pipe. No SIGSTOP is raised (a group-stop raised with SIGSTOP and then continued with
+//! `PTRACE_SYSCALL` does not resume syscall-stops), and there is no fork race: the child cannot pass
+//! its `execve` until the engine owns it.
 //!
 //! NOT DONE HERE, named so the gap is explicit rather than implied (all of it is p4 step 3b+):
 //! bind mounts and the other five argv features; traces of tracees that fork (`CLONE`/`FORK` are
@@ -82,6 +94,24 @@ const STOP_BUDGET: usize = 200_000;
 
 /// How many entry stops the report keeps for inspection.
 pub const OBSERVED_CAP: usize = 24;
+
+/// The single place the engine's trace options are set - now at `PTRACE_SEIZE` time rather than at a
+/// `PTRACE_TRACEME` stop, so they are in force from the engine's first stop. `TRACESYSGOOD` is what
+/// distinguishes a syscall stop from a signal stop; `TRACEEXEC` gives the `PTRACE_EVENT_EXEC` stop
+/// used to read `/proc/<pid>/exe`; `EXITKILL` kills the tracee if the engine dies (2026-11-08,
+/// p4 step 3b).
+const TRACE_OPTIONS: Options = Options::PTRACE_O_TRACESYSGOOD
+    .union(Options::PTRACE_O_TRACEEXEC)
+    .union(Options::PTRACE_O_EXITKILL);
+
+/// `PTRACE_SEIZE`/`PTRACE_INTERRUPT` are NOT declared by the Android/AArch64 `libc` crate (it
+/// declares only up to `PTRACE_SETREGSET`, `PTRACE_SECCOMP_GET_METADATA` and `PTRACE_EVENT_STOP`),
+/// and `nix 0.27`'s `ptrace::seize`/`ptrace::interrupt` are gated `#[cfg(target_os = "linux")]`, so
+/// they are absent on Android (measured 2026-11-08: `cannot find function seize in module ptrace`).
+/// The request numbers are fixed by the Linux ptrace ABI (`include/uapi/linux/ptrace.h`), so they
+/// are named here rather than spelled at the call site, exactly as `NT_PRSTATUS` is in `tracee.rs`.
+const PTRACE_SEIZE: nix::libc::c_int = 0x4206;
+const PTRACE_INTERRUPT: nix::libc::c_int = 0x4207;
 
 /// What the child says about itself, read from the shared header after its first stop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,25 +286,55 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
         ));
     }
 
+    // (2026-11-08, p4 step 3b) A pipe the child blocks on as its FIRST syscall. It is what lets the
+    // engine attach before the child can exec: the child cannot pass its `execve` until the engine
+    // writes one byte, and the engine writes only after it owns the tracee.
+    let (pipe_r, pipe_w) = nix::unistd::pipe()?;
+
     match unsafe { fork() }? {
-        ForkResult::Child => child_main(page as *mut u8, &guest_path, argv),
+        ForkResult::Child => {
+            // Close the write end we inherited: only the engine releases the child.
+            let _ = nix::unistd::close(pipe_w);
+            child_main(page as *mut u8, &guest_path, argv, pipe_r)
+        }
         ForkResult::Parent { child } => {
-            let report = parent_loop(child, page as *mut u8, plan, strict);
+            // The engine only writes the release byte; the child owns the read end.
+            let _ = nix::unistd::close(pipe_r);
+            let report = parent_loop(child, page as *mut u8, plan, strict, pipe_w);
+            let _ = nix::unistd::close(pipe_w);
             unsafe { nix::libc::munmap(page, PAGE_BYTES) };
             report
         }
     }
 }
 
-/// The child half: register for tracing, publish the path, argv and a self-report into the shared
-/// page, then stop so the engine can rewrite the path BEFORE the kernel reads it.
-fn child_main(page: *mut u8, guest_path: &str, argv: &[String]) -> ! {
+/// The child half: park in a blocking `read` so the engine can own the tracee before any exec,
+/// publish the path, argv and a self-report into the shared page, then call `execve`.
+///
+/// (2026-11-08, p4 step 3b) This used to call `ptrace(PTRACE_TRACEME)`; that stop is delivered at
+/// the child's `execve`, so the engine's trace began on the startup of an already-exec'd program and
+/// the child's own pre-exec syscalls were invisible. The child now does NOT trace itself: its first
+/// syscall is the `read` below, and the engine `PTRACE_SEIZE`s + `PTRACE_INTERRUPT`s it there.
+fn child_main(page: *mut u8, guest_path: &str, argv: &[String], pipe_r: nix::libc::c_int) -> ! {
     // SAFETY: the child is a fresh fork of a single-threaded test/engine process, and every pointer
     // below is derived from the page mapped by `run_native` before the fork.
     unsafe {
-        if nix::libc::ptrace(nix::libc::PTRACE_TRACEME as _, 0, 0, 0) == -1 {
-            nix::libc::_exit(126);
+        // FIRST syscall, before anything else: block until the engine releases us. The engine
+        // seizes and interrupts the child while it is parked in this read, so the trace is live
+        // before the execve below (2026-11-08, p4 step 3b). EINTR is retried: a PTRACE_INTERRUPT
+        // group-stop resumes this read rather than failing it.
+        let mut release = 0u8;
+        loop {
+            let n = nix::libc::read(pipe_r, &mut release as *mut u8 as *mut nix::libc::c_void, 1);
+            if n >= 0 {
+                break;
+            }
+            if *nix::libc::__errno() != nix::libc::EINTR {
+                nix::libc::_exit(126);
+            }
         }
+        nix::libc::close(pipe_r);
+
         write_cstr(page.add(PATH_OFFSET), guest_path);
         write_cstr(page.add(ARGV0_OFFSET), &argv[0]);
         // argv as the guest should see it: argv[0] is the program's own (guest) name. Only the
@@ -288,15 +348,12 @@ fn child_main(page: *mut u8, guest_path: &str, argv: &[String]) -> ! {
         *header.add(1) = page.add(PATH_OFFSET) as u64;
         *header.add(2) = guest_path.len() as u64;
 
-        nix::libc::raise(nix::libc::SIGSTOP);
-
-        // Sync marker. The first entry stop the engine sees MUST be this `getpid`; if the report's
-        // `observed` list does not begin with `(SYS_getpid, ...)`, the trace started late and the
-        // syscalls in it belong to something else - which is how a run can look like it translated
-        // a path while actually executing a host binary (measured 2026-11-08: an arm reported
-        // `execve` with a path pointer that was neither the published one nor page-aligned, and
-        // exited 0 having run the HOST's /bin/true through Termux's /bin symlink).
-        let _sync_marker = unsafe { nix::libc::getpid() };
+        // The child's own marker before its `execve`, issued as a RAW syscall on purpose: Android's
+        // bionic CACHES `getpid()`, so `libc::getpid` is often not a syscall at all and would leave
+        // the engine no stop to anchor the trace on (measured 2026-11-08: the `getpid` marker never
+        // appeared as a stop, while a raw `syscall(SYS_getppid)` did). The raw `getpid` is a real
+        // syscall whose entry stop is the one immediately before the translated `execve`.
+        let _sync_marker = nix::libc::syscall(nix::libc::SYS_getpid);
         std::hint::black_box(_sync_marker);
 
         // An EMPTY environment, deliberately: `nix::libc::environ` is not declared for the Android
@@ -306,18 +363,35 @@ fn child_main(page: *mut u8, guest_path: &str, argv: &[String]) -> ! {
         // here as a limitation: p4-3b decides the guest's environment on purpose.
         let empty_envp: [*const nix::libc::c_char; 1] = [std::ptr::null()];
 
-        nix::libc::execve(
+        // `execve` is issued as a RAW syscall, NOT through `libc::execve`, because a preloaded
+        // library can interpose the libc symbol and then the tracee's execve never surfaces as a
+        // syscall stop the engine can rewrite. Measured 2026-11-08 on this device, where the
+        // environment sets `LD_PRELOAD=libtermux-exec-ld-preload.so`: with `libc::execve` the child
+        // exec'd the HOST `/bin/true` (exit 0, `executed=.../usr/bin/coreutils`) and the engine saw
+        // NO `SYS_execve` entry stop at all, so nothing was translated; with the raw syscall the
+        // entry stop appeared, the path was rewritten, and the fixture ran (`executed` named
+        // `rootfs-a/bin/true`). A proot-style engine must not let an interposer sit between it and
+        // the exec it translates, so the syscall is made directly.
+        let _exec_rc = nix::libc::syscall(
+            nix::libc::SYS_execve,
             page.add(PATH_OFFSET) as *const nix::libc::c_char,
             page.add(ARGV_OFFSET) as *const *const nix::libc::c_char,
             empty_envp.as_ptr(),
         );
+        std::hint::black_box(_exec_rc);
         // execve only returns on failure; 127 is the conventional "could not execute".
         nix::libc::_exit(127)
     }
 }
 
 /// The tracer half.
-fn parent_loop(child: Pid, page: *mut u8, plan: &RunPlan, strict: bool) -> Result<NativeRunReport> {
+fn parent_loop(
+    child: Pid,
+    page: *mut u8,
+    plan: &RunPlan,
+    strict: bool,
+    pipe_w: nix::libc::c_int,
+) -> Result<NativeRunReport> {
     let mut report = NativeRunReport {
         exit_code: -1,
         stops: 0,
@@ -330,35 +404,78 @@ fn parent_loop(child: Pid, page: *mut u8, plan: &RunPlan, strict: bool) -> Resul
         strict_failure: None,
     };
 
-    // The initial stop (TRACEME plus the child's own SIGSTOP). This is the state the existing
-    // test in tests/native_syscall_read.rs uses to arm options before the first syscall.
-    if !matches!(waitpid(child, None)?, WaitStatus::Stopped(..)) {
+    // (2026-11-08, p4 step 3b) Own the tracee BEFORE its execve. `PTRACE_SEIZE` attaches without
+    // stopping it and carries the options, so they are in force from the engine's first stop;
+    // `PTRACE_INTERRUPT` then brings the child - parked in its opening `read()` - to a group-stop
+    // the engine owns (reported as a `PTRACE_EVENT_STOP`). `PTRACE_TRACEME` is deliberately NOT
+    // used: its stop is delivered at `execve`, after the syscalls the engine must see. The requests
+    // go through `libc` because neither `PTRACE_SEIZE`/`PTRACE_INTERRUPT` nor `nix`'s wrappers
+    // exist on Android (see the constants above); the request is cast `as _` so the same source
+    // compiles where `libc` declares `ptrace`'s request as `c_int` and where it is `c_uint`.
+    let seized = unsafe {
+        nix::libc::ptrace(
+            PTRACE_SEIZE as _,
+            child.as_raw(),
+            std::ptr::null_mut::<nix::libc::c_void>(),
+            TRACE_OPTIONS.bits() as *mut nix::libc::c_void,
+        )
+    };
+    if seized < 0 {
+        let _ = ptrace::kill(child);
         return Err(anyhow!(
-            "the child did not stop for TRACEME; the engine cannot arm its trace options"
+            "PTRACE_SEIZE failed for pid {}: {}",
+            child,
+            std::io::Error::last_os_error()
         ));
     }
-    ptrace::setoptions(
-        child,
-        Options::PTRACE_O_TRACESYSGOOD | Options::PTRACE_O_TRACEEXEC | Options::PTRACE_O_EXITKILL,
-    )?;
-
-    // SAFETY: HEADER_OFFSET..HEADER_OFFSET+24 is inside the page this function was handed, and the
-    // child wrote it before stopping. Reading the child's own report is what removes the need to
-    // guess where its copy of this page lives.
-    report.child_view = unsafe {
-        let header = page.add(HEADER_OFFSET) as *const u64;
-        let magic = *header;
-        if magic == HEADER_MAGIC {
-            Some(ChildView {
-                path_ptr: *header.add(1),
-                path_len: *header.add(2) as usize,
-            })
-        } else {
-            None
-        }
+    let interrupted = unsafe {
+        nix::libc::ptrace(
+            PTRACE_INTERRUPT as _,
+            child.as_raw(),
+            std::ptr::null_mut::<nix::libc::c_void>(),
+            std::ptr::null_mut::<nix::libc::c_void>(),
+        )
     };
+    if interrupted < 0 {
+        let _ = ptrace::kill(child);
+        return Err(anyhow!(
+            "PTRACE_INTERRUPT failed for pid {}: {}",
+            child,
+            std::io::Error::last_os_error()
+        ));
+    }
+    match waitpid(child, None)? {
+        WaitStatus::PtraceEvent(_, _, event) if event == nix::libc::PTRACE_EVENT_STOP => {}
+        other => {
+            let _ = ptrace::kill(child);
+            return Err(anyhow!(
+                "PTRACE_INTERRUPT did not produce a PTRACE_EVENT_STOP group-stop for the tracee; \
+                 got {:?}",
+                other
+            ));
+        }
+    }
+    // Release the child's blocked `read()`. The child is still stopped here, so no exec can slip
+    // past the engine; the loop below resumes it with `PTRACE_SYSCALL`. The write is checked: a
+    // failed one would leave the tracee parked forever.
+    let release = [1u8];
+    let wrote =
+        unsafe { nix::libc::write(pipe_w, release.as_ptr() as *const nix::libc::c_void, 1) };
+    if wrote != 1 {
+        let _ = ptrace::kill(child);
+        return Err(anyhow!(
+            "releasing the tracee's pipe failed: wrote {} byte(s), expected 1",
+            wrote
+        ));
+    }
 
     let mut tracee = Tracee::new(child, Arch::from_host());
+    // TRUE: the trace resumes from a PTRACE_INTERRUPT group-stop, where the child is parked in its
+    // opening `read()`, and the kernel re-reports that `read` as a fresh syscall ENTRY. So the first
+    // stop this loop sees is the ENTRY of the child's release `read` (measured 2026-11-08, p4 step
+    // 3b: `observed` begins with the child's own `close`/`read`/`close`, then its raw `getpid`
+    // marker, then its `execve`). A `false` here shifts every entry/exit pair by one, so return
+    // values are read as arguments and the real `execve` entry stop is never examined.
     let mut at_entry = true;
     let mut execve_handled = false;
 
@@ -376,6 +493,13 @@ fn parent_loop(child: Pid, page: *mut u8, plan: &RunPlan, strict: bool) -> Resul
                 report.stops += 1;
                 if at_entry {
                     report.entries += 1;
+                    // The child writes its self-report after its opening `read()` returns, i.e. only
+                    // after the engine releases it, so the header is read on the first entry stop at
+                    // which it exists (2026-11-08, p4 step 3b). Reading it before the release would
+                    // see unwritten memory.
+                    if report.child_view.is_none() {
+                        report.child_view = read_child_view(page);
+                    }
                     tracee.observe_syscall()?;
                     let (number, arg0) = match tracee.syscall_info.as_ref() {
                         Some(info) => (info.number, info.args[0]),
@@ -443,7 +567,11 @@ fn parent_loop(child: Pid, page: *mut u8, plan: &RunPlan, strict: bool) -> Resul
             Ok(WaitStatus::PtraceEvent(_, _, event)) if event == nix::libc::PTRACE_EVENT_EXEC => {
                 // Direct evidence of WHICH binary ran, rather than an inference from an exit code.
                 report.executed = std::fs::read_link(format!("/proc/{}/exe", child.as_raw())).ok();
-                at_entry = true;
+                // FALSE, not true: the next `PTRACE_SYSCALL` stop is the execve's own syscall-EXIT
+                // (the syscall has already succeeded and the image is replaced), so the stop AFTER
+                // that is the first ENTRY of the new program. Measured 2026-11-08, p4 step 3b:
+                // `PTRACE_GET_SYSCALL_INFO` reported op=EXIT on the stop right after the exec event.
+                at_entry = false;
             }
             Ok(WaitStatus::Exited(_, code)) => {
                 report.exit_code = code;
@@ -466,6 +594,25 @@ fn parent_loop(child: Pid, page: *mut u8, plan: &RunPlan, strict: bool) -> Resul
     }
 
     Ok(report)
+}
+
+/// Read the child's self-report out of the shared header, or `None` when it has not been written
+/// yet (magic mismatch). The engine believes this instead of its own address for the shared page.
+///
+/// SAFETY (of the caller's `page`): HEADER_OFFSET..HEADER_OFFSET+24 is inside the page `run_native`
+/// mapped before the fork.
+fn read_child_view(page: *mut u8) -> Option<ChildView> {
+    unsafe {
+        let header = page.add(HEADER_OFFSET) as *const u64;
+        if *header == HEADER_MAGIC {
+            Some(ChildView {
+                path_ptr: *header.add(1),
+                path_len: *header.add(2) as usize,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 /// Did the tracee call `execve` on the path this engine published? Answered from the child's own

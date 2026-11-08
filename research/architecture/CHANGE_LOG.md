@@ -675,3 +675,66 @@ trusts any syscall it observed: a sync marker emitted by the child immediately b
 interest must be the first entry stop, asserted as a gate. Without that assertion the engine can
 believe it intercepted an `execve` while the kernel was running a host binary, and the resulting report
 - refusal counts, "executed" evidence, strict failures - reads as a working capability.
+
+## p4 step 3b: the trace now begins before `execve`, and the guest path is actually translated
+
+**Finding (2026-11-08, device; measured by a delegated builder at 17:01-17:07 WIB - heavy logs
+`20261108T100116Z-native-sabotage.log`, `20261108T100520Z-native-final-nocap.log`,
+`20261108T100720Z-native-final2.log` - and re-verified by the parent in its own run).** Step 3a's
+translation never happened for TWO independent reasons, each measured, not inferred:
+
+1. **`PTRACE_TRACEME`'s initial stop is delivered AT the child's `execve`**, not before it. The trace
+   therefore began on the STARTUP of an already-exec'd program (first entry stops `48 faccessat`,
+   `56 openat`, `63 read`), and the child's own markers plus the `execve` whose path had to be
+   rewritten were never observed at all. Fix: the child's FIRST syscall is a blocking `read(pipe_r)`;
+   the engine `PTRACE_SEIZE`s it (its options in force from that first stop), `PTRACE_INTERRUPT`s it,
+   consumes the `PTRACE_EVENT_STOP` group-stop, and only then releases the child with one byte. No
+   `SIGSTOP`, no fork race. `PTRACE_SEIZE`/`PTRACE_INTERRUPT` are NOT declared by Android's libc and
+   nix 0.27's wrappers are `#[cfg(target_os = "linux")]`, so both go through `libc::ptrace` with
+   locally named request numbers 0x4206/0x4207, cast `as _`.
+2. **`LD_PRELOAD=libtermux-exec-ld-preload.so` intercepts `libc::execve`**, so the child's exec never
+   surfaced as a syscall stop (the engine saw no `SYS_execve` entry at all, and arm A ran the host
+   binary and exited 0). A/B proof with the same bionic `libc::execve`: with the preload in force
+   there is no `execve` stop; with `env -u LD_PRELOAD` the entry stop appears and the fixture runs.
+   Fix: the child issues the exec as a raw `syscall(SYS_execve, ...)`, which bypasses the interposer.
+   The marker became raw too (`syscall(SYS_getpid)`) because bionic caches `libc::getpid`.
+   Also dropped: the invalid `syscall(-1)` marker added in step 3a - it raises `SIGSYS`, and the
+   resulting signal-delivery stop poisons the following trace; and `at_entry` is reset to `false`
+   after `PTRACE_EVENT_EXEC`, because `PTRACE_GET_SYSCALL_INFO` showed the next stop is the execve's
+   syscall-EXIT.
+
+**Finding that the fixture itself was vacuous (reported as a scope deviation, and it matters).**
+Acceptance required arm A to exit 1 and arm B to exit 0, which was unachievable with the original
+fixture on this device: Termux's `$PREFIX/bin/true` and `false` are symlinks to ONE `coreutils`
+multicall that dispatches on `argv[0]` (measured: `exec -a /bin/true <copy-of-false>` exits 0), so
+both arms were the SAME binary and the comparison proved nothing. The fixture now compiles
+`int main(void) { return N; }` with `$CC`/`cc` when the two host applets resolve to one file, so the
+arms genuinely differ; a failed compile PANICS rather than skipping, and each test gets its own
+fixture directory because the two tests run concurrently in one process and their cleanup raced.
+
+**Verification (the parent's own run, not the builder's report).**
+`cargo test -p proot-core --test native_exec_translation` -> `2 passed; 0 failed; 0 ignored`,
+exit 0, 10 s, peak 185 MB. Raw lines: `[arm-a] exit=1
+translations=[Translation { guest: "/bin/true", host: "<fixture>/rootfs-a/bin/true",
+syscall: "SYS_execve" }] executed=Some("<fixture>/rootfs-a/bin/true")`; `[arm-b] exit=0` with
+`host=<fixture>/rootfs-b/bin/true`; `[control-c] translated path does not exist: /bin/true ->
+<fixture>/rootfs-c/bin/true (this engine does not fall back to the host filesystem)`;
+`[control-d] exit=127 translations=[] executed=None`; the recorded prefix shows the child's markers
+then `execve` with `arg0 == the child's published path_ptr`. Assertions went 21 -> 25 and `#[ignore]`
+2 -> 0, so nothing was weakened. The negative control (the rewrite made a no-op) went RED with
+`arm A ran a copy of false, so a correct run exits 1 ... left: 0 right: 1`, restored -> green.
+`cargo test -p proot-core --lib` -> 13 passed; `cargo fmt --all -- --check` clean;
+`python3 scripts/check_non_goals.py` -> no non-goal crossed.
+
+**Rule this adds.** A tracer's first stop is not necessarily its first event: with `PTRACE_TRACEME`
+the initial stop is delivered AT `execve`, so a trace can begin on the far side of the very syscall
+you meant to rewrite and still look healthy (refusal counts, an `executed` path, strict failures).
+Assert WHERE the trace began. And on Termux, an `LD_PRELOAD` interposer can hide a syscall from
+ptrace entirely - issue raw syscalls when the trace must see them.
+
+**Files changed.** `crates/proot-core/src/native_run.rs` (module docs 11-47; `TRACE_OPTIONS` and the
+SEIZE/INTERRUPT constants 97-114; `run_native` pipe+fork 288-306; `child_main` 310-392; `parent_loop`
+406-478, 495-501, 569-573; `read_child_view` 598-616) and
+`crates/proot-core/tests/native_exec_translation.rs` (docs 11-40; fixture helpers 58-168;
+`#[ignore]` removed at 246; sync gate 280-328). Every change carries a dated
+`2026-11-08, p4 step 3b` comment in the source.
