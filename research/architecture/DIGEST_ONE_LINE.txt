@@ -1,0 +1,195 @@
+== crates/pn-gateway ==
+   249  crates/pn-gateway/benches/benchmarks.rs  ::  Performance benchmarks for pn-gateway
+   771  crates/pn-gateway/src/config.rs  ::  Gateway configuration
+    96  crates/pn-gateway/src/config_loader.rs  ::  TOML loading for [`GatewayConfig`]
+   204  crates/pn-gateway/src/duration_fmt.rs  ::  Human-readable durations in configuration files
+   201  crates/pn-gateway/src/fail_safe.rs  ::  Fail-safe manager for PN Gateway
+   178  crates/pn-gateway/src/gateway.rs  ::  Gateway module for PN Gateway
+   411  crates/pn-gateway/src/guardrails.rs  ::  Guardrail manager for PN Gateway
+   370  crates/pn-gateway/src/health.rs  ::  Health monitoring for PN Gateway
+    37  crates/pn-gateway/src/lib.rs  ::  PN Gateway - Bridge layer between PRoot, PRoot-distro, and proot-compat  This crate provides the gateway layer
+   300  crates/pn-gateway/src/metrics.rs  ::  Metrics collector for PN Gateway
+   254  crates/pn-gateway/tests/config_loader.rs  ::  Integration tests for the gateway TOML loader (issue #27 follow-up)
+   484  crates/pn-gateway/tests/doc_key_drift.rs  ::  Whole-file documentation ↔ configuration drift guard
+== crates/pn-next ==
+   276  crates/pn-next/benches/benchmarks.rs  ::  Performance benchmarks for pn-next
+  1422  crates/pn-next/src/api.rs  ::  API server for PN Next  Provides a RESTful API for container management with real integration to proot-distro-
+  1617  crates/pn-next/src/backup_restore/mod.rs  ::  Backup/Restore Module Container snapshots and disaster recovery for PDN
+   369  crates/pn-next/src/cgroup_view.rs  ::  A private cgroupfs view (adoption S8 of `research/DISSECTION_SHROOT.md`)
+   889  crates/pn-next/src/cluster/mod.rs  ::  Multi-node Clustering Module Distributed scheduling and cluster management for PDN
+   612  crates/pn-next/src/container_socket_activation/mod.rs  ::  Socket Activation for Containers Module Extends socket activation to support on-demand container startup
+   177  crates/pn-next/src/cri_plugin/mod.rs  ::  Kubernetes CRI Plugin Module (Stub Implementation) Provides CRI (Container Runtime Interface) types and basic 
+  1139  crates/pn-next/src/daemon_runtime/mod.rs  ::  Daemon Runtime - Independent lifecycle manager for services  Provides a standalone daemon process that manages
+  1370  crates/pn-next/src/dbus/mod.rs  ::  D-Bus Broker - Inter-container IPC and service discovery  Provides a lightweight D-Bus message broker for comm
+   507  crates/pn-next/src/dbus/services.rs  ::  D-Bus Service Definitions for PN Next Inter-Container Communication  This module defines the standard D-Bus in
+   688  crates/pn-next/src/dbus/zbus_client.rs  ::  ZBus-based D-Bus Client for Inter-Container Communication  This module provides a proper D-Bus client implemen
+  1067  crates/pn-next/src/gitops/mod.rs  ::  GitOps Integration Module Flux/ArgoCD style GitOps integration for PDN
+   351  crates/pn-next/src/lib.rs  ::  PN Next - Advanced architecture for PRoot Distro Next  This crate provides the advanced architecture layer tha
+  1141  crates/pn-next/src/multiarch_build/mod.rs  ::  Multi-arch Build Service Module Cross-compilation and multi-architecture build service for PDN
+   705  crates/pn-next/src/network.rs  ::  Network management for PN Next  Provides network management with CNI (Container Network Interface) plugin supp
+   493  crates/pn-next/src/plugin.rs  ::  Plugin system for PN Next  Provides dynamic plugin loading via shared libraries (.so/.dylib/.dll) with a hook 
+   758  crates/pn-next/src/policy_engine/mod.rs  ::  Policy Engine Module Declarative policy evaluation for service management decisions
+   186  crates/pn-next/src/readiness.rs  ::  Start coordination as one byte on a pipe (WORKLIST C10)
+   838  crates/pn-next/src/resource_quota/mod.rs  ::  Resource Quota Module Enforces resource limits independent of container limits via supervisor
+   133  crates/pn-next/src/restart_policy.rs  ::  B14 - the restart decision, as a pure module
+  1701  crates/pn-next/src/runtime.rs  ::  Runtime management and container lifecycle service for PN Next  Provides a complete service layer for containe
+   194  crates/pn-next/src/scheduler.rs  ::  Scheduler for PN Next
+   151  crates/pn-next/src/security.rs  ::  Security management for PN Next
+   756  crates/pn-next/src/socket_activation/mod.rs  ::  Socket Activation - systemd-style on-demand container/service start  Implements socket activation similar to s
+   180  crates/pn-next/src/storage.rs  ::  Storage management for PN Next
+   872  crates/pn-next/src/structured_logging/mod.rs  ::  Structured Logging Module Journald-style logging with rotation, querying, and filtering
+  2989  crates/pn-next/src/supervisor.rs  ::  Service Supervisor - runit/s6-style supervisor for container services  Provides a process supervisor for manag
+   278  crates/pn-next/src/termux_boot/mod.rs  ::  Termux:Boot Integration Module Provides auto-start capabilities for services at Termux boot
+   435  crates/pn-next/src/wake_lock/mod.rs  ::  Wake Lock Management Module Keeps services alive during Android doze mode and battery optimization
+   736  crates/pn-next/src/watchdog/mod.rs  ::  Watchdog Integration Module Auto-restart failed containers and services with policy-based recovery
+   829  crates/pn-next/src/web_dashboard/mod.rs  ::  Web UI Dashboard Module Real-time monitoring and management dashboard for PDN
+   274  crates/pn-next/src/workflow.rs  ::  Workflow engine for PN Next
+   154  crates/pn-next/tests/cgroup_honesty.rs  ::  WORKLIST A20: `setup_cgroup` must not report a resource limit it never bound
+    57  crates/pn-next/tests/cgroup_throttle_honesty.rs  ::  Base-tree negative control for the supervisor's cgroup honesty (WORKLIST A20, adoption S8 of `research/DISSECT
+   336  crates/pn-next/tests/cgroup_view.rs  ::  Adoption S8 (`research/DISSECTION_SHROOT.md`): a private cgroupfs *view*
+   169  crates/pn-next/tests/readiness_handshake.rs  ::  Start coordination acceptance tests for WORKLIST C10: readiness is one byte on a pipe (runc's `fifoFile.Write(
+   285  crates/pn-next/tests/restart_policy.rs  ::  B14 - the restart decision, asserted over the policy alone
+   168  crates/pn-next/tests/runtime_cgroup_honesty.rs  ::  WORKLIST A27: `Runtime::apply_resource_limits` must not write a cgroup limit file that enforces nothing
+   821  crates/pn-next/tests/supervisor_e2e.rs  ::  Service Supervisor E2E Integration Tests  Tests for service supervisor lifecycle, persistence, restart policie
+== crates/podnext ==
+    47  crates/podnext/examples/test_daemon_client.rs  ::  NO MODULE DOC
+    51  crates/podnext/src/cli/backup.rs  ::  `podnext backup` - container snapshot management.
+    76  crates/podnext/src/cli/build.rs  ::  `podnext build` - the local image builder and the build-service sub-commands.
+    78  crates/podnext/src/cli/common.rs  ::  Shared value enums for the CLI surface
+    78  crates/podnext/src/cli/image.rs  ::  `podnext image` - the local OCI image cache.
+    62  crates/podnext/src/cli/network.rs  ::  `podnext network` - isolated bridge networks.
+   219  crates/podnext/src/cli/service.rs  ::  Service supervision: `podnext service` and the daemon, watchdog, quota and log command families that share its
+   218  crates/podnext/src/cli/system.rs  ::  The platform command families: D-Bus and socket IPC, Termux boot and wakelock, the policy engine, gateway conf
+    57  crates/podnext/src/cli/volume.rs  ::  `podnext volume` - persistent data volumes.
+   767  crates/podnext/src/cli.rs  ::  Clap command surface for the podnext CLI
+   732  crates/podnext/src/commands/build.rs  ::  `podnext build` — materialise a Dockerfile into the local image store
+    36  crates/podnext/src/commands/compose.rs  ::  `podnext compose` — export PDN service configuration to a Docker Compose file
+   757  crates/podnext/src/commands/container.rs  ::  Container commands: install, list, login, run, ps, sessions, attach, docker, kill, remove, info
+   245  crates/podnext/src/commands/dbus.rs  ::  D-Bus broker commands: `podnext dbus serve`, `list`, `call` and `monitor`
+   460  crates/podnext/src/commands/gitops.rs  ::  `podnext gitops` and `podnext dashboard` command implementations
+   757  crates/podnext/src/commands/image.rs  ::  Image and registry commands: `podnext image …` and `podnext search`
+   191  crates/podnext/src/commands/log.rs  ::  Structured log commands: `podnext log query`, `tail`, `stats` and `flush`
+   880  crates/podnext/src/commands/mod.rs  ::  CLI command implementations for service orchestration
+   247  crates/podnext/src/commands/network.rs  ::  Network commands: `podnext network …`
+   197  crates/podnext/src/commands/policy.rs  ::  Policy-engine commands: `podnext policy eval`, `list`, `load` and `presets`
+   153  crates/podnext/src/commands/power.rs  ::  The `boot` and `wakelock` supervision commands, extracted from `commands/mod.rs`.
+   318  crates/podnext/src/commands/quota.rs  ::  Resource quota commands: `podnext quota set`, `get`, `usage` and `list`
+   739  crates/podnext/src/commands/service.rs  ::  The `service` and `daemon` supervision commands
+    44  crates/podnext/src/commands/socket.rs  ::  Socket-activation commands: `podnext socket register`, `unregister` and `list`
+   586  crates/podnext/src/commands/sync.rs  ::  Container filesystem commands: `podnext copy`, `sync`, `reset`, `rename` and the hole-aware copy machinery the
+   273  crates/podnext/src/commands/volume.rs  ::  Volume commands: `podnext volume …`
+   115  crates/podnext/src/commands/watchdog.rs  ::  The `watchdog` supervision commands, extracted from `commands/mod.rs`.
+   595  crates/podnext/src/daemon.rs  ::  podnext-daemon - Persistent service supervisor daemon  Runs as a background daemon managing container services
+   412  crates/podnext/src/direct.rs  ::  Direct-execution mode: `podnext -r <rootfs> -- <cmd>`
+   125  crates/podnext/src/dispatch.rs  ::  Sub-command dispatch: one `match` from `Commands` to the command implementation that runs it.
+   789  crates/podnext/src/doctor.rs  ::  `podnext doctor` - a host and guest diagnostic that reports what it measured
+   479  crates/podnext/src/main.rs  ::  podnext CLI - Advanced container and service management for Termux/Android  A comprehensive CLI that works wit
+    41  crates/podnext/src/native/digest.rs  ::  Digest validation before path composition (WORKLIST B1)
+   984  crates/podnext/src/native/image.rs  ::  The OCI / Docker Hub install path: registry search, manifest and layer fetch, and [`install_image_native`]
+   299  crates/podnext/src/native/meta.rs  ::  Container and session listing, the image metadata re-apply, and the command-line mount-spec helpers
+   141  crates/podnext/src/native/retry.rs  ::  The transfer policy for the registry client (WORKLIST B2 and B3)
+   747  crates/podnext/src/native/session.rs  ::  The container session path: foreground login and run, signal forwarding to the guest, and the detached-session
+   263  crates/podnext/src/native.rs  ::  Native implementations for podnext  This module provides native implementations of all podnext commands using 
+   208  crates/podnext/src/subcommands.rs  ::  The commands that print rather than orchestrate: host diagnostics, the version table, shell completions, the g
+    69  crates/podnext/src/utils.rs  ::  Utility functions
+    58  crates/podnext/tests/argv_nonutf8.rs  ::  Regression test for Issue #41: non-UTF-8 argv should not panic
+   142  crates/podnext/tests/automation_contract.rs  ::  NO MODULE DOC
+   149  crates/podnext/tests/build_copy_escape.rs  ::  WORKLIST A11 (second half): a COPY whose destination escapes the image root
+   328  crates/podnext/tests/cli_reference_contract.rs  ::  Roadmap section 9.1 contract test: every command and every documented option in `docs/src/cli-reference.md` mu
+   220  crates/podnext/tests/daemon_honesty.rs  ::  WORKLIST A10: `daemon status` must not claim a running daemon when there is none, and `service create` must no
+   203  crates/podnext/tests/daemon_ipc.rs  ::  A18(b): with a daemon actually up, `daemon reload`, `daemon logs` and `daemon stop` report what the daemon ans
+   185  crates/podnext/tests/doctor_capabilities.rs  ::  S5/C7 - the compatibility probe, and the one property that makes it worth having
+   129  crates/podnext/tests/doctor_contract.rs  ::  Roadmap section 9.3: `podnext doctor` reports host and guest diagnostics, and a failing check is the only thin
+   229  crates/podnext/tests/exit_codes.rs  ::  The exit-code contract (roadmap section 9.1)
+    49  crates/podnext/tests/guest_identity_probe.rs  ::  Base-tree negative control for S2 (adoption of `shroot`'s identity/credential syscall table)
+   608  crates/podnext/tests/image_config_env.rs  ::  The image's own config, applied at `login` (WORKLIST B5, issue #76), and the kill ladder (WORKLIST B8)
+    64  crates/podnext/tests/inspect_missing.rs  ::  Names that do not resolve must fail the command, not report success with empty output
+   865  crates/podnext/tests/install_interrupt.rs  ::  Install/remove lifecycle (WORKLIST A3b, A4b, B12)
+   176  crates/podnext/tests/install_lock.rs  ::  WORKLIST A4, end to end: two concurrent installs of ONE name cannot both run
+   511  crates/podnext/tests/install_sources.rs  ::  Install sources beyond a registry reference (roadmap section 10.1): a local rootfs tarball, a local OCI image-
+   262  crates/podnext/tests/orphan_reaping.rs  ::  A22: PDN is a real subreaper, so the descendants of a dead guest are adopted and reaped instead of surviving t
+   234  crates/podnext/tests/pull_hygiene.rs  ::  Pull hygiene: a digest is validated before it becomes a path, the credentials stay bound to their origin, and 
+   165  crates/podnext/tests/quoting_table.rs  ::  The argv quoting table (roadmap section 9.3)
+   212  crates/podnext/tests/refcount_eviction.rs  ::  C6 acceptance: reference-counted eviction, proven against the real binary
+    93  crates/podnext/tests/relocated_paths.rs  ::  Roadmap section 9.2: the binary must honour `TERMUX__HOME`, `TERMUX__PREFIX` and the `XDG_*` variables instead
+   290  crates/podnext/tests/remove_atomic.rs  ::  WORKLIST A5: `remove` must not half-apply while a session is live
+   279  crates/podnext/tests/session_reattach_parity.rs  ::  C9 (v0.3.0) - parity with containerd's shim, proven rather than asserted
+   768  crates/podnext/tests/session_registry.rs  ::  The session registry: one reader, three renderings, and the liveness/exit rules behind them (WORKLIST A2, A6, 
+   396  crates/podnext/tests/stdout_discipline.rs  ::  WORKLIST B9 and B10: stdout is the data channel, and a page belongs to the command that owns it
+   157  crates/podnext/tests/stub_refusals.rs  ::  Roadmap section 9.1: a command that cannot do its job must refuse, name the reason, and exit non-zero
+== crates/proot-compat ==
+   569  crates/proot-compat/src/cap_sys_admin.rs  ::  CAP_SYS_ADMIN capability detection and filesystem mounting with fallbacks  This module provides a robust archi
+    42  crates/proot-compat/src/cgroup_v2.rs  ::  Cgroup v2 support for container isolation Setup cgroup v2 mount dan konfigurasi di dalam guest rootfs
+    56  crates/proot-compat/src/lib.rs  ::  PRoot Compat - Compatibility layer for PRoot on Termux Android 16+  This crate provides compatibility layers f
+    57  crates/proot-compat/src/mount_helper.rs  ::  Mount helper for essential filesystems Mount otomatis /proc, /sys, /dev, /run, /tmp di dalam guest rootfs
+   115  crates/proot-compat/src/path_translation.rs  ::  Path translation for symlink chain resolution Resolusi lengkap dari symlink chains seperti: usr/local/bin/chro
+    64  crates/proot-compat/src/platform_shim.rs  ::  Platform personality shim Mengubah uname() untuk melaporkan "Linux" bukan "Android" Memastikan process.platfor
+    64  crates/proot-compat/src/seccomp_bypass.rs  ::  Seccomp filter bypass for Android Menambahkan Android-specific syscalls yang diizinkan agar tidak double-block
+   977  crates/proot-compat/src/security.rs  ::  Security hardening for PRoot containers  Provides seccomp profile management, AppArmor/SELinux integration, an
+    58  crates/proot-compat/src/stub_fs.rs  ::  Stub filesystem creation Membuat stub file/direktori di dalam guest rootfs untuk kompatibilitas Chrome headles
+== crates/proot-core ==
+   205  crates/proot-core/src/arch.rs  ::  Architecture definitions for PRoot
+   147  crates/proot-core/src/cli.rs  ::  CLI configuration for PRoot
+    86  crates/proot-core/src/compat.rs  ::  Compatibility layer for PRoot
+   188  crates/proot-core/src/extension.rs  ::  Extension system for PRoot
+    84  crates/proot-core/src/identity.rs  ::  The identity and credential syscall table (adoption S2)
+   679  crates/proot-core/src/lib.rs  ::  PRoot Core - Rust Implementation  A ptrace-based chroot, mount --bind, and binfmt_misc implementation without 
+    69  crates/proot-core/src/path.rs  ::  Path translation for PRoot
+   196  crates/proot-core/src/ptrace.rs  ::  Ptrace controller for PRoot
+   211  crates/proot-core/src/seccomp.rs  ::  Seccomp filter for PRoot
+   246  crates/proot-core/src/selective.rs  ::  Selective seccomp interception backend (S1)
+  1395  crates/proot-core/src/syscall.rs  ::  System call handler for PRoot
+   327  crates/proot-core/src/tracee.rs  ::  Tracee management for PRoot
+   135  crates/proot-core/src/tracee_state.rs  ::  Tracee state management for PRoot
+   133  crates/proot-core/src/vfs.rs  ::  Virtual File System (VFS) manager for PRoot
+   160  crates/proot-core/tests/argv_facts.rs  ::  What `proot-core` actually puts in the `proot` argument vector
+    98  crates/proot-core/tests/identity_table.rs  ::  Adoption S2: the identity/credential syscall table must be countable, complete and honest
+    71  crates/proot-core/tests/seccomp_filter.rs  ::  WORKLIST A21: `install()` must install a filter that denies syscalls, or the caller must be told it did not
+   168  crates/proot-core/tests/selective_seccomp.rs  ::  S1: the selective-interception backend, exercised and measured against the PRoot path on the same workload
+== crates/proot-distro-core ==
+   653  crates/proot-distro-core/src/android_binds.rs  ::  The Android bind set a session is given — and the termux-type exclusion
+   375  crates/proot-distro-core/src/archive.rs  ::  Install a rootfs from a local archive: a plain rootfs tarball, or an OCI image-layout tar (roadmap section 10.
+   189  crates/proot-distro-core/src/bindings.rs  ::  Bindings management for PRoot Distro
+   207  crates/proot-distro-core/src/blobstore.rs  ::  A content-addressed store for OCI layer blobs
+   204  crates/proot-distro-core/src/compress.rs  ::  Compression utilities for PRoot Distro
+   320  crates/proot-distro-core/src/config.rs  ::  Configuration for PRoot Distro
+   114  crates/proot-distro-core/src/constants.rs  ::  Constants for PRoot Distro
+  1081  crates/proot-distro-core/src/container.rs  ::  Container management for PRoot Distro  Provides container lifecycle management with proot-core integration.
+   289  crates/proot-distro-core/src/container_index.rs  ::  On-disk cache of the container store listing (roadmap section 9.2)
+   329  crates/proot-distro-core/src/dirfd.rs  ::  Directory file descriptor management and hardened descriptor VFS.
+   381  crates/proot-distro-core/src/dockerfile.rs  ::  Dockerfile parser for PDN image builds
+   312  crates/proot-distro-core/src/gpu.rs  ::  GPU acceleration support for PRoot containers  Provides device detection and passthrough for GPU acceleration 
+   110  crates/proot-distro-core/src/guestdirs.rs  ::  Runtime directories that live beside a container's rootfs and are bound into the guest
+   118  crates/proot-distro-core/src/guestfile.rs  ::  Guest file access for PRoot Distro
+   573  crates/proot-distro-core/src/image.rs  ::  Image management for PRoot Distro
+    66  crates/proot-distro-core/src/install.rs  ::  Installer for PRoot Distro
+   167  crates/proot-distro-core/src/l2s.rs  ::  Link2Symlink Tree Rewriter for PRoot containers
+   328  crates/proot-distro-core/src/layer_diff.rs  ::  OCI layer differ for PDN container image builder
+   280  crates/proot-distro-core/src/lib.rs  ::  PRoot Distro Core - Container management for PRoot
+   398  crates/proot-distro-core/src/locking.rs  ::  Locking mechanism for PRoot Distro
+    84  crates/proot-distro-core/src/login.rs  ::  Login management for PRoot Distro
+    81  crates/proot-distro-core/src/message.rs  ::  Message system for PRoot Distro
+   398  crates/proot-distro-core/src/names.rs  ::  Name validation and management
+   349  crates/proot-distro-core/src/network.rs  ::  Network module - Stub for future implementation
+   396  crates/proot-distro-core/src/paths.rs  ::  Path management for PRoot Distro
+   140  crates/proot-distro-core/src/progress.rs  ::  Progress tracking for PRoot Distro
+   471  crates/proot-distro-core/src/refcount.rs  ::  Reference-counted eviction for the store (WORKLIST C6)
+   564  crates/proot-distro-core/src/runtime.rs  ::  Unified Container Runtime Backend Abstraction  Provides a polymorphic execution interface for container operat
+   208  crates/proot-distro-core/src/security.rs  ::  Security hardening for PRoot containers (re-export from proot-compat)  This module re-exports security hardeni
+   668  crates/proot-distro-core/src/session.rs  ::  Session management for PRoot Distro
+   210  crates/proot-distro-core/src/shm.rs  ::  Shared memory management for PRoot Distro
+   476  crates/proot-distro-core/src/signature.rs  ::  Image signature verification for PRoot Distro  Provides signature verification using cosign, notary, and simpl
+   317  crates/proot-distro-core/src/storage.rs  ::  Storage/Volume module - Stub for future implementation
+   745  crates/proot-distro-core/src/sysdata.rs  ::  Fake `/proc` entries for containers
+   642  crates/proot-distro-core/src/untar.rs  ::  Archive extraction that survives Android
+   124  crates/proot-distro-core/tests/atomic_identity.rs  ::  B11: an atomic state write refuses (`ESTALE`) rather than clobbering when the temp file is replaced or removed
+   389  crates/proot-distro-core/tests/blob_store_dedup.rs  ::  Content-addressed layer store: a shared base layer is stored ONCE, and a container can be materialised from th
+   140  crates/proot-distro-core/tests/deep_fs_recursion.rs  ::  NO MODULE DOC
+   522  crates/proot-distro-core/tests/single_writer_races.rs  ::  A29: race the four mechanisms `research/RACE_SURFACES.md` (section 4c) says are single-writer **by constructio
+   116  crates/proot-distro-core/tests/store_fifo_is_metadata.rs  ::  Store-integrity acceptance tests for WORKLIST S3: a FIFO at a container's `metadata.json` is *metadata* - clas
+   435  crates/proot-distro-core/tests/store_integrity.rs  ::  Store-integrity acceptance tests for WORKLIST A1, A3a and A4
+== tests ==
+    48  tests/daemon_client_e2e.rs  ::  Test client for podnext-daemon
+   375  tests/daemon_integration_test.rs  ::  Daemon Integration Tests Tests full podnext-daemon lifecycle via Unix socket IPC
+   664  tests/integration/common.rs  ::  Common test utilities for integration tests
+   616  tests/integration/v2_criteria.rs  ::  v2.0 Success Criteria Integration Tests Validates all v2.0 Service Orchestration Platform requirements
