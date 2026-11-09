@@ -2186,3 +2186,61 @@ rewritten to describe the rule without spelling out the call syntax.
 Ledger after both rounds: `checks: 136 PASS, 0 FAIL, 0 SKIPPED`, with all four #41 checks PASS. The gate was right
 and the code was wrong, which is the order this project requires: read the failing check, fix the code, keep the
 predicate.
+## login now shares the host home and temp the way proot-distro does (2026-11-09 21:25 WIB)
+
+**Read from the reference, not guessed.** The installed proot-distro package is on this device
+(`$PREFIX/lib/python3.14/site-packages/proot_distro`, 77 files / 29,015 lines), and its login command says
+exactly what these flags mean (`commands/login/proot_cmd.py:205-216`):
+
+```python
+if use_shared_home:
+    if dist_type == "termux":   args.append(f"--bind={TERMUX_HOME}:{TERMUX_HOME}")
+    elif login_uid == "0":      args.append(f"--bind={TERMUX_HOME}:/root")
+    else:                       args.append(f"--bind={TERMUX_HOME}:{login_home}")
+if IS_TERMUX and shared_tmp and dist_type != "termux":
+    args.append(f"--bind={TERMUX_PREFIX}/tmp:/tmp")
+if IS_TERMUX and shared_x11 and dist_type != "termux":
+    args.append(f"--bind={TERMUX_PREFIX}/tmp/.X11-unix:/tmp/.X11-unix")
+```
+
+and `parser.py:158` shows `-d, --detach` is a login flag there too. PDN refused all four by name with a
+suggested `-b` command, so `podnext login` could not behave like `proot-distro login` without the caller
+spelling the binds out.
+
+**Implemented with those exact paths.** `crates/podnext/src/cli.rs` makes `--shared-home`, `--termux-home`
+(alias), `--shared-tmp`, `--shared-x11` and `-d/--detach` real login flags; `crates/podnext/src/commands/container.rs`
+builds `<host home>:/root`, `<prefix>/tmp:/tmp` and `<prefix>/tmp/.X11-unix:/tmp/.X11-unix` before
+`parse_mount_specs`, so a malformed spec still refuses; `-d` routes through the same
+`engine_for_detached_session` decision that `run --detach` uses, so the two say the same thing about the engine.
+`--shared-x11` refuses by name when the host has no X11 socket directory, naming the path, instead of handing
+proot a bind source that does not exist.
+
+**Measured on a real Debian 13 container** (fixture store, sentinels written by the host):
+
+| command | guest sees |
+|---|---|
+| `login <ctr> --shared-home -- cat /root/.pdn-share-home-marker` | `SENTINEL-HOME` |
+| `login <ctr> --termux-home -- ...` | `SENTINEL-HOME` |
+| `login <ctr> -- ...` (control) | `TIDAK` |
+| `login <ctr> --shared-tmp -- cat /tmp/pdn-share-tmp-marker` | `SENTINEL-TMP` |
+| `login <ctr> -- ...` (control) | `TIDAK` |
+| `login <ctr> --shared-x11 -- ls -d /tmp/.X11-unix` | `X11-ADA` |
+| `login <ctr> --detach -- ...` | the one-line engine NOTE, then the detached path |
+
+`crates/podnext/tests/login_shares.rs` (new, 2 tests) asserts the argv the runtime builds, captured with a decoy
+`PROOT_BIN`: the source of the `/root` bind is the shared resolver's answer, and it is absent without the flag.
+2 passed, 0 failed. Proven able to fail: with the `--shared-home` bind disabled the test went red quoting
+`argv was []`, and the file was restored from a saved copy (verified identical) and the binary rebuilt
+(`21:16:29`, the new refusal string present) before further measurement.
+
+**Two of my own test expectations were wrong first, and the controls caught them**, which is the whole reason to
+write the negative arm: the fixture cannot move the host home (the resolver prefers `TERMUX__HOME`), and the
+runtime ALWAYS binds the container's own `tmp` at `/tmp`, so "no `/tmp` bind without the flag" was false while
+"the prefix tmp is not bound without the flag" is the true statement.
+
+Still refused, with the reference's mechanism named in the message: `--fix-low-ports` becomes
+`-P/--redirect-ports` there, which rewrites the guest's listening ports through a `port_switch` shim that PDN
+does not have.
+
+**Build error caught by the compiler, not by me:** `paths::host::home()` answers `Option<PathBuf>`, and my first
+version assumed `PathBuf`. It now refuses by name when the host home cannot be resolved.

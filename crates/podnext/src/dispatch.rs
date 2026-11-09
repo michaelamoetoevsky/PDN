@@ -39,11 +39,6 @@ pub(crate) async fn execute_command(
             // Collect what the caller actually passed so `cmd_login` can refuse each by name with its
             // remedy instead of dropping it or answering with a parse error.
             let refused: Vec<&'static str> = [
-                (shared_home, "--shared-home"),
-                (shared_tmp, "--shared-tmp"),
-                (shared_x11, "--shared-x11"),
-                (termux_home, "--termux-home"),
-                (detach, "--detach"),
                 (fix_low_ports, "--fix-low-ports"),
                 (no_link2symlink, "--no-link2symlink"),
                 (change_id.is_some(), "--change-id"),
@@ -51,7 +46,20 @@ pub(crate) async fn execute_command(
             .into_iter()
             .filter_map(|(set, name)| set.then_some(name))
             .collect();
-            cmd_login(container, user, isolated, command, global_binds, engine, &refused).await
+            cmd_login(
+                container,
+                user,
+                isolated,
+                command,
+                global_binds,
+                engine,
+                shared_home || termux_home,
+                shared_tmp,
+                shared_x11,
+                detach,
+                &refused,
+            )
+            .await
         }
         Commands::Run {
             container,

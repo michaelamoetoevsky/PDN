@@ -2859,6 +2859,21 @@ Options:
       --isolated
           Run in isolated mode (do not mount host storage or Termux home directory)
 
+      --shared-home
+          Share the host home with the guest at /root (the reference's --termux-home does the same)
+
+      --termux-home
+          Alias of --shared-home, spelled the way proot-distro spells it
+
+      --shared-tmp
+          Share the host temp directory with the guest at /tmp
+
+      --shared-x11
+          Share the X11 socket directory with the guest at /tmp/.X11-unix
+
+  -d, --detach
+          Run the session in the background; reattach with `podnext attach <container>`
+
   -r, --rootfs <ROOTFS>
           Use PATH as guest root filesystem
 

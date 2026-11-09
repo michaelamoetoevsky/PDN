@@ -416,15 +416,26 @@ pub(crate) enum Commands {
         // implement; accepting them here lets `cmd_login` refuse each one by name with its remedy, and
         // `hide = true` keeps `--help` (and its pinned fixture) unchanged while doing so. A genuine typo
         // still fails at parse time, so this does not swallow mistakes.
-        #[arg(long = "shared-home", hide = true)]
+        // IMPLEMENTED 2026-11-09 with the reference's OWN semantics, read from the installed
+        // proot-distro package (commands/login/proot_cmd.py:205-216):
+        //   --shared-home / --termux-home -> --bind=<TERMUX_HOME>:/root   (login_uid is always 0 here)
+        //   --shared-tmp                 -> --bind=<TERMUX_PREFIX>/tmp:/tmp
+        //   --shared-x11                 -> --bind=<TERMUX_PREFIX>/tmp/.X11-unix:/tmp/.X11-unix
+        // and `proot-distro login` itself carries -d/--detach (parser.py:158), so `login` gets it too.
+        /// Share the host home with the guest at /root (the reference's --termux-home does the same)
+        #[arg(long = "shared-home")]
         shared_home: bool,
-        #[arg(long = "shared-tmp", hide = true)]
-        shared_tmp: bool,
-        #[arg(long = "shared-x11", hide = true)]
-        shared_x11: bool,
-        #[arg(long = "termux-home", hide = true)]
+        /// Alias of --shared-home, spelled the way proot-distro spells it
+        #[arg(long = "termux-home")]
         termux_home: bool,
-        #[arg(long = "detach", hide = true)]
+        /// Share the host temp directory with the guest at /tmp
+        #[arg(long = "shared-tmp")]
+        shared_tmp: bool,
+        /// Share the X11 socket directory with the guest at /tmp/.X11-unix
+        #[arg(long = "shared-x11")]
+        shared_x11: bool,
+        /// Run the session in the background; reattach with `podnext attach <container>`
+        #[arg(long = "detach", short = 'd')]
         detach: bool,
         #[arg(long = "fix-low-ports", hide = true)]
         fix_low_ports: bool,

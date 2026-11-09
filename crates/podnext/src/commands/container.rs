@@ -260,32 +260,10 @@ pub(crate) const MAPPED_USER_NOTE: &str =
 /// Every remedy below is a command that was actually run on this device.
 const REFUSED_LOGIN_FLAGS: &[(&str, &str)] = &[
     (
-        "--shared-home",
-        "PDN does not bind the Termux home into the guest. Reach it explicitly: \
-         `podnext login <container> -b $HOME:/root/host-home`",
-    ),
-    (
-        "--shared-tmp",
-        "PDN does not bind a host temp directory into the guest. Ask for it directly: \
-         `podnext login <container> -b $PREFIX/tmp:/hosttmp`",
-    ),
-    (
-        "--shared-x11",
-        "there is no X11 socket forwarding in PDN, so there is nothing to share",
-    ),
-    (
-        "--termux-home",
-        "same reason as --shared-home: bind it yourself with \
-         `podnext login <container> -b $HOME:/root/host-home`",
-    ),
-    (
-        "--detach",
-        "`login` is interactive and takes no --detach. For a detached run use \
-         `podnext run --detach <container> -- <command>`, then `podnext attach <container>`",
-    ),
-    (
         "--fix-low-ports",
-        "PDN installs no port-remapping shim: the guest shares the host network namespace",
+        "the reference maps this to `-P/--redirect-ports`, which rewrites the guest's listening \
+         ports through a port_switch shim; PDN has no such shim yet, so the guest would keep the \
+         host's port numbers unchanged. `--engine proot` is where the reference flag belongs",
     ),
     (
         "--no-link2symlink",
@@ -305,6 +283,10 @@ pub async fn cmd_login(
     command: Vec<String>,
     binds: Vec<String>,
     engine: crate::EngineChoice,
+    shared_home: bool,
+    shared_tmp: bool,
+    shared_x11: bool,
+    detach: bool,
     refused_flags: &[&str],
 ) -> Result<()> {
     // Refuse the proot-distro login polygon by name, with the remedy, BEFORE any work happens: a flag
@@ -344,8 +326,47 @@ pub async fn cmd_login(
         command
     };
 
+    // The reference's OWN binds, read from the installed proot-distro package
+    // (commands/login/proot_cmd.py:205-216), which names the paths rather than inventing them:
+    //   --shared-home / --termux-home -> --bind=<host home>:/root   (the reference's login_uid == "0"
+    //   branch; PDN's guest is always root through --change-id=0:0:0)
+    //   --shared-tmp                 -> --bind=<prefix>/tmp:/tmp
+    //   --shared-x11                 -> --bind=<prefix>/tmp/.X11-unix:/tmp/.X11-unix
+    let mut bind_specs = binds;
+    if shared_home {
+        // `paths::host::home()` answers `Option<PathBuf>` (the compiler caught my first version
+        // assuming `PathBuf`); a missing home is refused by name rather than bound as an empty path.
+        let home = proot_distro_core::paths::host::home().ok_or_else(|| {
+            anyhow::anyhow!(
+                "--shared-home was asked for, but the host home directory could not be resolved \
+                 (HOME and TERMUX__HOME are both unset)"
+            )
+        })?;
+        bind_specs.push(format!("{}:/root", home.display()));
+    }
+    if shared_tmp {
+        bind_specs.push(format!(
+            "{}/tmp:/tmp",
+            proot_distro_core::paths::host::prefix().display()
+        ));
+    }
+    if shared_x11 {
+        let x11 = proot_distro_core::paths::host::prefix().join("tmp/.X11-unix");
+        if !x11.is_dir() {
+            // Refuse by name rather than hand proot a bind source that does not exist: the reference
+            // binds the same path, and proot fails on a missing source, so the honest place to say so
+            // is here, with the path.
+            anyhow::bail!(
+                "--shared-x11 was asked for, but there is no X11 socket directory at {}. Start an X \
+                 server in Termux first (the reference binds this same path).",
+                x11.display()
+            );
+        }
+        bind_specs.push(format!("{}:/tmp/.X11-unix", x11.display()));
+    }
+
     // A bad spec must stop the login, not be dropped: it used to be accepted and ignored.
-    let mounts = parse_mount_specs(&binds)?;
+    let mounts = parse_mount_specs(&bind_specs)?;
 
     eprintln!("{MAPPED_USER_NOTE}");
     // The same applied path `run` takes, so the image's own `Env`/`WorkingDir`
@@ -354,6 +375,14 @@ pub async fn cmd_login(
     // loader that leaves `env_vars`/`working_dir` at their defaults: `podnext run`
     // on an image built with `ENV GREETING=hi` saw `GREETING=hi` and `podnext
     // login` on the same image saw nothing, so the image did not behave as built.
+    // `-d/--detach` exists on the reference's login (parser.py:158) and starts the session in the
+    // background, reachable with `podnext attach <container>`; the engine decision is shared with
+    // `run --detach` so the two say the same thing.
+    if detach {
+        let engine = engine_for_detached_session(engine)?;
+        return crate::native::spawn_detached_session(&container, cmd, isolated, mounts).await;
+    }
+
     // One applied path instead of two that disagree.
     run_container_native(&container, cmd, isolated, mounts, engine).await
 }
@@ -442,45 +471,11 @@ pub async fn cmd_run(
         // detached path therefore selects proot FOR the caller and says so in one line, while an
         // EXPLICIT `--engine native` is still refused: an operator who named the engine gets the
         // truth instead of silently being given a different one.
-        let engine = if engine == crate::EngineChoice::Native
-            && !engine_was_requested_on_the_command_line()
-        {
-            eprintln!(
-                "NOTE: --detach runs the guest through the proot path: the detached session \
-                 supervisor is not ported to the native engine yet. Pass `--engine proot` to make \
-                 that explicit, or drop `--detach` for a foreground run on the native engine."
-            );
-            crate::EngineChoice::Proot
-        } else {
-            engine
-        };
-        if engine == crate::EngineChoice::Native {
-            anyhow::bail!(
-                "--engine native is not implemented for `--detach`: the detached session \
-                 supervisor runs the guest through the proot path. Drop `--detach` (a foreground \
-                 `run` uses the native engine), or use `--engine proot`."
-            );
-        }
+        let engine = engine_for_detached_session(engine)?;
         return crate::native::spawn_detached_session(&container, command, isolated, mounts).await;
     }
 
     /// Whether the caller named `--engine` on the command line.
-    ///
-    /// clap's `default_value` makes the default indistinguishable from an explicit choice in the
-    /// parsed struct, and the detached path must tell "the default sent me here" (choose proot and
-    /// say so) from "the operator asked for this engine" (refuse by name). Scanning argv is the
-    /// cheap, local way to ask; `--engine` is a GLOBAL argument, so it always appears verbatim.
-    fn engine_was_requested_on_the_command_line() -> bool {
-        // `args_os`, NEVER the lossy panicking reader: issue #41 fixed a panic on a non-UTF-8
-        // argument, and the ledger check "the panicking reader is gone from the tree" greps this crate
-        // for that reader's call syntax - comments included, which is why this sentence does not spell
-        // it out. It caught this very helper on the first gate run after it was written.
-        std::env::args_os().any(|a| {
-            let a = a.to_string_lossy();
-            a == "--engine" || a.starts_with("--engine=")
-        })
-    }
-
     run_container_native(&container, command, isolated, mounts, engine).await
 }
 
@@ -866,4 +861,46 @@ pub(crate) struct SerializableInfo {
     rust_version: String,
     backend: String,
     isolation: String,
+}
+
+/// Whether the caller named `--engine` on the command line.
+///
+/// clap's `default_value` makes the default indistinguishable from an explicit choice in the
+/// parsed struct, and the detached path must tell "the default sent me here" (choose proot and
+/// say so) from "the operator asked for this engine" (refuse by name). Scanning argv is the
+/// cheap, local way to ask; `--engine` is a GLOBAL argument, so it always appears verbatim.
+fn engine_was_requested_on_the_command_line() -> bool {
+    // `args_os`, NEVER the lossy panicking reader: issue #41 fixed a panic on a non-UTF-8
+    // argument, and the ledger check "the panicking reader is gone from the tree" greps this crate
+    // for that reader's call syntax - comments included, which is why this sentence does not spell
+    // it out. It caught this very helper on the first gate run after it was written.
+    std::env::args_os().any(|a| {
+        let a = a.to_string_lossy();
+        a == "--engine" || a.starts_with("--engine=")
+    })
+}
+
+/// Choose the engine for a DETACHED session and say which one it is.
+///
+/// `run --detach` and `login --detach` (the reference has `-d, --detach` on login too,
+/// `parser.py:158`) both need the same decision, so it lives in one place. The detached supervisor
+/// runs the guest through the proot path; an engine the caller did not name is chosen FOR them and
+/// printed, while an explicit `--engine native` is refused by name.
+fn engine_for_detached_session(engine: crate::EngineChoice) -> Result<crate::EngineChoice> {
+    if engine != crate::EngineChoice::Native {
+        return Ok(engine);
+    }
+    if engine_was_requested_on_the_command_line() {
+        anyhow::bail!(
+            "--engine native is not implemented for `--detach`: the detached session \
+             supervisor runs the guest through the proot path. Drop `--detach` for a foreground \
+             session on the native engine, or use `--engine proot`."
+        );
+    }
+    eprintln!(
+        "NOTE: --detach runs the guest through the proot path: the detached session supervisor \
+         is not ported to the native engine yet. Pass `--engine proot` to make that explicit, or \
+         drop `--detach` for a foreground session on the native engine."
+    );
+    Ok(crate::EngineChoice::Proot)
 }
