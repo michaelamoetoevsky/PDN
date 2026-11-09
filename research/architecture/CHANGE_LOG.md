@@ -1630,4 +1630,58 @@ and `st_uid`, and the `PT_INTERP` path the kernel resolves before the tracee run
 remaining unknown is not parity but ADEQUACY: whether the native engine can carry a REAL container - one with
 a `PATH`-resolved shell, a hardlink-hostile Android filesystem, and the operator's own 10 containers - and not
 just the differential's single static guest. That is the next measurement, and the acceptance harness
-(`scripts/own_engine_acceptance.py`) is the instrument: today it still reports the proot path as the default.
+(`scripts/own_engine_acceptance.py`) is the instrument: today it still reports the proot path as the default.## p7 adequacy flipped, and one new divergence found by independent verification (2026-11-09 08:50 WIB)
+
+**The blocker this session measured is now closed, and closed the same way it was found.** Delegated as
+`deleg_ec23b03a` (child worktree `wt-interp`, branch `dept/interp`, commit `0ab0e45`, base `fec6aee`; verified by
+a second, independent child that built its OWN fixture, ran the base-commit control and forced the sabotage
+itself). Parent verified the artifact from the tree, fast-forwarded master to it (so the child's commit object
+is preserved), and re-measured end to end:
+
+| probe | before this session | after `0ab0e45` |
+|---|---|---|
+| real Debian rootfs, `--engine native run realroot -- /bin/sh -c 'echo NATIVE...'` | `exit=127`, no guest output | `exit=0`, `NATIVE-BENAR-BENAR-JALAN` |
+| `PATH` inside that guest | (no environment at all) | `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` |
+| same fixture, proot arm (reference) | `exit=0`, `PROOT-OK` | unchanged |
+
+**What the change does.** `elf_interp()` parses `PT_INTERP` out of the ELF program headers directly (no
+`readelf`), and `guest_interpreter()` substitutes ONLY when all three conditions hold: the interpreter path is
+absolute, it does NOT exist on the host (so the kernel cannot open it itself), and it DOES exist in the rootfs
+(so the run is possible at all). In that case `child_main` publishes the interpreter as the execve path and
+builds the kernel argv in the `ld.so PROGRAM [ARGS...]` form, and the existing p7-1 translation then rewrites
+the loader's own library opens inside the rootfs - which is why this needed no new path machinery, only the
+substitution decision. When the interpreter is host-present (the previous fixtures, whose guest is
+`/system/bin/linker64`) the function returns `None` and nothing changes, which is exactly why those fixtures
+never exhibited the problem.
+
+**Ratchet check before integrating:** `scripts/non_goals.json` budgets only `crates/pn-next/src*`; this change
+touches `crates/proot-core/src`, `crates/proot-core/tests` and `crates/podnext/src`, none of which is budgeted,
+so no ceiling needed re-recording.
+
+**Parent's integration evidence:** fast-forward to `0ab0e45`, `cargo fmt --all -- --check` clean,
+`git diff --check` clean, and the owner test target
+`cargo test -p proot-core --test native_exec_translation` -> `10 passed; 0 failed` (9 before; the new test is
+the tenth).
+
+**NEW named divergence, confirmed by the parent's own measurement, not just reported.** The child's summary says
+the guest "still sees its own argv[0]", which is true of the value the guest PROGRAM receives (`$0` is `/bin/sh`
+under both engines - the parent measured that too) but silent about the kernel-level argv[0]. Measured with a
+compiled probe that reads `/proc/<shell-pid>/cmdline` from inside the guest:
+
+| engine | `cmdline0`, the first NUL-delimited field |
+|---|---|
+| proot | `/bin/sh\|-c\|/probe/cmdline0 $$\|` |
+| native | `<rootfs-host-path>/lib/ld-linux-aarch64.so.1\|/bin/sh\|-c\|/probe/cmdline0 $$\|` |
+
+Cause, from the code: the child publishes the interpreter at `PATH_OFFSET` and points argv slot 0 at that same
+string, while the parent must rewrite `PATH_OFFSET` to the translated HOST path for the kernel to exec it - so
+`argv[0]` is rewritten with it. A guest that inspects its own cmdline (busybox `ps`, init scripts, anything
+reading `/proc/self/cmdline`) therefore sees a host rootfs path where proot shows the guest path. The fix is to
+give argv[0] its own string holding the interpreter's GUEST path, charged against the argv-string region's
+existing both-limits-refused accounting. Recorded here as a named open gap; it is a parity divergence, not a
+blocker for running, and the two first measurements of it (mine, above) are the evidence.
+
+Two probe failures on the way are recorded rather than dropped: `tr` and `read -d` are absent from this
+minimal Debian fixture (`FIRST=[]` on both arms, i.e. the probe was invalid, not the engine), and the first
+compiled probe died with `CANNOT LINK EXECUTABLE ... library "libdl.so" not found` because the fixture lacked
+`/system/lib64/libdl.so` - a FIXTURE defect, proven by copying the two host libraries in and re-running.
