@@ -1684,4 +1684,50 @@ blocker for running, and the two first measurements of it (mine, above) are the 
 Two probe failures on the way are recorded rather than dropped: `tr` and `read -d` are absent from this
 minimal Debian fixture (`FIRST=[]` on both arms, i.e. the probe was invalid, not the engine), and the first
 compiled probe died with `CANNOT LINK EXECUTABLE ... library "libdl.so" not found` because the fixture lacked
-`/system/lib64/libdl.so` - a FIXTURE defect, proven by copying the two host libraries in and re-running.
+`/system/lib64/libdl.so` - a FIXTURE defect, proven by copying the two host libraries in and re-running.## p7 argv0: the host-path leak is gone; the parity claim in MY OWN BRIEF was wrong (2026-11-09 09:40 WIB)
+
+**What landed.** `5c4a998` (child worktree `wt-argv0`, branch `dept/argv0`, base `57d0927`; builder plus an
+independent verifier that built its own binaries and fixture and applied the sabotage itself). Parent verified
+the diff from the tree, fast-forwarded master, and re-measured end to end.
+
+`crates/proot-core/src/native_run.rs` (+32/-8): under a substitution the interpreter's GUEST path is now
+published as its own string in `ARGV_EXTRA_OFFSET` and argv slot 0 points at it, while the execve path
+argument keeps pointing at `PATH_OFFSET` (which the parent must rewrite to the translated host path). The new
+string is CHARGED against `ARGV_EXTRA_CAPACITY` rather than exempted, so an over-long interpreter is refused by
+name before the fork like every other argument string.
+
+**Parent's own measurement on the real Debian fixture, both engines, same command:**
+
+| engine | `cmdline0` (first NUL-delimited field of /proc/<pid>/cmdline) |
+|---|---|
+| before `5c4a998`, native | `<rootfs-host-path>/lib/ld-linux-aarch64.so.1` |
+| after `5c4a998`, native | `/lib/ld-linux-aarch64.so.1` |
+| proot (both) | `/bin/sh` |
+
+**Correction of my own framing, because the verifier refuted half of it.** The brief I dispatched asked for
+argv[0] to be "the guest path ... like proot shows". The first half is satisfied; the second is NOT, and the
+verifier said so plainly: proot's cmdline is `/bin/sh|-c|...` while the native one is
+`/lib/ld-linux-aarch64.so.1|/bin/sh|-c|...`. The native array is proot's array with the interpreter PREPENDED,
+because the kernel's argv for the `ld.so PROGRAM ARGS` invocation necessarily begins with the interpreter - so
+this is a structural consequence of the substitution mechanism, not a defect that a pointer fix can remove.
+The child's own commit message was accurate ("guest path, no host leak"); it was my brief's parity framing that
+overstated, and the record is corrected here rather than left to read as if the arrays now match.
+
+The only known route to byte-identical argv is a different mechanism: patch `PT_INTERP` inside a COPY of the
+guest ELF to an absolute host-accessible path and exec that copy, so the kernel builds `[program, args...]`
+itself. That costs a writable copy of the binary (the container's own shm/tmp would serve) and is named here as
+an option, deliberately not implemented.
+
+**Other evidence.** Owner test target `cargo test -p proot-core --test native_exec_translation` -> `11 passed`,
+`0 failed` (10 before; the new `the_kernel_argv0_is_the_guest_path_under_a_substitution` is the eleventh);
+`native_dynamic_guest` unchanged at 1 passed; the differential harness on the NON-substituted path returns
+`DIFFERENTIAL: EQUAL ...` with rc=0, so no regression there. The verifier's own sabotage (reverting argv slot 0
+to the PATH_OFFSET pointer) produced the red with `left: "<rootfs>/.../pdn-interp-missing/ld.so|..."` against
+`right: "/pdn-interp-missing/ld.so|..."` and also reverted the end-to-end cmdline0 to a host path, which is what
+makes the fix load-bearing rather than cosmetic.
+
+**Hazard worth keeping:** the child measured, in its own words, that building the base worktree and the fixed
+worktree into the SAME `CARGO_TARGET_DIR` produced "one stale-interleave run showing base behaviour"; it cleared
+that with `cargo clean -p proot-core` and re-took every number from the clean rebuild. That is the third
+distinct way the shared target directory has now produced a false reading, and it is why every number in this
+entry comes from a run whose provenance is stated.
