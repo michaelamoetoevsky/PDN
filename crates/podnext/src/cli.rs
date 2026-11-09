@@ -387,6 +387,29 @@ pub(crate) enum Commands {
         /// Command to run instead of shell (after --)
         #[arg(last = true)]
         command: Vec<String>,
+
+        // REFUSED BY NAME (2026-11-09). Real use reported `podnext login <ctr> --shared-home` and friends
+        // failing with clap's `error: unexpected argument ... found`, which reads as a typo and says
+        // nothing about what to do. These flags are the proot-distro login polygon that PDN does not
+        // implement; accepting them here lets `cmd_login` refuse each one by name with its remedy, and
+        // `hide = true` keeps `--help` (and its pinned fixture) unchanged while doing so. A genuine typo
+        // still fails at parse time, so this does not swallow mistakes.
+        #[arg(long = "shared-home", hide = true)]
+        shared_home: bool,
+        #[arg(long = "shared-tmp", hide = true)]
+        shared_tmp: bool,
+        #[arg(long = "shared-x11", hide = true)]
+        shared_x11: bool,
+        #[arg(long = "termux-home", hide = true)]
+        termux_home: bool,
+        #[arg(long = "detach", hide = true)]
+        detach: bool,
+        #[arg(long = "fix-low-ports", hide = true)]
+        fix_low_ports: bool,
+        #[arg(long = "no-link2symlink", hide = true)]
+        no_link2symlink: bool,
+        #[arg(long = "change-id", hide = true)]
+        change_id: Option<String>,
     },
 
     /// [experimental] [Core] Run command in container

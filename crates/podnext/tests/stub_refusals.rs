@@ -155,3 +155,44 @@ fn run_still_accepts_tty_and_interactive() {
         "the failure must be the container lookup: {stderr:?}"
     );
 }
+
+/// Real use reported `podnext login <ctr> --shared-home` answering clap's
+/// `error: unexpected argument '--shared-home' found` — a parse error that reads as a typo and says
+/// nothing about what to do instead. The proot-distro login polygon PDN does not implement is now
+/// accepted by the parser and refused by name, so the caller gets the flag, the reason and a command
+/// that works. A genuine typo must still fail at parse time, which is asserted too, so accepting these
+/// flags did not swallow mistakes.
+#[test]
+fn login_refuses_the_unimplemented_proot_flags_by_name_with_a_remedy() {
+    // (argument to pass, name the message must carry, remedy to look for). The first two differ for a
+    // flag that takes a value: the caller types `--change-id=0:0:0` and the refusal names `--change-id`.
+    // Only flags that were a PARSE error before this change: `--kill-on-exit`, `--no-kill-on-exit` and
+    // `--no-sysvipc` are global options already refused by name elsewhere, so they are deliberately not
+    // duplicated here (one source of truth per flag).
+    let cases: [(&str, &str, &str); 5] = [
+        ("--shared-home", "--shared-home", "-b"),
+        ("--shared-tmp", "--shared-tmp", "-b"),
+        ("--termux-home", "--termux-home", "-b"),
+        ("--detach", "--detach", "podnext run --detach"),
+        ("--change-id=0:0:0", "--change-id", "--engine proot"),
+    ];
+    for (arg, flag, remedy) in cases {
+        let (code, _stdout, stderr) = run(&["login", "no-such-container", arg]);
+        assert_ne!(code, 2, "{arg} must not read as a parse error: {stderr}");
+        assert_eq!(code, 1, "{arg} must refuse with exit 1: {stderr}");
+        assert!(
+            stderr.contains(flag),
+            "the message must name {flag}: {stderr}"
+        );
+        assert!(
+            stderr.contains(remedy),
+            "the message for {flag} must carry its remedy ({remedy}): {stderr}"
+        );
+    }
+
+    // The typo control: one character off a real flag is still a parse error, so the change above
+    // explains the flags PDN knows about without inventing behaviour for the ones it does not.
+    let (code, _stdout, stderr) = run(&["login", "no-such-container", "--shared-hom"]);
+    assert_eq!(code, 2, "a typo must still be a parse error: {stderr}");
+    assert!(stderr.contains("unexpected argument"), "{stderr}");
+}

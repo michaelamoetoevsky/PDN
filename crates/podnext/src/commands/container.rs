@@ -251,6 +251,53 @@ pub(crate) const MAPPED_USER_NOTE: &str =
     "NOTE: the guest runs as root (uid 0): PRoot maps every guest id to the single host uid via \
      `--change-id=0:0:0`, so there is no privilege separation";
 
+/// The proot-distro `login` flags PDN does NOT implement, each with the reason and the way out.
+///
+/// Added 2026-11-09 after real use reported `podnext login <ctr> --shared-home` answering clap's
+/// `error: unexpected argument '--shared-home' found`, which reads as a typo and tells the caller
+/// nothing. The flags are accepted by the parser (see the hidden fields on `Commands::Login`) and
+/// refused here BY NAME, so the message names the flag, says why, and gives the command that works.
+/// Every remedy below is a command that was actually run on this device.
+const REFUSED_LOGIN_FLAGS: &[(&str, &str)] = &[
+    (
+        "--shared-home",
+        "PDN does not bind the Termux home into the guest. Reach it explicitly: \
+         `podnext login <container> -b $HOME:/root/host-home`",
+    ),
+    (
+        "--shared-tmp",
+        "PDN does not bind a host temp directory into the guest. Ask for it directly: \
+         `podnext login <container> -b $PREFIX/tmp:/hosttmp`",
+    ),
+    (
+        "--shared-x11",
+        "there is no X11 socket forwarding in PDN, so there is nothing to share",
+    ),
+    (
+        "--termux-home",
+        "same reason as --shared-home: bind it yourself with \
+         `podnext login <container> -b $HOME:/root/host-home`",
+    ),
+    (
+        "--detach",
+        "`login` is interactive and takes no --detach. For a detached run use \
+         `podnext run --detach <container> -- <command>`, then `podnext attach <container>`",
+    ),
+    (
+        "--fix-low-ports",
+        "PDN installs no port-remapping shim: the guest shares the host network namespace",
+    ),
+    (
+        "--no-link2symlink",
+        "hardlink emulation cannot be switched off; only `-0/--link2symlink` is accepted",
+    ),
+    (
+        "--change-id",
+        "the runtime already maps every guest id to one host uid, so there is no per-login mapping \
+         to set; `--engine proot` is where that flag belongs",
+    ),
+];
+
 pub async fn cmd_login(
     container: String,
     user: Option<String>,
@@ -258,7 +305,23 @@ pub async fn cmd_login(
     command: Vec<String>,
     binds: Vec<String>,
     engine: crate::EngineChoice,
+    refused_flags: &[&str],
 ) -> Result<()> {
+    // Refuse the proot-distro login polygon by name, with the remedy, BEFORE any work happens: a flag
+    // the caller supplied that changes nothing is the class this project refuses (#62/#63), and an
+    // operator who typed a real proot-distro flag deserves a sentence, not a parse error.
+    if let Some(flag) = refused_flags.first() {
+        let reason = REFUSED_LOGIN_FLAGS
+            .iter()
+            .find(|(name, _)| name == flag)
+            .map(|(_, why)| *why)
+            .unwrap_or("this flag is not implemented for `login`");
+        anyhow::bail!(
+            "{flag} is not implemented for `login`: {reason}. Drop it, or run \
+             `podnext login --help` for the flags that are supported"
+        );
+    }
+
     // `--user` was parsed and then dropped: the value reached `LoginOptions.user`, nothing read it,
     // and the runtime hard-codes `--change-id=0:0:0` (proot-core), so `podnext login alpine
     // --user 1000 -- id` printed `uid=0(root)` — byte-identical to the same login without the flag

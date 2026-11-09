@@ -1962,4 +1962,55 @@ PASS: the DEFAULT path runs a container with no proot binary available to the pr
 
 **Still open in step 8, and not claimed as done:** the demonstration was run on a fixture store, and the
 onboarding/documentation half of the same step (the four-part user documentation that this project requires for
-every feature) is not finished; neither is a release entry.
+every feature) is not finished; neither is a release entry.## login: every unimplemented proot flag now refuses by name with a remedy (2026-11-09 19:05 WIB)
+
+**Reported from real use.** `podnext login <container> --shared-home` (and friends) answered clap's
+`error: unexpected argument '--shared-home' found`, which reads as a typo and says nothing about what to do.
+Measured on the flags a proot-distro user reaches for:
+
+| flag | before | after |
+|---|---|---|
+| `-w`, `-b`, `--isolated`, `-r`, `-q`, `-0`, `--engine` | worked | worked |
+| `--user root` | exit 1, named refusal | unchanged |
+| `--shared-home`, `--shared-tmp`, `--shared-x11`, `--termux-home`, `--detach`, `--fix-low-ports`, `--no-link2symlink` | **exit 2, "unexpected argument"** | exit 1, named refusal with a command that works |
+
+**Change, in three files.** `crates/podnext/src/cli.rs` accepts these flags on `Commands::Login` with
+`hide = true`, so `--help` (and its 123-screen pinned fixture) is unchanged while the parser stops treating a
+real flag as a typo. `crates/podnext/src/dispatch.rs` collects the ones that were actually passed into a
+`Vec<&'static str>`, and `crates/podnext/src/commands/container.rs` refuses the first one before any work
+happens, from a `REFUSED_LOGIN_FLAGS` table that pairs each flag with its reason and a remedy that was run on
+this device (`-b $HOME:/root/host-home`, `-b $PREFIX/tmp:/hosttmp`, `podnext run --detach` plus
+`podnext attach`, `--engine proot` for `--change-id`).
+
+**A duplicate was found and removed rather than left in place.** The first test run failed on
+`--no-kill-on-exit` because that flag, `--kill-on-exit` and `--no-sysvipc` are already GLOBAL options refused
+by name elsewhere (`cli.rs:196/:204/:145`, message in `main.rs:171-181`). Adding a second definition inside
+`login` would have meant two sources of truth for one flag, so all three were deleted from the new list, the
+dispatch vector and the refusal table; the test now covers only the five flags that were genuinely parse
+errors and says why the other three are excluded.
+
+**Evidence.**
+
+```
+$ podnext login <ctr> --shared-home
+Error: --shared-home is not implemented for `login`: PDN does not bind the Termux home into the guest.
+Reach it explicitly: `podnext login <container> -b $HOME:/root/host-home`. Drop it, or run
+`podnext login --help` for the flags that are supported
+```
+
+The other six flags answer the same shape, each naming itself and its remedy; `podnext login <ctr> -w /etc --
+/bin/sh -c 'echo OK'` still prints `OK`, and `--shared-hom` (one character off) still exits 2 with
+`error: unexpected argument '--shared-hom' found`, so the change explains known flags without swallowing
+mistakes.
+
+`crates/podnext/tests/stub_refusals.rs` gains
+`login_refuses_the_unimplemented_proot_flags_by_name_with_a_remedy`, which asserts for each flag that the exit
+code is 1 (not 2), that the message names the flag and carries its remedy, and that the typo control still
+exits 2. Proven able to fail: with the refusal disabled by `.filter(|_| false)` the test went red at its own
+assertion, and the file was restored from a saved copy (verified identical) afterwards. 6 passed, 0 failed.
+
+**Measurement trap hit and recorded.** The first CLI battery after the change showed the flags being IGNORED,
+not refused, because the binary under test was the one the SABOTAGE build had just produced - the same
+artifact-provenance class as the earlier `CARGO_TARGET_DIR` error. The binary was rebuilt from the restored
+source (mtime `18:53:26`, three occurrences of the new refusal string) and the battery re-run before any
+conclusion was drawn.
