@@ -89,17 +89,41 @@
 //! path, not a guest path, so it is exempt from the named path-refusal rule below; a guest `chdir`
 //! after the exec is still the unhandled path syscall it always was.
 //!
+//! A GUEST WHOSE PT_INTERP DOES NOT EXIST ON THE HOST (2026-11-09, p7 interp). MEASURED on a real
+//! Debian rootfs (the `deb-pdn` container, whose `/usr/bin/dash` names `PT_INTERP
+//! /lib/ld-linux-aarch64.so.1`): `podnext --engine native run <ctr> -- /bin/sh -c 'echo hi'` exited
+//! 127 with NO guest output, while the same command under proot printed `hi` and exited 0. The cause
+//! is structural and was proven without any engine: the KERNEL opens `PT_INTERP` on the HOST before
+//! the tracee executes one instruction, and this Android host has no `/lib` at all
+//! (`ls /lib/ld-linux-aarch64.so.1` -> `No such file or directory`; running the guest binary directly
+//! on the host gives the same `No such file or directory`, exit 127). Entry-time path translation
+//! cannot reach it, because it happens before the first tracee syscall.
+//!
+//! The remedy is to exec the guest's OWN interpreter with the guest program as its argument - the
+//! `ld.so PROGRAM [ARGS...]` form. `guest_interpreter` reads `PT_INTERP` out of the guest ELF
+//! (`elf_interp`) and substitutes ONLY when the path is really absent on the host AND present inside
+//! the rootfs; the child then publishes the interpreter's guest path at `PATH_OFFSET` and lists the
+//! guest program as the interpreter's `argv[1]`, so the loader opens it through the SAME traced
+//! `openat` the engine already translates - and the guest still sees its own `argv[0]`, because the
+//! loader makes the program's argv from the arguments after its own name. The plain form is used (no
+//! `--argv0`, no `--library-path`): MEASURED, glibc's `ld.so --help` on the Debian rootfs lists
+//! `--argv0 STRING`, but the plain form already gives the guest the correct `argv[0]`, so the option
+//! buys nothing here and using it would be a claim about a second interpreter's option set. The
+//! interpreter being exec'd IS recorded (`NativeRunReport::interpreter`), so a reader can tell a
+//! substituted run from a normal one.
+//!
 //! NOT DONE HERE, named so the gap is explicit rather than implied:
 //! the other five argv features; the guest's environment (an empty `envp` is passed on purpose -
 //! see `child_main`); `dirfd`-relative path translation (a RELATIVE guest path is still refused by
-//! name rather than guessed - only the STARTING cwd is modelled, not a per-syscall `dirfd`); and
-//! the `PT_INTERP` path, which the KERNEL opens before the tracee runs a single instruction, so it
-//! cannot be translated and must exist on the host.
+//! name rather than guessed - only the STARTING cwd is modelled, not a per-syscall `dirfd`); and a
+//! fork DESCENDANT's `execve` whose PT_INTERP is missing on the host (the substitution above runs on
+//! the engine's own child, which is the `podnext run` path).
 
 use anyhow::{anyhow, Result};
 use nix::sys::ptrace::{self, Options};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{fork, ForkResult, Pid};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::arch::Arch;
@@ -265,6 +289,11 @@ pub struct NativeRunReport {
     /// The binary the kernel actually executed, read from `/proc/<pid>/exe` at the exec event.
     /// `None` means no exec event was seen, which is itself a finding about the run.
     pub executed: Option<PathBuf>,
+    /// The guest's `PT_INTERP` path when the engine had to EXEC THE INTERPRETER instead of the guest
+    /// binary, because that path does not exist on the host (2026-11-09, p7 interp). `None` means the
+    /// kernel started the guest directly, i.e. no substitution was made - so a reader can tell a
+    /// substituted run from a normal one instead of inferring it from the exit code.
+    pub interpreter: Option<String>,
     /// Set when `strict` stopped the run: the refusal that stopped it, by name.
     pub strict_failure: Option<String>,
 }
@@ -509,13 +538,32 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
         ));
     }
 
+    // The guest's INTERPRETER, when the kernel cannot start the guest binary directly (2026-11-09,
+    // p7 interp). `PT_INTERP` is read from the guest ELF and substituted only when that path is
+    // really absent on the host AND present inside the rootfs; `None` means the ordinary `execve`
+    // happens and the kernel opens the interpreter itself. Decided HERE, before the fork, so a
+    // refusal is an `Err` from `run_native` rather than a child that dies for a reason the caller
+    // cannot read.
+    let interpreter = guest_interpreter(plan, &guest_path);
+    if let Some(interp) = interpreter.as_deref() {
+        if interp.len() > PATH_CAPACITY {
+            return Err(anyhow!(
+                "the guest's PT_INTERP of {} bytes does not fit the {} byte translation area: {}",
+                interp.len(),
+                PATH_CAPACITY,
+                interp
+            ));
+        }
+    }
+
     // The guest's argv (2026-11-09, p7 argv). Until this increment the engine published argv[0] ONLY
     // and terminated the pointer array after it, so a guest invoked with arguments saw `argc == 1`
     // and fell back to its own defaults - silently, and undocumented (measured: a probe passed
     // `argv[1]` printed its compiled-in default name). Both limits are checked HERE, before the
     // fork, so exceeding them is an `Err` from `run_native` rather than a child that exits 126 for
-    // a reason the caller cannot read.
-    let argv_slots_needed = argv.len() + 1; // the entries plus the terminating null
+    // a reason the caller cannot read. A substitution adds ONE slot: the kernel's argv is then
+    // `[<interpreter>, argv[0..]]`, the form `ld.so PROGRAM [ARGS...]` runs.
+    let argv_slots_needed = argv.len() + 1 + usize::from(interpreter.is_some()); // entries + null (+interp)
     if argv_slots_needed > ARGV_SLOTS {
         return Err(anyhow!(
             "argv of {} entries needs {} slots with the terminating null, and this engine publishes \
@@ -578,6 +626,7 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
             child_main(
                 page as *mut u8,
                 &guest_path,
+                interpreter.as_deref(),
                 argv,
                 pipe_r,
                 cwd_host.as_deref(),
@@ -587,7 +636,14 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
         ForkResult::Parent { child } => {
             // The engine only writes the release byte; the child owns the read end.
             let _ = nix::unistd::close(pipe_r);
-            let report = parent_loop(child, page as *mut u8, plan, strict, pipe_w);
+            let report = parent_loop(
+                child,
+                page as *mut u8,
+                plan,
+                strict,
+                pipe_w,
+                interpreter.as_deref(),
+            );
             let _ = nix::unistd::close(pipe_w);
             unsafe { nix::libc::munmap(page, PAGE_BYTES) };
             report
@@ -605,6 +661,7 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
 fn child_main(
     page: *mut u8,
     guest_path: &str,
+    interpreter: Option<&str>,
     argv: &[String],
     pipe_r: nix::libc::c_int,
     cwd: Option<&Path>,
@@ -654,27 +711,48 @@ fn child_main(
             }
         }
 
-        write_cstr(page.add(PATH_OFFSET), guest_path);
+        // The exec path published in the shared page. Under an interpreter substitution this is the
+        // guest's OWN interpreter (its PT_INTERP), not the guest binary: the kernel cannot open that
+        // path on the host, so the engine execs the interpreter and hands it the guest as `argv[1]`
+        // (2026-11-09, p7 interp). `guest_interpreter` only returns a value when the interpreter is
+        // really absent on the host and present in the rootfs, so an ordinary guest is unchanged.
+        let exec_path = interpreter.unwrap_or(guest_path);
+        write_cstr(page.add(PATH_OFFSET), exec_path);
+        // argv as the KERNEL receives it. Without a substitution it is the guest's own argv, with
+        // argv[0] the program's (guest) name: only the syscall's path argument is translated, not
+        // what the program is told it was called. With a substitution the kernel's argv is
+        // `[<interpreter>, argv[0..]]` - the interpreter's own argv[0] sits first and the guest
+        // program is the interpreter's argv[1] - which is the `ld.so PROGRAM [ARGS...]` form; the
+        // loader then makes the program's argv from the arguments after its own name, so the GUEST
+        // still sees its own argv[0].
         write_cstr(page.add(ARGV0_OFFSET), &argv[0]);
-        // argv as the guest should see it: argv[0] is the program's own (guest) name. Only the
-        // syscall's path argument is translated, not what the program is told it was called.
-        // Every LATER entry is copied into the region after the header (2026-11-09, p7 argv). The
-        // sizes were validated in `run_native` before this fork, so these writes cannot run off the
-        // page; the terminating null goes into the slot after the last entry.
         let argv_slots = page.add(ARGV_OFFSET) as *mut *const nix::libc::c_char;
-        *argv_slots = page.add(ARGV0_OFFSET) as *const nix::libc::c_char;
+        // The slot the guest's argv[0] goes in: 1 under a substitution (after the interpreter's own
+        // argv[0]), 0 otherwise.
+        let prog_slot = match interpreter {
+            Some(_) => {
+                *argv_slots = page.add(PATH_OFFSET) as *const nix::libc::c_char;
+                1
+            }
+            None => 0,
+        };
+        *argv_slots.add(prog_slot) = page.add(ARGV0_OFFSET) as *const nix::libc::c_char;
+        // Every LATER entry is copied into the region after the header. The sizes were validated in
+        // `run_native` before this fork (including the extra interpreter slot), so these writes
+        // cannot run off the page; the terminating null goes into the slot after the last entry.
         let mut arg_cursor = page.add(ARGV_EXTRA_OFFSET);
         for (slot, arg) in argv.iter().skip(1).enumerate() {
             write_cstr(arg_cursor, arg);
-            *argv_slots.add(slot + 1) = arg_cursor as *const nix::libc::c_char;
+            *argv_slots.add(prog_slot + 1 + slot) = arg_cursor as *const nix::libc::c_char;
             arg_cursor = arg_cursor.add(arg.len() + 1);
         }
-        *argv_slots.add(argv.len()) = std::ptr::null();
-        // The self-report the engine believes instead of its own address arithmetic.
+        *argv_slots.add(prog_slot + argv.len()) = std::ptr::null();
+        // The self-report the engine believes instead of its own address arithmetic. The length is
+        // the one actually written at PATH_OFFSET (the interpreter under a substitution).
         let header = page.add(HEADER_OFFSET) as *mut u64;
         *header = HEADER_MAGIC;
         *header.add(1) = page.add(PATH_OFFSET) as u64;
-        *header.add(2) = guest_path.len() as u64;
+        *header.add(2) = exec_path.len() as u64;
 
         // The child's own marker before its `execve`, issued as a RAW syscall on purpose: Android's
         // bionic CACHES `getpid()`, so `libc::getpid` is often not a syscall at all and would leave
@@ -730,6 +808,7 @@ fn parent_loop(
     plan: &RunPlan,
     strict: bool,
     pipe_w: nix::libc::c_int,
+    interpreter: Option<&str>,
 ) -> Result<NativeRunReport> {
     let mut report = NativeRunReport {
         exit_code: -1,
@@ -740,6 +819,7 @@ fn parent_loop(
         observed: Vec::new(),
         child_view: None,
         executed: None,
+        interpreter: interpreter.map(str::to_string),
         strict_failure: None,
     };
 
@@ -1726,6 +1806,76 @@ pub fn resolve(rootfs: &Path, guest: &str, binds: &[(String, PathBuf)]) -> PathB
         }
         None => rootfs.join(guest.trim_start_matches('/')),
     }
+}
+
+/// The guest's interpreter to EXEC in place of the guest binary, or `None` when no substitution is
+/// needed or the engine cannot make one (2026-11-09, p7 interp).
+///
+/// A substitution is made only when BOTH halves are measured true: the guest's `PT_INTERP` does NOT
+/// exist on the host (so the kernel would fail before the tracee runs a single instruction - the
+/// measured Debian-rootfs failure), and the SAME path DOES exist inside the rootfs (so there is a
+/// real interpreter to exec). With either half false the engine leaves the exec alone: a guest whose
+/// interpreter the host can open is started normally, and a guest whose interpreter exists NOWHERE is
+/// left for the kernel to refuse honestly rather than exec a guessed path.
+fn guest_interpreter(plan: &RunPlan, guest: &str) -> Option<String> {
+    let rootfs = plan.rootfs.as_ref()?;
+    let host = resolve(rootfs, guest, &plan.binds);
+    let interp = elf_interp(&host)?;
+    // The kernel resolves a RELATIVE `PT_INTERP` against the tracee's cwd, which the engine does not
+    // model at exec time; refuse it rather than guess. `PT_INTERP` is absolute on every supported
+    // target.
+    if !interp.starts_with('/') {
+        return None;
+    }
+    if Path::new(&interp).exists() {
+        return None; // the kernel can open it itself: nothing to substitute
+    }
+    if !resolve(rootfs, &interp, &plan.binds).exists() {
+        return None; // the rootfs carries no such interpreter: exec will fail, honestly
+    }
+    Some(interp)
+}
+
+/// The `PT_INTERP` string of the ELF at `path`, or `None` when the file cannot be read, is not a
+/// 64-bit little-endian ELF, or carries no `PT_INTERP` (2026-11-09, p7 interp).
+///
+/// Only the three fields the engine needs are read - the ELF header, the program-header table and
+/// the interpreter string - so a large guest binary is not pulled into memory to answer one question.
+/// Both supported hosts (aarch64, x86_64) are 64-bit little-endian; any other class or byte order
+/// answers `None` rather than a misread path.
+pub fn elf_interp(path: &Path) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut ehdr = [0u8; 64];
+    file.read_exact(&mut ehdr).ok()?;
+    if &ehdr[0..4] != b"\x7fELF" || ehdr[4] != 2 || ehdr[5] != 1 {
+        return None; // not a 64-bit little-endian ELF
+    }
+    let e_phoff = u64::from_le_bytes(ehdr[32..40].try_into().ok()?);
+    let e_phentsize = u16::from_le_bytes(ehdr[54..56].try_into().ok()?) as usize;
+    let e_phnum = u16::from_le_bytes(ehdr[56..58].try_into().ok()?) as usize;
+    const PT_INTERP: u32 = 3;
+    for i in 0..e_phnum {
+        let mut ph = vec![0u8; e_phentsize];
+        file.seek(SeekFrom::Start(
+            e_phoff.checked_add(i as u64 * e_phentsize as u64)?,
+        ))
+        .ok()?;
+        file.read_exact(&mut ph).ok()?;
+        if u32::from_le_bytes(ph[0..4].try_into().ok()?) != PT_INTERP {
+            continue;
+        }
+        // ELF64 program header: p_offset at byte 8, p_filesz at byte 32.
+        let p_offset = u64::from_le_bytes(ph[8..16].try_into().ok()?);
+        let p_filesz = u64::from_le_bytes(ph[32..40].try_into().ok()?) as usize;
+        // The interpreter path is a NUL-terminated string of at most `p_filesz` bytes.
+        let mut raw = vec![0u8; p_filesz];
+        file.seek(SeekFrom::Start(p_offset)).ok()?;
+        file.read_exact(&mut raw).ok()?;
+        let end = raw.iter().position(|b| *b == 0).unwrap_or(raw.len());
+        let s = String::from_utf8_lossy(&raw[..end]).into_owned();
+        return if s.is_empty() { None } else { Some(s) };
+    }
+    None
 }
 
 unsafe fn write_cstr(dst: *mut u8, s: &str) {

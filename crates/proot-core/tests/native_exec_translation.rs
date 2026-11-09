@@ -1242,3 +1242,269 @@ int main(void) {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------------------------
+// p7 interp (added 2026-11-09): a guest whose PT_INTERP does NOT exist on the host.
+//
+// MEASURED problem (2026-11-09, real Debian rootfs `deb-pdn`): the guest `/usr/bin/dash` names
+// `PT_INTERP /lib/ld-linux-aarch64.so.1`, and this Android host has no `/lib` at all, so
+// `podnext --engine native run <ctr> -- /bin/sh -c 'echo hi'` exited 127 with NO guest output while
+// the same command under proot printed `hi` and exited 0. The KERNEL opens PT_INTERP on the HOST
+// before the tracee runs a single instruction, so entry-time path translation cannot reach it; the
+// fix execs the guest's OWN interpreter with the guest program as its argument (the
+// `ld.so PROGRAM [ARGS...]` form), and the loader then opens the program and its libraries through
+// the SAME traced syscalls the engine already rewrites.
+//
+// This test builds that situation WITHOUT a Debian rootfs so it runs on every host: the guest is
+// compiled with `-Wl,--dynamic-linker=<path absent on the host>`, and the host's REAL interpreter is
+// copied INSIDE the rootfs at exactly that path - which is the shape a Debian rootfs has
+// (`/lib/ld-linux-aarch64.so.1` absent on the host, present in the rootfs).
+//
+// Both directions are asserted, so the test carries its own control: running the guest binary
+// DIRECTLY on the host must fail (the kernel cannot find PT_INTERP), and running it under the engine
+// must succeed with the interpreter recorded. Sabotage the substitution - make `guest_interpreter`
+// in `src/native_run.rs` return `None` - and the positive arm goes red, which is the negative
+// control: it is the substitution, not something else, that starts the guest.
+// ---------------------------------------------------------------------------------------------
+
+/// `compile_c`, but with extra compiler/linker flags - here `-Wl,--dynamic-linker=<path>`, so the
+/// guest's `PT_INTERP` names a path the host does not have. A build failure is a RED test, never a
+/// silent skip.
+fn compile_c_with(dst: &Path, source: &str, extra: &[&str]) {
+    let src = dst.with_extension("c");
+    std::fs::write(&src, source).unwrap_or_else(|e| panic!("write {}: {e}", src.display()));
+    let cc = compiler();
+    let out = std::process::Command::new(&cc)
+        .arg(&src)
+        .args(extra)
+        .arg("-o")
+        .arg(dst)
+        .output()
+        .unwrap_or_else(|e| panic!("run {cc} to build the fixture: {e}"));
+    assert!(
+        out.status.success(),
+        "{} failed to build {}: {}",
+        cc,
+        dst.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_file(&src);
+}
+
+/// Removes the fixture root when the test ends, INCLUDING when an assertion panics (copied from
+/// `native_dynamic_guest.rs`): the trailing `remove_dir_all` is skipped the moment an assertion
+/// panics, which is exactly when a fixture tree is most likely to survive.
+struct InterpGuard(PathBuf);
+
+impl Drop for InterpGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_guest_whose_pt_interp_is_missing_on_the_host_runs_via_its_own_interpreter() {
+    let root = fixture_root("interp");
+    let _guard = InterpGuard(root.clone());
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-interp");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    // Reports argc and the first two argv entries into a bound HOST directory, then returns a
+    // sentinel the assertions can read back. stdout is NOT used: cargo runs this file's tests
+    // concurrently in one process, so capturing fd 1 (as `native_dynamic_guest.rs` may, being a
+    // single-test file) would swallow a sibling's output.
+    let source = r#"#include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
+int main(int argc, char **argv) {
+    char buf[256];
+    int n = snprintf(buf, sizeof buf, "argc=%d|argv0=%s|argv1=%s", argc,
+                     argc > 0 ? argv[0] : "<none>", argc > 1 ? argv[1] : "<none>");
+    int fd = open("/probe/interp-report", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 71; }
+    if (write(fd, buf, (unsigned)n) < 0) { return 72; }
+    close(fd);
+    return 9;
+}
+"#;
+
+    // The host's OWN interpreter: taken from a guest the host toolchain builds normally, so the file
+    // is one this host can really run (bionic `linker64` on Termux, glibc `ld.so` on the runner).
+    let normal = root.join("guest-normal");
+    compile_c(&normal, source);
+    let real_interp = proot_core::native_run::elf_interp(&normal).unwrap_or_else(|| {
+        panic!(
+            "{} names no PT_INTERP; it is not the dynamically linked guest this test needs",
+            normal.display()
+        )
+    });
+    assert!(
+        Path::new(&real_interp).exists(),
+        "the host's own interpreter {real_interp} must exist for this fixture to mean anything"
+    );
+
+    // The guest under test names an interpreter that does NOT exist on this host.
+    const MISSING: &str = "/pdn-interp-missing/ld.so";
+    assert!(
+        !Path::new(MISSING).exists(),
+        "the fixture's PT_INTERP path {MISSING} exists on this host, so it would not reproduce the \
+         measured failure (the interpreter is created INSIDE the rootfs, never on the host)"
+    );
+    let guest = rootfs.join("bin").join("guest");
+    compile_c_with(
+        &guest,
+        source,
+        &[&format!("-Wl,--dynamic-linker={MISSING}")],
+    );
+    assert_eq!(
+        proot_core::native_run::elf_interp(&guest).as_deref(),
+        Some(MISSING),
+        "the fixture guest must name the absent interpreter as its PT_INTERP"
+    );
+
+    // The interpreter the host CAN run is placed INSIDE the rootfs at exactly that path - the shape a
+    // Debian rootfs has (`/lib/ld-linux-aarch64.so.1` absent on the host, present in the rootfs).
+    let interp_in_rootfs = rootfs.join(MISSING.trim_start_matches('/'));
+    std::fs::create_dir_all(interp_in_rootfs.parent().unwrap()).expect("create interp dir");
+    std::fs::copy(&real_interp, &interp_in_rootfs).unwrap_or_else(|e| {
+        panic!(
+            "copy {} -> {}: {e}",
+            real_interp,
+            interp_in_rootfs.display()
+        )
+    });
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&interp_in_rootfs)
+            .expect("stat interpreter copy")
+            .permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&interp_in_rootfs, perm).expect("chmod interpreter copy");
+    }
+    eprintln!("[interp] host interpreter {real_interp}");
+    eprintln!("[interp] absent PT_INTERP {MISSING}");
+    eprintln!("[interp] interp in rootfs {}", interp_in_rootfs.display());
+
+    // ---- negative arm: the guest is NOT runnable directly on the host --------------------------
+    // The measured failure, reproduced without the engine: the kernel opens PT_INTERP before the
+    // program runs and it is absent, so `execve` fails (ENOENT) and the guest never executes. A run
+    // that SUCCEEDED here would mean the fixture does not reproduce the problem at all.
+    let direct = std::process::Command::new(&guest).arg("host").output();
+    match &direct {
+        Ok(o) => assert!(
+            !o.status.success(),
+            "the guest RAN directly on the host (exit {:?}); the fixture does not reproduce the \
+             missing-interpreter failure and this test would prove nothing",
+            o.status.code()
+        ),
+        Err(e) => eprintln!("[interp] direct host exec refused as expected: {e}"),
+    }
+
+    // ---- positive arm: the engine starts it by executing its own interpreter -------------------
+    // `host_runtime_binds` binds the host runtime trees to themselves so the interpreter finds its
+    // OWN libraries (libc): the claim under test is that the interpreter is exec'd at all, NOT that
+    // the rootfs is a closed namespace (that is `native_dynamic_guest.rs`'s subject).
+    let mut binds = host_runtime_binds();
+    binds.push(("/probe".to_string(), probe.clone()));
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+        env: Vec::new(),
+    };
+    let run = run_native(
+        &["/bin/guest".to_string(), "engine".to_string()],
+        &plan,
+        false,
+    )
+    .expect("traced run of the missing-interpreter guest");
+    eprintln!(
+        "[interp] exit={} interpreter={:?} executed={:?} translations={:?}",
+        run.exit_code, run.interpreter, run.executed, run.translations
+    );
+
+    assert_eq!(
+        run.interpreter.as_deref(),
+        Some(MISSING),
+        "the engine must record that it exec'd the guest's interpreter; `None` means it tried the \
+         guest directly, which the kernel cannot start on this host"
+    );
+    assert_eq!(
+        run.exit_code, 9,
+        "the guest's own exit code (9) proves it ran; 127 is the missing-interpreter failure this \
+         test exists to catch, and 71/72 mean it could not write its report"
+    );
+
+    // The interpreter exec'd is the one INSIDE the rootfs, not a host path or the guest binary.
+    let t = run
+        .translations
+        .iter()
+        .find(|t| t.syscall == "SYS_execve" && t.guest == MISSING)
+        .unwrap_or_else(|| {
+            panic!(
+                "the engine must record the execve of the guest's interpreter {MISSING}; \
+                 translations={:?}",
+                run.translations
+            )
+        });
+    assert_eq!(
+        canon(&t.host),
+        canon(&interp_in_rootfs),
+        "the substituted exec must land on the interpreter inside the rootfs"
+    );
+    match run.executed.as_ref() {
+        Some(p) => assert_eq!(
+            canon(p),
+            canon(&interp_in_rootfs),
+            "the kernel executed {} which is not the guest's interpreter",
+            p.display()
+        ),
+        None => eprintln!(
+            "[interp] /proc/<pid>/exe was not readable; the interpreter field and the translation \
+             carry the verdict"
+        ),
+    }
+
+    // The guest saw its OWN argv[0] and its argument - the loader form preserves them, which is why
+    // no `--argv0` is needed (see the module docs).
+    let report = std::fs::read_to_string(probe.join("interp-report")).unwrap_or_else(|e| {
+        panic!(
+            "the guest did not write its report (exit {}): {e}",
+            run.exit_code
+        )
+    });
+    eprintln!("[interp] guest report {report:?}");
+    assert_eq!(
+        report, "argc=2|argv0=/bin/guest|argv1=engine",
+        "the guest must see its own argv[0] and its argument, unchanged, through the interpreter form"
+    );
+
+    // ---- control: with NO rootfs there is nothing to substitute, and the kernel refuses ----------
+    // The same guest, same interpreter, but a plan with no rootfs: `guest_interpreter` returns `None`
+    // (it needs a rootfs), so the engine hands the guest path to the kernel unchanged and the run
+    // fails exactly as the direct exec did. This is what makes the positive arm's success load-bearing.
+    let bare = RunPlan::default();
+    let no_rootfs = run_native(
+        &["/bin/guest".to_string(), "engine".to_string()],
+        &bare,
+        false,
+    )
+    .expect("a no-plan run returns a report, not a crash");
+    eprintln!(
+        "[interp] no-rootfs exit={} interpreter={:?}",
+        no_rootfs.exit_code, no_rootfs.interpreter
+    );
+    assert_eq!(
+        no_rootfs.interpreter, None,
+        "with no rootfs the engine must not claim an interpreter substitution"
+    );
+    assert_eq!(
+        no_rootfs.exit_code, 127,
+        "with no rootfs the kernel is handed the guest path and its absent PT_INTERP, so execve \
+         fails with 127 - the failure the substitution exists to remove"
+    );
+}

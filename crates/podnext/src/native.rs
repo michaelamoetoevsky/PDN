@@ -289,6 +289,7 @@ mod engine_wiring_tests {
             observed: Vec::new(),
             child_view: None,
             executed: None,
+            interpreter: None,
             strict_failure: None,
         }
     }
