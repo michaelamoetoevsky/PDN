@@ -102,15 +102,50 @@
 //! The remedy is to exec the guest's OWN interpreter with the guest program as its argument - the
 //! `ld.so PROGRAM [ARGS...]` form. `guest_interpreter` reads `PT_INTERP` out of the guest ELF
 //! (`elf_interp`) and substitutes ONLY when the path is really absent on the host AND present inside
-//! the rootfs; the child then publishes the interpreter's guest path at `PATH_OFFSET` and lists the
-//! guest program as the interpreter's `argv[1]`, so the loader opens it through the SAME traced
-//! `openat` the engine already translates - and the guest still sees its own `argv[0]`, because the
-//! loader makes the program's argv from the arguments after its own name. The plain form is used (no
-//! `--argv0`, no `--library-path`): MEASURED, glibc's `ld.so --help` on the Debian rootfs lists
-//! `--argv0 STRING`, but the plain form already gives the guest the correct `argv[0]`, so the option
-//! buys nothing here and using it would be a claim about a second interpreter's option set. The
-//! interpreter being exec'd IS recorded (`NativeRunReport::interpreter`), so a reader can tell a
-//! substituted run from a normal one.
+//! the rootfs; the engine then publishes the interpreter's guest path as the exec path and lists the
+//! execve TARGET's guest path as the loader's PROGRAM argument, so the loader opens it through the
+//! SAME traced `openat` the engine already translates. The interpreter being exec'd IS recorded
+//! (`NativeRunReport::interpreter`), so a reader can tell a substituted run from a normal one.
+//!
+//! THE LOADER'S PROGRAM IS THE EXECVE TARGET, NOT THE CALLER'S argv[0] (2026-11-09, p7
+//! interp-program). The first version built the loader's argv as `[<interp>, argv[0], args...]`,
+//! which is correct only when argv[0] happens to be the absolute guest path - true for the engine's
+//! own child, whose argv[0] IS the path `run_native` was given, but FALSE for a shell-spawned
+//! external: `dash` execs `/usr/bin/ls` with argv[0] = `ls`, so the loader was told to load a program
+//! named `ls` and reported `ls: cannot open shared object file` (measured; proot ran it, exit 0).
+//! The loader now gets the target guest path, and the caller's argv[0] is preserved with `--argv0
+//! STRING` where the interpreter supports it: MEASURED, Debian 13's glibc `ld.so --help` prints
+//! `--argv0 STRING` and its image carries the token, and Alpine 3.21's musl 1.2.4 image carries
+//! `argv0` in its option table too; Android's bionic `/system/bin/linker64` has no such option (no
+//! `argv0` token at all), so on that loader the plain form is used. The engine's own child needs no
+//! `--argv0` - its argv[0] IS the target path - while a descendant's argv[0] is whatever the caller
+//! passed, the case that broke. WHERE THE OPTION IS SUPPORTED the guest sees the argv[0] it was
+//! given; WHERE IT IS NOT, the program's argv[0] becomes its guest program path. That divergence is
+//! measured, not assumed, by `a_spawned_external_is_given_its_target_path_as_the_loader_program`.
+//!
+//! A SECOND execve FROM THE SAME PROCESS IS TRANSLATED TOO (2026-11-09, p7 exec-again). A shell's
+//! `exec` builtin replaces the process with no fork, so the tracee that is already past its first
+//! exec issues another `execve`; that used to be refused by name and left to the kernel, which then
+//! resolved the guest path on the HOST. MEASURED on a real Debian rootfs: `-- /bin/sh -c 'exec
+//! /bin/ls /etc'` ran the host's `/bin/ls` - Android's toybox, through the `/bin -> /system/bin`
+//! symlink - and died inside bionic's loader with `CANNOT LINK EXECUTABLE "/bin/ls": library
+//! "libcrypto.so" not found`, while proot exited 0. Every execve is now translated at its entry stop,
+//! by the same remote path a descendant uses once the shared page is gone.
+//!
+//! THE ENGINE ANSWERS `faccessat2` WHEN THE HOST REFUSES IT (2026-11-09, p7 seccomp). MEASURED on
+//! this Android device: the app's seccomp filter traps `faccessat2` (SIGSYS, x8 = 439) and the
+//! kernel returns WITHOUT writing the result register, so the tracee reads garbage. With the
+//! substitution in place `-- /bin/sh -c 'ls /etc'` STILL failed - `ls: Permission denied`, and the
+//! trace showed NO `clone` and NO `execve`: dash's PATH lookup uses `eaccess()`, Debian's glibc does
+//! not fall back to the older `faccessat`, so the lookup died before any exec and no loader fix
+//! could help. `command -v ls` fails the same way while `ls /etc | head` works, because a pipeline
+//! skips the check. The syscall NUMBER cannot be rewritten on arm64 (the kernel takes it from
+//! `regs->syscallno`, not from `x8`; measured - lowering it changed nothing), so the engine
+//! RESOLVES the path through the same `resolve` it already translated, decides the access question
+//! itself (`guest_access`), and writes that answer into `x0` at the exit stop ONLY when the host
+//! never answered (the register still holding the first argument, or `-ENOSYS`). A host that allows
+//! `faccessat2` is left untouched; `set_robust_list` and `rseq` are also trapped but glibc tolerates
+//! their failure, so they are not emulated.
 //!
 //! NOT DONE HERE, named so the gap is explicit rather than implied:
 //! the other five argv features; the guest's environment (an empty `envp` is passed on purpose -
@@ -931,12 +966,16 @@ fn parent_loop(
         at_entry: bool,
         execve_handled: bool,
         started: bool,
+        /// The answer the engine computed for a `faccessat2` whose path it resolved, applied at the
+        /// exit stop only if the host refused the call with `-ENOSYS` (see `parent_loop`).
+        faccessat_result: Option<i32>,
     }
     let mut slots: Vec<TraceeSlot> = vec![TraceeSlot {
         pid: child,
         at_entry: true,
         execve_handled: false,
         started: true,
+        faccessat_result: None,
     }];
     let mut original_exit: Option<i32> = None;
 
@@ -994,6 +1033,7 @@ fn parent_loop(
                         at_entry: false,
                         execve_handled: false,
                         started: false,
+                        faccessat_result: None,
                     });
                     slots.len() - 1
                 }
@@ -1024,6 +1064,39 @@ fn parent_loop(
                     }
                 };
                 let is_execve = number == nix::libc::SYS_execve as i64;
+
+                // ANDROID'S SECCOMP FILTER BLOCKS `faccessat2` (2026-11-09, p7 seccomp). MEASURED on
+                // this device: the tracee takes a SIGSYS with x8 = 439, so the call returns
+                // `-ENOSYS`. Debian's glibc does not fall back to the older `faccessat` for that, so
+                // `eaccess()` fails and a shell's PATH lookup dies BEFORE it ever execs: with the
+                // substitution in place, `-- /bin/sh -c 'ls /etc'` still printed `ls: Permission
+                // denied`, and the trace showed NO `clone` and NO `execve` - the interpreter form was
+                // never reached, so no loader fix could help. `command -v ls` (which uses
+                // `eaccess`) fails the same way while `ls /etc | head` works, because a pipeline
+                // skips the check - that is what isolates `eaccess` as the broken link.
+                //
+                // The kernel takes the syscall NUMBER from `regs->syscallno`, which ptrace cannot
+                // rewrite on arm64 (measured: lowering x8 to `faccessat` changed nothing), so the
+                // engine ANSWERS the call instead: the access question is decided here, from the same
+                // `resolve` it already translated the path with, and written into the return register
+                // at the exit stop ONLY when the host never answered (see there). On a host that
+                // allows `faccessat2` this changes nothing.
+                if number == nix::libc::SYS_faccessat2 as i64 {
+                    if slots[idx].at_entry {
+                        slots[idx].faccessat_result = guest_access(pid, &args, plan)?;
+                    } else if let Some(answer) = slots[idx].faccessat_result.take() {
+                        let rv = return_raw(&get_regs(pid)?);
+                        // MEASURED: a seccomp-trapped syscall returns WITHOUT writing x0 - the
+                        // register still holds the first argument (AT_FDCWD, -100). So a value that
+                        // is still the input, or `-ENOSYS`, means the host never answered; the
+                        // engine's own answer is the only one the tracee can use.
+                        let unanswered =
+                            rv == -(nix::libc::ENOSYS as i64) || (rv != 0 && rv == args[0] as i64);
+                        if unanswered {
+                            set_return_value(pid, answer)?;
+                        }
+                    }
+                }
 
                 // IDENTITY MAPPING, exit side (2026-11-09, p7 gap 3). podnext tells the operator,
                 // for BOTH engines, "the guest runs as root (uid 0): PRoot maps every guest id to the
@@ -1060,11 +1133,19 @@ fn parent_loop(
                     }
                 }
 
-                if is_execve && !slots[idx].execve_handled {
+                if is_execve {
+                    // EVERY execve is translated - not just the FIRST one per tracee (2026-11-09,
+                    // p7 exec-again). A shell's `exec` builtin REPLACES the same process, and a
+                    // script's interpreter is started the same way; those used to be refused by name
+                    // and left to the kernel, which then resolved the guest path on the HOST.
+                    // MEASURED on a real Debian rootfs: `-- /bin/sh -c 'exec /bin/ls /etc'` ran the
+                    // host's `/bin/ls` (Android's toybox via the /bin -> /system/bin symlink) and
+                    // died inside bionic's loader with `library "libcrypto.so" not found` - not a
+                    // missing guest file, an UNTRANSLATED second exec.
                     if path_pointer_is_ours(&report, arg0) {
-                        // The engine's OWN child: the path lives in the shared page, so the
-                        // rewrite is a plain memory write through `translate_execve`. Only
-                        // meaningful at an entry stop, where the published pointer appears as arg0.
+                        // The engine's OWN child: the path lives in the shared page, so the rewrite
+                        // is a plain memory write through `translate_execve`, and only an ENTRY stop
+                        // carries the published pointer in arg0.
                         if slots[idx].at_entry {
                             slots[idx].execve_handled = true;
                             if let Err(e) = translate_execve(page, plan, &mut report) {
@@ -1073,10 +1154,14 @@ fn parent_loop(
                             }
                         }
                     } else {
-                        // A path the engine did NOT publish: a fork descendant's own `execve`. The
-                        // string lives in the tracee's memory, so it is read and rewritten there
-                        // (PTRACE_PEEKDATA / POKEDATA + SETREGSET). A non-entry stop, where arg0 is
-                        // a return value instead of a pointer, is not readable and is `false`.
+                        // A path the engine did NOT publish: the engine's own child after its first
+                        // exec (the page is gone), a fork descendant, or a later execve of either.
+                        // The string lives in the tracee's memory, so it is read and rewritten there
+                        // (PTRACE_PEEKDATA / POKEDATA + SETREGSET). This does NOT gate on the
+                        // engine's own at_entry bookkeeping: `translate_execve_remote` reads the
+                        // pointer out of the tracee and answers `false` when there is no readable
+                        // path (e.g. arg0 is a return value at an exit stop), which is the honest
+                        // answer either way.
                         match translate_execve_remote(pid, arg0, args[1], plan, &mut report) {
                             Ok(true) => slots[idx].execve_handled = true,
                             Ok(false) => {
@@ -1157,18 +1242,9 @@ fn parent_loop(
                         // the unhandled path syscall it always was, and still gets its named refusal.
                     } else {
                         // Not a first execve and not a path this engine translates: a syscall the
-                        // engine observed but does not handle.
-                        let refusal = if is_execve {
-                            // A second execve is how a script's interpreter is started.
-                            // Translating it here would be guesswork about which path is a guest
-                            // path, so it is recorded instead.
-                            Refusal {
-                                number,
-                                name: syscall_name(number),
-                                reason: "a later execve (an interpreter for a script) is not \
-                                         translated",
-                            }
-                        } else if unhandled_path_syscall(number).is_some() {
+                        // engine observed but does not handle. (execve never reaches this arm: every
+                        // execve is handled above, at its entry stop.)
+                        let refusal = if unhandled_path_syscall(number).is_some() {
                             // It takes a path and has no translator: say so by name and say that
                             // the kernel will resolve it on the HOST. This is the distinction the
                             // module exists to keep.
@@ -1185,7 +1261,7 @@ fn parent_loop(
                                 reason: "passed through, not emulated",
                             }
                         };
-                        if strict && !is_execve {
+                        if strict {
                             report.strict_failure = Some(refusal.label());
                             report.refusals.push(refusal);
                             // The program was NOT run: no translation happened, so leave nothing
@@ -1218,6 +1294,7 @@ fn parent_loop(
                         at_entry: false,
                         execve_handled: false,
                         started: false,
+                        faccessat_result: None,
                     });
                 }
                 ptrace::syscall(pid, None)?;
@@ -1404,6 +1481,91 @@ fn set_id_result(regs: &mut nix::libc::user_regs_struct) {
 
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 fn set_id_result(_regs: &mut nix::libc::user_regs_struct) {}
+
+/// The answer `faccessat2` would give, computed by the ENGINE for a guest path, or `None` when the
+/// engine cannot answer (no rootfs plan, unreadable/relative path, or an unreadable mode).
+///
+/// The call is decided against the SAME resolved host path the engine translates the syscall's path
+/// argument to, using the permission rule the guest is told it runs under: the engine reports uid 0
+/// (`--change-id=0:0:0`), and for a privileged caller `R_OK`/`W_OK` are granted and `X_OK` requires
+/// any execute bit. `F_OK` (mode 0) is existence only. A path the rootfs does not carry answers
+/// `ENOENT`, exactly as the untranslated kernel would.
+fn guest_access(pid: Pid, args: &[u64; 6], plan: &RunPlan) -> Result<Option<i32>> {
+    let Some(rootfs) = plan.rootfs.as_ref() else {
+        return Ok(None);
+    };
+    let Some(guest) = peek_cstr(pid, args[1])? else {
+        return Ok(None);
+    };
+    if guest.is_empty() || !guest.starts_with('/') {
+        return Ok(None);
+    }
+    let host = resolve(rootfs, &guest, &plan.binds);
+    if !host.exists() {
+        return Ok(Some(-nix::libc::ENOENT));
+    }
+    let mode = args[2] as i32 & 7;
+    if mode == 0 {
+        return Ok(Some(0));
+    }
+    let Ok(metadata) = std::fs::metadata(&host) else {
+        return Ok(Some(-nix::libc::EACCES));
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let bits = metadata.permissions().mode();
+        // Privileged caller (uid 0): R_OK/W_OK granted, X_OK needs any execute bit.
+        let allowed = if mode & 1 != 0 {
+            bits & 0o111 != 0
+        } else {
+            true
+        };
+        return Ok(Some(if allowed { 0 } else { -nix::libc::EACCES }));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        Ok(None)
+    }
+}
+
+/// Write an arbitrary value into the tracee's syscall RETURN register (`x0` / `rax`).
+fn set_return_value(pid: Pid, value: i32) -> Result<()> {
+    let mut raw = get_regs(pid)?;
+    set_return_raw(&mut raw, value as i64);
+    set_regs(pid, raw)
+}
+
+/// The return register of a register file: `x0` on aarch64, `rax` on x86_64.
+#[cfg(target_arch = "aarch64")]
+fn set_return_raw(raw: &mut nix::libc::user_regs_struct, value: i64) {
+    raw.regs[0] = value as u64;
+}
+
+#[cfg(target_arch = "x86_64")]
+fn set_return_raw(raw: &mut nix::libc::user_regs_struct, value: i64) {
+    raw.rax = value as u64;
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+fn set_return_raw(_raw: &mut nix::libc::user_regs_struct, _value: i64) {}
+
+/// Read the syscall RETURN register (`x0` / `rax`) out of a register file.
+#[cfg(target_arch = "aarch64")]
+fn return_raw(raw: &nix::libc::user_regs_struct) -> i64 {
+    raw.regs[0] as i64
+}
+
+#[cfg(target_arch = "x86_64")]
+fn return_raw(raw: &nix::libc::user_regs_struct) -> i64 {
+    raw.rax as i64
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+fn return_raw(_raw: &nix::libc::user_regs_struct) -> i64 {
+    0
+}
 
 fn get_regs(pid: Pid) -> Result<nix::libc::user_regs_struct> {
     let mut raw: nix::libc::user_regs_struct = unsafe { std::mem::zeroed() };
@@ -1596,21 +1758,45 @@ fn read_ptr_array(pid: Pid, addr: u64) -> Result<Vec<u64>> {
 /// silently dropped, so an argv is never truncated.
 ///
 /// The original argv pointers are reused as-is: the caller's argv[0] string already exists in the
-/// tracee, so only the interpreter's guest path and the pointer array are new. envp is untouched.
+/// tracee, so only the interpreter's guest path, the PROGRAM path and the pointer array are new.
+/// envp is untouched.
+///
+/// PROGRAM IS THE EXECVE TARGET, NOT THE CALLER'S argv[0] (2026-11-09, p7 interp-program). A shell
+/// execs `/usr/bin/ls` with argv[0] = `ls`, so building the loader's argv as `[<interp>, argv[0],
+/// args...]` told the loader to load a program literally named `ls` and it reported `ls: cannot open
+/// shared object file` (measured on a real Debian rootfs). The loader's PROGRAM is now `guest_program`
+/// - the target guest path the engine already translated - and, when the interpreter understands
+/// `--argv0 STRING`, the caller's argv[0] is passed through it so the guest still sees its own name.
+/// Without the option the plain form is used and the program's argv[0] becomes `guest_program`; that
+/// divergence is measured and documented in this module's header.
 fn write_substitution_remote(
     pid: Pid,
     host_interp: &Path,
     guest_interp: &str,
+    guest_program: &str,
     original_argv: &[u64],
+    use_argv0: bool,
 ) -> Result<()> {
+    const ARGV0_OPTION: &str = "--argv0";
     let host_bytes = host_interp.as_os_str().as_encoded_bytes();
     let guest_bytes = guest_interp.as_bytes();
+    let prog_bytes = guest_program.as_bytes();
     let align8 = |n: usize| (n + 7) & !7usize;
     let host_len = align8(host_bytes.len() + 1);
     let guest_len = align8(guest_bytes.len() + 1);
-    // interpreter + original argv + terminating null
-    let array_len = (original_argv.len() + 2) * std::mem::size_of::<u64>();
-    let total = host_len + guest_len + array_len;
+    let prog_len = align8(prog_bytes.len() + 1);
+    let opt_len = if use_argv0 {
+        align8(ARGV0_OPTION.len() + 1)
+    } else {
+        0
+    };
+    // Under `--argv0`: [<interp>, "--argv0", <orig argv[0]>, <program>, <orig argv[1..]>]. Without
+    // it: [<interp>, <program>, <orig argv[1..]>]. Plus the terminating null.
+    let tail = original_argv.get(1..).unwrap_or(&[]);
+    let head = if use_argv0 { 4 } else { 2 };
+    let slots = head + tail.len() + 1;
+    let array_len = slots * std::mem::size_of::<u64>();
+    let total = host_len + guest_len + prog_len + opt_len + array_len;
     if total as u64 > DESCENDANT_SCRATCH_BYTES {
         return Err(anyhow!(
             "a fork descendant's interpreter substitution needs {} bytes of stack scratch ({} argv \
@@ -1627,13 +1813,32 @@ fn write_substitution_remote(
     let scratch = sp.wrapping_sub(DESCENDANT_SCRATCH_BYTES) & !0xf;
     let host_at = scratch;
     let guest_at = scratch + host_len as u64;
-    let array_at = guest_at + guest_len as u64;
+    let prog_at = guest_at + guest_len as u64;
+    let opt_at = prog_at + prog_len as u64;
+    let array_at = opt_at + opt_len as u64;
 
     poke_cstr(pid, host_at, host_bytes)?;
     poke_cstr(pid, guest_at, guest_bytes)?;
+    poke_cstr(pid, prog_at, prog_bytes)?;
+    if use_argv0 {
+        poke_cstr(pid, opt_at, ARGV0_OPTION.as_bytes())?;
+    }
     let mut array: Vec<u8> = Vec::with_capacity(array_len);
     array.extend_from_slice(&guest_at.to_ne_bytes());
-    for p in original_argv {
+    if use_argv0 {
+        array.extend_from_slice(&opt_at.to_ne_bytes());
+        // The caller's argv[0] string already lives in the tracee; reuse its pointer. A caller that
+        // passed no argv[0] gets the program path, so the loader is never handed a null string.
+        array.extend_from_slice(
+            &original_argv
+                .first()
+                .copied()
+                .unwrap_or(prog_at)
+                .to_ne_bytes(),
+        );
+    }
+    array.extend_from_slice(&prog_at.to_ne_bytes());
+    for p in tail {
         array.extend_from_slice(&p.to_ne_bytes());
     }
     array.extend_from_slice(&0u64.to_ne_bytes());
@@ -1872,7 +2077,11 @@ fn translate_execve_remote(
     if let Some(interp) = guest_interpreter(plan, &guest) {
         let host_interp = resolve(rootfs, &interp, &plan.binds);
         let original = read_ptr_array(pid, argv_ptr)?;
-        write_substitution_remote(pid, &host_interp, &interp, &original)?;
+        // The loader's PROGRAM is the EXECVE TARGET (`guest`), not the caller's argv[0]. Where the
+        // interpreter understands `--argv0` the caller's argv[0] is preserved through it; otherwise
+        // the plain form is used and the program's argv[0] becomes `guest` (documented divergence).
+        let use_argv0 = interpreter_accepts_argv0(&host_interp);
+        write_substitution_remote(pid, &host_interp, &interp, &guest, &original, use_argv0)?;
         // Record the interpreter the way the child path does: the report names it, and the execve
         // translation names the interpreter's GUEST path -> its HOST path inside the rootfs.
         if report.interpreter.is_none() {
@@ -2012,6 +2221,31 @@ pub fn resolve(rootfs: &Path, guest: &str, binds: &[(String, PathBuf)]) -> PathB
             to.join(rest.trim_start_matches('/'))
         }
         None => rootfs.join(guest.trim_start_matches('/')),
+    }
+}
+
+/// Whether the guest's own interpreter understands `--argv0 STRING`, measured from the interpreter
+/// IMAGE rather than assumed from its name (2026-11-09, p7 interp-program).
+///
+/// Public only so the regression tests can compute which argv[0] form to EXPECT on the host they run
+/// on (bionic has no `--argv0`; glibc and musl 1.2.4 do), instead of pinning one host's answer.
+///
+/// MEASURED on this host:
+///   * Debian 13's glibc `ld-linux-aarch64.so.1`: `--help` prints
+///     `  --argv0 STRING        set argv[0] to STRING before running`, exit 0, and the image carries
+///     the literal `--argv0\0`;
+///   * Alpine 3.21's musl 1.2.4 `ld-musl-aarch64.so.1`: its option table is
+///     `library-path\0preload\0argv0\0`, so it carries `argv0\0` too and accepts `--argv0`;
+///   * Android's bionic `/system/bin/linker64` carries no `argv0` token at all (`grep -c argv0` -> 0)
+///     and has no such option - it is the interpreter the CI/device fixtures use.
+/// So the option token in the loader image is the capability probe. CEILING: a loader that accepts
+/// the option but keeps its name out of the image is reported as unsupported and takes the plain
+/// form, whose only consequence is the documented argv[0] divergence.
+pub fn interpreter_accepts_argv0(host_interp: &Path) -> bool {
+    const TOKEN: &[u8] = b"argv0\0";
+    match std::fs::read(host_interp) {
+        Ok(image) => image.windows(TOKEN.len()).any(|w| w == TOKEN),
+        Err(_) => false,
     }
 }
 

@@ -1856,3 +1856,291 @@ int main(int argc, char **argv) {
          the interpreter's argv[1]"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// p7 interp-program / exec-again (added 2026-11-09): the loader's PROGRAM is the execve TARGET, and
+// a SECOND execve from the SAME process is translated too.
+//
+// MEASURED defects on a real Debian rootfs (Debian 13, glibc), proot exit 0 for both:
+//   native `-- /bin/sh -c 'ls /etc'`            -> rc 127, `ls: cannot open shared object file`
+//   native `-- /bin/sh -c 'exec /bin/ls /etc'`  -> rc 1, bionic loader `library "libcrypto.so" not found`
+// The first: the descendant substitution built `[<interp>, argv[0], args...]`, and a shell execs
+// `/usr/bin/ls` with argv[0] = `ls`, so the loader was told to load a program named `ls`. The second:
+// a shell's `exec` builtin replaces the SAME process, and that second execve was refused by name and
+// left to the kernel, which resolved `/bin/ls` on the HOST (the `/bin -> /system/bin` symlink).
+//
+// Fixture, no Debian rootfs: `/bin/spawned`'s PT_INTERP is absent on the host and present in the
+// rootfs, so every exec of it is substituted. The host's own interpreter is placed at that path.
+// Negative control for both tests: revert to `[<interp>, argv[0], ...]` and the spawned program is
+// never found (test 1 goes red); restore the old `!execve_handled` guard and the second execve is
+// left to the kernel (test 2 goes red, exit 90).
+// ---------------------------------------------------------------------------------------------
+
+/// A forker whose CHILD execs `child_path` with an argv[0] DELIBERATELY DIFFERENT from that path -
+/// the shape every shell produces (`dash` execs `/usr/bin/ls` with argv[0] = `ls`). The parent
+/// returns the child's exit status, so the run's exit code is the spawned program's.
+fn make_forker_with_argv0(dst: &Path, child_path: &str, child_argv0: &str) {
+    let source = format!(
+        r#"#include <unistd.h>
+#include <sys/wait.h>
+int main(void) {{
+    pid_t p = fork();
+    if (p == 0) {{
+        char *const a[] = {{ (char *)"{1}", (char *)"tail-arg", 0 }};
+        char *const e[] = {{ 0 }};
+        execve("{0}", a, e);
+        _exit(90);
+    }}
+    if (p < 0) {{ return 91; }}
+    int st = 0;
+    if (waitpid(p, &st, 0) < 0) {{ return 93; }}
+    if (WIFEXITED(st)) {{ return WEXITSTATUS(st); }}
+    if (WIFSIGNALED(st)) {{ return 128 + WTERMSIG(st); }}
+    return 92;
+}}
+"#,
+        child_path, child_argv0
+    );
+    compile_c(dst, &source);
+}
+
+/// The spawned external: writes its TOP TWO argv entries to `/probe/spawned-report`, one per line,
+/// and exits 9. A loader told to load the caller's argv[0] instead of the target path never reaches
+/// this code at all, so the report's existence is itself the "it ran" proof.
+const SPAWNED_SOURCE: &str = r#"#include <fcntl.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    int fd = open("/probe/spawned-report", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 71; }
+    const char *a0 = (argc > 0 && argv[0]) ? argv[0] : "<none>";
+    const char *a1 = (argc > 1 && argv[1]) ? argv[1] : "<none>";
+    unsigned n = 0;
+    while (a0[n]) { n++; }
+    if (write(fd, a0, n) < 0) return 72;
+    if (write(fd, "\n", 1) < 0) return 73;
+    n = 0;
+    while (a1[n]) { n++; }
+    if (write(fd, a1, n) < 0) return 74;
+    if (write(fd, "\n", 1) < 0) return 75;
+    close(fd);
+    return 9;
+}
+"#;
+
+/// Shared fixture: a rootfs carrying `/bin/spawned`, a dynamic guest whose PT_INTERP is absent on
+/// the host and present in the rootfs, plus the host interpreter at that path and a probe directory
+/// bound at `/probe`. Returns `(root, rootfs, probe, host_interpreter)`.
+fn substituted_spawn_fixture(tag: &str) -> (PathBuf, PathBuf, PathBuf, String) {
+    let root = fixture_root(tag);
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    let normal = root.join("guest-normal");
+    compile_c(&normal, SPAWNED_SOURCE);
+    let real_interp = proot_core::native_run::elf_interp(&normal)
+        .unwrap_or_else(|| panic!("{} names no PT_INTERP", normal.display()));
+    assert!(
+        Path::new(&real_interp).exists(),
+        "the host's own interpreter {real_interp} must exist for this fixture to mean anything"
+    );
+
+    const MISSING: &str = "/pdn-interp-missing/ld.so";
+    assert!(
+        !Path::new(MISSING).exists(),
+        "the fixture's PT_INTERP path {MISSING} exists on this host, so no substitution would occur"
+    );
+    let spawned = rootfs.join("bin").join("spawned");
+    compile_c_with(
+        &spawned,
+        SPAWNED_SOURCE,
+        &[&format!("-Wl,--dynamic-linker={MISSING}")],
+    );
+    assert_eq!(
+        proot_core::native_run::elf_interp(&spawned).as_deref(),
+        Some(MISSING),
+        "the fixture guest must name the absent interpreter as its PT_INTERP"
+    );
+
+    let interp_in_rootfs = rootfs.join(MISSING.trim_start_matches('/'));
+    std::fs::create_dir_all(interp_in_rootfs.parent().unwrap()).expect("create interp dir");
+    std::fs::copy(&real_interp, &interp_in_rootfs).unwrap_or_else(|e| {
+        panic!(
+            "copy {} -> {}: {e}",
+            real_interp,
+            interp_in_rootfs.display()
+        )
+    });
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&interp_in_rootfs)
+            .expect("stat interpreter copy")
+            .permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&interp_in_rootfs, perm).expect("chmod interpreter copy");
+    }
+    eprintln!("[spawn] host interpreter {real_interp}");
+    eprintln!("[spawn] interp in rootfs {}", interp_in_rootfs.display());
+    (root, rootfs, probe, real_interp)
+}
+
+#[test]
+fn a_spawned_external_is_given_its_target_path_as_the_loader_program() {
+    let (root, rootfs, probe, real_interp) = substituted_spawn_fixture("spawn-program");
+    let _guard = InterpGuard(root.clone());
+    const MISSING: &str = "/pdn-interp-missing/ld.so";
+
+    // The fixture reproduces the defect: /bin/spawned is NOT runnable directly on the host.
+    let direct = std::process::Command::new(rootfs.join("bin").join("spawned"))
+        .arg("host")
+        .output();
+    match &direct {
+        Ok(o) => assert!(
+            !o.status.success(),
+            "the guest RAN directly on the host (exit {:?}); the fixture does not reproduce the \
+             missing-interpreter failure and this test would prove nothing",
+            o.status.code()
+        ),
+        Err(e) => eprintln!("[spawn] direct host exec refused as expected: {e}"),
+    }
+
+    // The forker is the engine's OWN child (its loader is on the host, so it is NOT substituted);
+    // the BARE argv[0] is on the DESCENDANT path, which is the case that broke.
+    make_forker_with_argv0(
+        &rootfs.join("bin").join("forker"),
+        "/bin/spawned",
+        "spawned-bare-name",
+    );
+
+    let mut binds = host_runtime_binds();
+    binds.push(("/probe".to_string(), probe.clone()));
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+        env: Vec::new(),
+    };
+    let run = run_native(&["/bin/forker".to_string()], &plan, false)
+        .expect("traced run of the spawning fixture");
+    let report = std::fs::read_to_string(probe.join("spawned-report")).unwrap_or_else(|e| {
+        panic!(
+            "the spawned external never ran (exit {}): {e} - with the loader's PROGRAM taken from \
+             argv[0] it looks for a program named 'spawned-bare-name'",
+            run.exit_code
+        )
+    });
+    eprintln!(
+        "[spawn] exit={} interpreter={:?} report={report:?}",
+        run.exit_code, run.interpreter
+    );
+
+    assert_eq!(
+        run.exit_code, 9,
+        "the spawned external must run and exit 9; 90 means its execve failed - the loader was told \
+         to load the caller's argv[0] instead of the execve target path"
+    );
+    assert_eq!(
+        run.interpreter.as_deref(),
+        Some(MISSING),
+        "the descendant's exec must be substituted"
+    );
+    let lines: Vec<&str> = report.lines().collect();
+    assert_eq!(
+        lines.get(1).copied(),
+        Some("tail-arg"),
+        "the caller's argument must survive: {report:?}"
+    );
+    // The documented divergence: with --argv0 the caller's name survives; without it (bionic) the
+    // program's argv[0] is the target path. Either way it is NEVER the load failure.
+    let expected_argv0 =
+        if proot_core::native_run::interpreter_accepts_argv0(Path::new(&real_interp)) {
+            "spawned-bare-name"
+        } else {
+            "/bin/spawned"
+        };
+    assert_eq!(
+        lines.first().copied(),
+        Some(expected_argv0),
+        "argv[0] must be the caller's name where the interpreter supports --argv0, otherwise the \
+         program path; report={report:?}"
+    );
+}
+
+/// main execs the substituted target ITSELF - a SECOND execve in the SAME process, the shape a
+/// shell's `exec` builtin produces. Returns 90 if that execve fails (which is what the untranslated
+/// second exec did on the real rootfs).
+const SELF_EXEC_SOURCE: &str = r#"#include <unistd.h>
+int main(void) {
+    char *const a[] = { (char *)"exec-again-name", (char *)"tail-arg", 0 };
+    char *const e[] = { 0 };
+    execve("/bin/spawned", a, e);
+    return 90;
+}
+"#;
+
+#[test]
+fn a_second_execve_from_the_same_process_is_translated() {
+    let (root, rootfs, probe, real_interp) = substituted_spawn_fixture("exec-again");
+    let _guard = InterpGuard(root.clone());
+    const MISSING: &str = "/pdn-interp-missing/ld.so";
+
+    let selfexec = rootfs.join("bin").join("selfexec");
+    compile_c_with(
+        &selfexec,
+        SELF_EXEC_SOURCE,
+        &[&format!("-Wl,--dynamic-linker={MISSING}")],
+    );
+    assert_eq!(
+        proot_core::native_run::elf_interp(&selfexec).as_deref(),
+        Some(MISSING)
+    );
+
+    let mut binds = host_runtime_binds();
+    binds.push(("/probe".to_string(), probe.clone()));
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+        env: Vec::new(),
+    };
+    let run = run_native(&["/bin/selfexec".to_string()], &plan, false)
+        .expect("traced run of the self-executing fixture");
+    let report = std::fs::read_to_string(probe.join("spawned-report")).unwrap_or_else(|e| {
+        panic!(
+            "the SECOND execve did not run /bin/spawned (exit {}): {e} - an untranslated second \
+             execve lets the kernel resolve the guest path on the HOST",
+            run.exit_code
+        )
+    });
+    eprintln!(
+        "[exec-again] exit={} interpreter={:?} report={report:?}",
+        run.exit_code, run.interpreter
+    );
+
+    assert_eq!(
+        run.exit_code, 9,
+        "the second execve (same process, no fork) must be translated and run /bin/spawned; 90 means \
+         the kernel resolved the guest path on the HOST - the measured 'libcrypto.so' failure"
+    );
+    let lines: Vec<&str> = report.lines().collect();
+    assert_eq!(
+        lines.get(1).copied(),
+        Some("tail-arg"),
+        "the caller's argument must survive: {report:?}"
+    );
+    let expected_argv0 =
+        if proot_core::native_run::interpreter_accepts_argv0(Path::new(&real_interp)) {
+            "exec-again-name"
+        } else {
+            "/bin/spawned"
+        };
+    assert_eq!(
+        lines.first().copied(),
+        Some(expected_argv0),
+        "argv[0] must be the caller's name where the interpreter supports --argv0, otherwise the \
+         program path; report={report:?}"
+    );
+}
