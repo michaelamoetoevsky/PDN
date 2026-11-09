@@ -2431,3 +2431,29 @@ memory corruption inside a guest looks like from outside. Fixed by naming the bu
 
 The lesson is the one this project keeps paying for: one harness passing is not the suite passing, and a guest that
 exits with no message is evidence of a defect, not of a quiet success.
+
+### CI caught what the local build could not: 22 test initialisers of a new struct field (2026-11-10 00:55 WIB)
+
+`RunPlan::link2symlink` was added to the struct and to the two PRODUCTION initialisers, and the binary built and all
+three harnesses passed locally. CI went red on `Rust Host Build`, `PRoot Distro Integration Test` and the aarch64
+NDK cross-compile, and the job log said exactly why:
+
+```
+error[E0063]: missing field `link2symlink` in initializer of `RunPlan`
+```
+
+The 22 initialisers the local build never touched live in `crates/proot-core/tests/` - `cargo build -p podnext
+--bin podnext` compiles neither them nor any other test target, which is the difference between "the binary builds"
+and "the workspace builds". This is the same lesson this project recorded for a `pub struct` change before, and it
+was paid for again.
+
+Two things came out of it:
+
+- the field was added to every test initialiser (struct-update literals `..base` inherit it and were left alone), and
+- the check that answers the question in one command was actually run:
+  `cargo test --workspace --no-run` -> exit 0. A local gate that only builds the binary cannot see this class, and
+  now the sequence is: change a struct field -> `cargo test --workspace --no-run` -> build -> harnesses -> gate.
+
+Fixing it by script also damaged two literals (a duplicated `env:` field, and a field inserted AFTER `..base`, which
+the compiler rejected by name), so the repair was verified by the compiler rather than by reading the diff - three
+iterations, each one caught by `cargo check -p proot-core --tests` naming the exact line.

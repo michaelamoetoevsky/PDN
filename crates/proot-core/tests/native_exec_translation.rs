@@ -201,6 +201,7 @@ fn the_engine_owns_the_tracee_and_records_named_refusals() {
     let argv = vec!["/bin/true".to_string()];
     let plan = RunPlan {
         rootfs: Some(rootfs_a),
+        link2symlink: true,
         binds: host_runtime_binds(),
         cwd: None,
         env: Vec::new(),
@@ -291,6 +292,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     // ---- arm A: the guest's /bin/true is the fixture's copy, which exits 1 -------------------
     let plan_a = RunPlan {
         rootfs: Some(rootfs_a.clone()),
+        link2symlink: true,
         binds: host_runtime_binds(),
         cwd: None,
         env: Vec::new(),
@@ -402,6 +404,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     // ---- arm B: same guest path, other rootfs, other program ---------------------------------
     let plan_b = RunPlan {
         rootfs: Some(rootfs_b.clone()),
+        link2symlink: true,
         binds: host_runtime_binds(),
         cwd: None,
         env: Vec::new(),
@@ -434,6 +437,7 @@ fn the_engine_translates_execve_into_the_given_rootfs() {
     // ---- control C: no such file in the rootfs must fail LOUDLY ------------------------------
     let plan_c = RunPlan {
         rootfs: Some(rootfs_c),
+        link2symlink: true,
         binds: Vec::new(),
         cwd: None,
         env: Vec::new(),
@@ -559,6 +563,7 @@ fn the_engine_traces_a_forked_child_and_translates_its_execve() {
     let argv = vec!["/bin/forker".to_string()];
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds: host_runtime_binds(),
         cwd: None,
         env: Vec::new(),
@@ -617,6 +622,7 @@ fn a_bind_prefix_wins_over_the_rootfs_for_execve() {
     binds.extend(host_runtime_binds());
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: None,
         env: Vec::new(),
@@ -729,6 +735,7 @@ int main(void) {
     // ---- positive arm: cwd: Some("/") lands the guest in the rootfs root ----------------------
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds: binds.clone(),
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -767,6 +774,7 @@ int main(void) {
     let host_cwd = std::env::current_dir().expect("this test's own cwd");
     let plan_none = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: None,
         env: Vec::new(),
@@ -796,6 +804,7 @@ int main(void) {
     for bad in ["/../etc", "relative/dir"] {
         let plan_bad = RunPlan {
             rootfs: Some(rootfs.clone()),
+            link2symlink: true,
             binds: Vec::new(),
             cwd: Some(bad.to_string()),
             env: Vec::new(),
@@ -887,6 +896,7 @@ int main(void) {
     // ---- arm 1: the cwd is known, so the relative name IS translatable ---------------------------
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds: binds.clone(),
         cwd: Some("/probe".to_string()),
         env: Vec::new(),
@@ -939,6 +949,7 @@ int main(void) {
     // relative paths everywhere, which would be a host-fallback regression.
     let plan_none = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds: binds.clone(),
         cwd: None,
         env: Vec::new(),
@@ -1035,6 +1046,7 @@ int main(int argc, char **argv) {
     binds.extend(host_runtime_binds());
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -1126,6 +1138,7 @@ int main(void) {
     binds.extend(host_runtime_binds());
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -1189,6 +1202,7 @@ int main(void) {
     binds.extend(host_runtime_binds());
     let base = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -1202,6 +1216,7 @@ int main(void) {
     // ---- arm with the variable: it must reach the guest -----------------------------------------
     let with_env = RunPlan {
         env: vec![("PDN_TEST_ENV".to_string(), "from-the-plan".to_string())],
+        link2symlink: true,
         ..base
     };
     let run =
@@ -1224,6 +1239,7 @@ int main(void) {
     // ---- control arm: no plan, no variable ------------------------------------------------------
     let empty = RunPlan {
         env: Vec::new(),
+        link2symlink: true,
         ..with_env
     };
     let run =
@@ -1412,6 +1428,7 @@ int main(int argc, char **argv) {
     binds.push(("/probe".to_string(), probe.clone()));
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -1603,6 +1620,7 @@ fn the_kernel_argv0_is_the_guest_path_under_a_substitution() {
     binds.push(("/probe".to_string(), probe.clone()));
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -1801,6 +1819,7 @@ int main(int argc, char **argv) {
     binds.push(("/probe".to_string(), probe.clone()));
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -2019,6 +2038,7 @@ fn a_spawned_external_is_given_its_target_path_as_the_loader_program() {
     binds.push(("/probe".to_string(), probe.clone()));
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),
@@ -2102,6 +2122,7 @@ fn a_second_execve_from_the_same_process_is_translated() {
     binds.push(("/probe".to_string(), probe.clone()));
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds,
         cwd: Some("/".to_string()),
         env: Vec::new(),

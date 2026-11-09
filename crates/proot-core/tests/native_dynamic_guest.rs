@@ -272,6 +272,7 @@ fn a_dynamic_guest_runs_inside_the_rootfs() {
     // answer and is what the engine reports.
     let plan = RunPlan {
         rootfs: Some(rootfs.clone()),
+        link2symlink: true,
         binds: Vec::new(),
         cwd: None,
         env: Vec::new(),
