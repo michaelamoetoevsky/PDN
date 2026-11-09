@@ -1508,3 +1508,166 @@ int main(int argc, char **argv) {
          fails with 127 - the failure the substitution exists to remove"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// p7 argv0 (added 2026-11-09): the KERNEL-LEVEL argv[0] a guest sees through /proc/<pid>/cmdline.
+//
+// MEASURED defect, on a real Debian rootfs run as `-- /bin/sh -c '/probe/cmdline0 $$'`:
+//   proot  : cmdline0=/bin/sh|-c|/probe/cmdline0 $$|
+//   native : cmdline0=<rootfs>/lib/ld-linux-aarch64.so.1|/bin/sh|-c|/probe/cmdline0 $$|
+// The substituted run's argv slot 0 pointed at PATH_OFFSET - the SAME string the engine rewrites to
+// the translated HOST path at the execve stop - so the parent's rewrite of the exec path dragged the
+// host path into argv[0]. The fix publishes the interpreter's GUEST path as its OWN string and points
+// argv[0] at it, so the rewrite of the exec path cannot reach it.
+//
+// Two arms, so the test carries its own control:
+//   * SUBSTITUTED - the guest's PT_INTERP is absent on the host and present in the rootfs, so the
+//     engine execs the interpreter; argv[0] must be the interpreter's GUEST path, NOT the translated
+//     host path (revert the fix in `src/native_run.rs::child_main` and this arm goes red);
+//   * NOT SUBSTITUTED - an ordinarily linked guest (its interpreter exists on the host), so no
+//     substitution happens; argv[0] must stay the guest PROGRAM path with no interpreter prefix.
+// ---------------------------------------------------------------------------------------------
+
+/// A guest that reads its OWN kernel argv from `/proc/self/cmdline` and writes it, `|`-separated, to
+/// the bound host directory - the only way a test process can observe the KERNEL-level argv[0] rather
+/// than the loader-constructed one the program's `main` receives.
+const CMDLINE_PROBE_SOURCE: &str = r#"#include <fcntl.h>
+#include <unistd.h>
+int main(void) {
+    char buf[4096];
+    int fd = open("/proc/self/cmdline", O_RDONLY);
+    if (fd < 0) { return 81; }
+    int n = read(fd, buf, sizeof buf - 1);
+    if (n < 0) { return 82; }
+    for (int i = 0; i < n; i++) { if (buf[i] == 0) buf[i] = '|'; }
+    int out = open("/probe/cmdline-report", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out < 0) { return 83; }
+    if (write(out, buf, (unsigned)n) < 0) { return 84; }
+    close(out);
+    return 9;
+}
+"#;
+
+#[test]
+fn the_kernel_argv0_is_the_guest_path_under_a_substitution() {
+    let root = fixture_root("argv0");
+    let _guard = InterpGuard(root.clone());
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-argv0");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    // The interpreter the host CAN run, and a path it CANNOT - the same shape as the interp test above.
+    let normal = root.join("guest-normal");
+    compile_c(&normal, CMDLINE_PROBE_SOURCE);
+    let real_interp = proot_core::native_run::elf_interp(&normal).unwrap_or_else(|| {
+        panic!(
+            "{} names no PT_INTERP; not the dynamically linked guest this test needs",
+            normal.display()
+        )
+    });
+    const MISSING: &str = "/pdn-interp-missing/ld.so";
+    assert!(
+        !Path::new(MISSING).exists(),
+        "the fixture's PT_INTERP path {MISSING} exists on this host, so no substitution would occur"
+    );
+
+    // ---- the SUBSTITUTED guest: its PT_INTERP is absent on the host, present in the rootfs --------
+    let guest_sub = rootfs.join("bin").join("guest");
+    compile_c_with(
+        &guest_sub,
+        CMDLINE_PROBE_SOURCE,
+        &[&format!("-Wl,--dynamic-linker={MISSING}")],
+    );
+    assert_eq!(
+        proot_core::native_run::elf_interp(&guest_sub).as_deref(),
+        Some(MISSING)
+    );
+    let interp_in_rootfs = rootfs.join(MISSING.trim_start_matches('/'));
+    std::fs::create_dir_all(interp_in_rootfs.parent().unwrap()).expect("create interp dir");
+    std::fs::copy(&real_interp, &interp_in_rootfs).unwrap_or_else(|e| {
+        panic!(
+            "copy {} -> {}: {e}",
+            real_interp,
+            interp_in_rootfs.display()
+        )
+    });
+
+    // ---- the NOT-SUBSTITUTED guest: an ordinary dynamic binary whose interpreter IS on the host ---
+    let guest_prog = rootfs.join("bin").join("guestn");
+    std::fs::copy(&normal, &guest_prog)
+        .unwrap_or_else(|e| panic!("copy {} -> {}: {e}", normal.display(), guest_prog.display()));
+
+    let mut binds = host_runtime_binds();
+    binds.push(("/probe".to_string(), probe.clone()));
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+        env: Vec::new(),
+    };
+
+    let read_report = |tag: &str| -> String {
+        std::fs::read_to_string(probe.join("cmdline-report"))
+            .unwrap_or_else(|e| panic!("[{tag}] the guest did not write its cmdline report: {e}"))
+    };
+
+    // ---- arm S: SUBSTITUTED -> argv[0] is the interpreter's GUEST path, never the host path ------
+    let _ = std::fs::remove_file(probe.join("cmdline-report"));
+    let run_s = run_native(
+        &["/bin/guest".to_string(), "engine".to_string()],
+        &plan,
+        false,
+    )
+    .expect("traced run of the substituted guest");
+    let report_s = read_report("substituted");
+    eprintln!(
+        "[argv0] substituted exit={} interpreter={:?} cmdline={report_s:?}",
+        run_s.exit_code, run_s.interpreter
+    );
+    assert_eq!(
+        run_s.interpreter.as_deref(),
+        Some(MISSING),
+        "the engine must have substituted"
+    );
+    assert_eq!(
+        run_s.exit_code, 9,
+        "the guest must run (81..84 mean it could not read/write)"
+    );
+    assert_eq!(
+        report_s,
+        format!("{MISSING}|/bin/guest|engine|"),
+        "the kernel argv[0] must be the interpreter's GUEST path ({MISSING}); a <rootfs>/...\n\
+         prefix would be the translated HOST path the engine writes at PATH_OFFSET"
+    );
+    assert!(
+        !report_s.contains(&rootfs.display().to_string()),
+        "argv[0] leaked the translated HOST path {:?}: {report_s:?}",
+        rootfs.display()
+    );
+
+    // ---- arm N: NOT SUBSTITUTED -> argv[0] is the guest PROGRAM path, with no interpreter prefix --
+    let _ = std::fs::remove_file(probe.join("cmdline-report"));
+    let run_n = run_native(
+        &["/bin/guestn".to_string(), "engine".to_string()],
+        &plan,
+        false,
+    )
+    .expect("traced run of the ordinary guest");
+    let report_n = read_report("not-substituted");
+    eprintln!(
+        "[argv0] not-substituted exit={} interpreter={:?} cmdline={report_n:?}",
+        run_n.exit_code, run_n.interpreter
+    );
+    assert_eq!(
+        run_n.interpreter, None,
+        "an on-host interpreter must not be substituted"
+    );
+    assert_eq!(run_n.exit_code, 9, "the guest must run");
+    assert_eq!(
+        report_n, "/bin/guestn|engine|",
+        "with no substitution the kernel argv[0] must stay the guest PROGRAM path, unchanged - a\n\
+         substitution here would be the NON-substituted regression this arm guards"
+    );
+}

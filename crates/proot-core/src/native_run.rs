@@ -573,7 +573,12 @@ pub fn run_native(argv: &[String], plan: &RunPlan, strict: bool) -> Result<Nativ
             ARGV_SLOTS
         ));
     }
-    let argv_extra_bytes: usize = argv[1..].iter().map(|a| a.len() + 1).sum();
+    // The kernel-level argv[0] under a substitution is the interpreter's GUEST path, published as its
+    // own string in this region so the engine's rewrite of the exec PATH cannot drag the host path
+    // into it (2026-11-09, p7 argv0). It is CHARGED here, not exempted, so its length is refused by
+    // name like every other argument string rather than silently overflowing the region.
+    let argv_extra_bytes: usize = argv[1..].iter().map(|a| a.len() + 1).sum::<usize>()
+        + interpreter.as_deref().map_or(0, |i| i.len() + 1);
     if argv_extra_bytes > ARGV_EXTRA_CAPACITY {
         return Err(anyhow!(
             "argv strings after argv[0] total {} bytes and do not fit the {} byte region this engine \
@@ -713,9 +718,11 @@ fn child_main(
 
         // The exec path published in the shared page. Under an interpreter substitution this is the
         // guest's OWN interpreter (its PT_INTERP), not the guest binary: the kernel cannot open that
-        // path on the host, so the engine execs the interpreter and hands it the guest as `argv[1]`
+        // path on the host, so the engine execs the interpreter and hands the guest as `argv[1]`
         // (2026-11-09, p7 interp). `guest_interpreter` only returns a value when the interpreter is
         // really absent on the host and present in the rootfs, so an ordinary guest is unchanged.
+        // The engine REWRITES this region to the translated host path at the execve stop, so nothing
+        // else may point at it - in particular argv[0] (below) does not.
         let exec_path = interpreter.unwrap_or(guest_path);
         write_cstr(page.add(PATH_OFFSET), exec_path);
         // argv as the KERNEL receives it. Without a substitution it is the guest's own argv, with
@@ -727,20 +734,29 @@ fn child_main(
         // still sees its own argv[0].
         write_cstr(page.add(ARGV0_OFFSET), &argv[0]);
         let argv_slots = page.add(ARGV_OFFSET) as *mut *const nix::libc::c_char;
+        // Every string after argv[0] is copied into the region after the header, the interpreter's
+        // own argv[0] string first under a substitution. The sizes were validated in `run_native`
+        // before this fork (including the interpreter string), so these writes cannot run off the
+        // page; the terminating null goes into the slot after the last entry.
+        let mut arg_cursor = page.add(ARGV_EXTRA_OFFSET);
         // The slot the guest's argv[0] goes in: 1 under a substitution (after the interpreter's own
         // argv[0]), 0 otherwise.
         let prog_slot = match interpreter {
-            Some(_) => {
-                *argv_slots = page.add(PATH_OFFSET) as *const nix::libc::c_char;
+            Some(interp) => {
+                // The kernel's argv[0] is the INTERPRETER, and the guest reads it through
+                // /proc/<pid>/cmdline. It is published as its OWN string holding the interpreter's
+                // GUEST path (e.g. /lib/ld-linux-aarch64.so.1), NOT as a pointer into PATH_OFFSET:
+                // the engine rewrites PATH_OFFSET to the translated HOST path at the execve stop, so
+                // a pointer there would leak the host path into argv[0] - the divergence this cell
+                // exists to prevent (2026-11-09, p7 argv0, measured against proot).
+                write_cstr(arg_cursor, interp);
+                *argv_slots = arg_cursor as *const nix::libc::c_char;
+                arg_cursor = arg_cursor.add(interp.len() + 1);
                 1
             }
             None => 0,
         };
         *argv_slots.add(prog_slot) = page.add(ARGV0_OFFSET) as *const nix::libc::c_char;
-        // Every LATER entry is copied into the region after the header. The sizes were validated in
-        // `run_native` before this fork (including the extra interpreter slot), so these writes
-        // cannot run off the page; the terminating null goes into the slot after the last entry.
-        let mut arg_cursor = page.add(ARGV_EXTRA_OFFSET);
         for (slot, arg) in argv.iter().skip(1).enumerate() {
             write_cstr(arg_cursor, arg);
             *argv_slots.add(prog_slot + 1 + slot) = arg_cursor as *const nix::libc::c_char;
