@@ -62,6 +62,7 @@ podnext [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [-- <CMD_ARGS>...]
 |--------|-------|-------------|
 | `--help` | `-h` | Show help |
 | `--version` | `-V` | Show version |
+| `--engine <ENGINE>` | | Container engine: `native` (in-tree ptrace engine, the default) or `proot` (host binary, legacy) |
 | `--rootfs <PATH>` | `-r` | Use PATH as guest root filesystem |
 | `--bind <HOST:GUEST>` | `-b` | Bind mount (repeatable) |
 | `--pwd <DIR>` | `-w` | Set working directory |
@@ -731,7 +732,7 @@ can be re-verified with `grep`.
 | `PDN_BACKUP_DIR` | Backup destination | `crates/pn-next/src/backup_restore/mod.rs:98` |
 | `PDN_CONTAINERS_DIR` | Container store root | `crates/pn-next/src/backup_restore/mod.rs:87` |
 | `PDN_GITOPS_DIR` | GitOps manifest directory | `crates/pn-next/src/gitops/mod.rs:483` |
-| `PROOT_BIN` | Path to the `proot` binary (default: resolved from `PATH`) | `crates/podnext/src/native.rs:129`, `crates/proot-core/src/lib.rs:72` |
+| `PROOT_BIN` | Path to the `proot` binary. Optional: read only by the `--engine proot` path, which is no longer the default | `crates/podnext/src/native.rs:129`, `crates/proot-core/src/lib.rs:72` |
 | `RUNTIME_DIR` | Directory holding session runtime state | `crates/proot-distro-core/src/session.rs:25` |
 | `UML4TERMUX_RUNTIME` | Select the uml4termux runtime | `crates/proot-distro-core/src/runtime.rs:205` |
 | `TMPDIR` | Temp base; falls back to `$PREFIX/tmp`, never `/tmp` | `crates/proot-distro-core/src/paths.rs:24` |

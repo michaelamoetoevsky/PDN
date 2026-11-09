@@ -246,6 +246,26 @@ These are claims the project cannot currently make, listed so that the absence i
 - The `podnext run … -- <cmd>` quoting table.
 - A soak run proving no guest processes survive a forced stop.
 
+## Container engine: what the native path does not do yet
+
+The default engine runs real containers with no `proot` binary, and these limits are measured rather than
+assumed. None of them blocks a normal shell session; all of them are visible if you look.
+
+- **Identity is mapped to zero.** `getuid`, `geteuid`, `getgid` and `getegid` answer `0` inside the guest,
+  which mirrors what the legacy path does with `--change-id=0:0:0`. The mapping can be turned off for a run
+  with `PDN_NATIVE_NO_ID_MAP=1`, and then the calls report the host identity instead.
+- **`st_uid`/`st_gid` in `stat` results are not rewritten**, so `ls -l` prints the host's numeric uid next to
+  each file even though the file is the guest's.
+- **`argv[0]` of a program the guest spawns is the guest interpreter** under the native engine, because the
+  engine invokes the interpreter that lives inside the rootfs with the program as its argument. The program's
+  own `argv[0]` is preserved through the interpreter's `--argv0` option where the interpreter has one. The same
+  shows in `/proc/<pid>/cmdline`.
+- **Five `proot` command line features are not implemented by the native engine**: `--kill-on-exit`,
+  `--link2symlink`, `--sysvipc`, `-L`, and `--change-id`. Use `--engine proot` when a workload needs them.
+- **The guest's `/` listing is the rootfs itself.** The legacy path additionally exposes Android host
+  directories (`/apex`, `/system`, `/sdcard`, `/vendor` and others) through its own binds; the mechanism behind
+  that is not established, so the difference is recorded rather than explained away.
+
 ## Deferred to v0.3.0
 
 - **OCI image store and registry transport** (roadmap section 4.4): blob store, manifest cache,

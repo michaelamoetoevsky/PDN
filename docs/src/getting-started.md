@@ -38,6 +38,22 @@ pkg install android-ndk
 cargo build --release --target aarch64-linux-android
 ```
 
+## Which Command Is PDN's, and Where Its Containers Live
+
+Two programs can be installed at the same time on Termux and they share nothing:
+
+| program | what it is | container store |
+|---|---|---|
+| `podnext` | this project | `$HOME/.podnext/containers/<name>/rootfs` |
+| `proot-distro` | the Termux package this project replaces; a separate program with its own CLI and its own store | its own layout under the Termux prefix |
+
+So if `podnext list` shows your container but `proot-distro login <name>` answers `container '<name>' is not
+installed`, nothing is broken: the second command is a different program looking in a different place. PDN's
+commands all start with `podnext`.
+
+Containers run on PodNext's own engine by default, which does not need a `proot` binary at all; `--engine proot`
+selects the legacy path. See [Container Engines](engines.md).
+
 ## Quick Start
 
 ### 1. Search for Container Images
