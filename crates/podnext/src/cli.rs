@@ -133,13 +133,35 @@ pub(crate) struct Cli {
     )]
     pub(crate) qemu: Option<String>,
 
+    // SHORT FORM CORRECTED 2026-11-09 to follow the reference (measured from the installed
+    // `proot --help`): there, `--link2symlink` is `-l`, and `-0` belongs to `--root-id`. PDN had
+    // `-0` on this flag, so a reader of the proot documentation asked for root identity and silently
+    // got hardlink emulation instead. `-0` now carries the reference's meaning and refuses by name
+    // in `main.rs`, because the guest identity is already mapped.
+    // No short form: the reference's `-l` is taken by `daemon logs --lines`, and adding it globally
+    // makes clap PANIC for that command only - measured: `podnext daemon logs --help` exited 101 with
+    // "Short option names must be unique for each argument, but '-l' is in use by both 'lines' and
+    // 'link2symlink'". The help-dump gate caught it as a screen that printed <<exit 101>>, which is
+    // why that gate exists. `-0` was removed above because the reference gives it to `--root-id`.
     #[arg(
-        short = '0',
         long = "link2symlink",
         global = true,
         help = "Enable hardlink emulation via symlinks"
     )]
     pub(crate) link2symlink: bool,
+
+    // The reference's `-0` / `--root-id`: "make current user appear as root and fake its
+    // privileges". Accepted here so the refusal can name it and give the reason, and short = '0'
+    // matches the reference spelling. Measured with a decoy PROOT_BIN: the generated proot argv is
+    // 139 arguments and byte-identical with and without `-0`, and `proot -0` on this device reports
+    // uid 0 where proot alone reports uid 10396 - which is what PDN already does everywhere.
+    #[arg(
+        short = '0',
+        long = "root-id",
+        global = true,
+        help = "Make the guest appear as root (refused: already mapped)"
+    )]
+    pub(crate) root_id: bool,
 
     #[arg(
         long = "no-sysvipc",

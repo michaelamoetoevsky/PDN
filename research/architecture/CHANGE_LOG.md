@@ -2013,4 +2013,60 @@ assertion, and the file was restored from a saved copy (verified identical) afte
 not refused, because the binary under test was the one the SABOTAGE build had just produced - the same
 artifact-provenance class as the earlier `CARGO_TARGET_DIR` error. The binary was rebuilt from the restored
 source (mtime `18:53:26`, three occurrences of the new refusal string) and the battery re-run before any
-conclusion was drawn.
+conclusion was drawn.## Parity: `-0` means `--root-id` now, and both inert flags say so by name (2026-11-09 20:05 WIB)
+
+**Found by measuring the reference instead of trusting PDN's own table.** The installed `proot --help` says:
+
+```
+    --kill-on-exit       Kill all processes on command exit.
+    -0, --root-id        Make current user appear as "root" and fake its privileges.
+    -i *string*, --change-id=*string*   Make current user and group appear as *string* "uid:gid".
+    --link2symlink, -l   Replace hard links with symlinks, pretending they are really hardlinks
+    --sysvipc            Handle System V IPC syscalls in proot
+    -L                   Correct the size returned from lstat for symbolic links.
+```
+
+PDN's `docs/src/cli-reference.md:70` claimed `-0` was `--link2symlink`, and `crates/podnext/src/cli.rs`
+defined it that way. So an operator reading the proot documentation asked for **root identity** and silently got
+**hardlink emulation**. Two further measurements:
+
+- `proot -0 /bin/sh -c 'id -u'` prints **0**; the same command without `-0` prints **10396**. The reference's `-0`
+  is about identity, confirmed on this device.
+- A decoy `PROOT_BIN` that records its arguments (`--engine proot`, since the default no longer touches it) shows
+  PDN generates **139 argv entries, byte-identical** with no flag, with `-0`, and with `--link2symlink`. PDN already
+  passes `--kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0` unconditionally, so both flags were
+  accepted and then changed nothing - the exact class this project refuses elsewhere (#62/#63).
+
+**Changes.**
+
+- `cli.rs`: `--link2symlink` loses `short = '0'`; a new `-0, --root-id` carries the reference's spelling and help.
+- `main.rs`: `-0` / `--root-id` refuse before any work, naming themselves and the measured reason ("the guest is
+  already mapped to root by `--change-id=0:0:0`, so the flag would be accepted and never enforced: the measured
+  proot argv is byte-identical with and without it"). A stale comment two blocks below, which still said the
+  engine default was `proot`, was corrected to `native` with its date.
+- The reference's `-l` for `--link2symlink` is deliberately NOT added: `daemon logs` already owns `-l` for
+  `--lines`, and a global short makes clap panic for that one command - measured, `podnext daemon logs --help`
+  exited 101 with "Short option names must be unique for each argument, but '-l' is in use by both 'lines' and
+  'link2symlink'". The reason is written where the flag is defined.
+- `research/cli-help-baseline.txt` re-recorded after measuring the diff: **123 screens, 0 screens reporting
+  `<<exit 101>>`**, 4956 to 5119 lines (one `--root-id` entry per screen), 143 hunks, and **zero** diff lines
+  outside the link2symlink/root-id/engine block.
+
+**Measured behaviour after the change.**
+
+| argument | before | after |
+|---|---|---|
+| `-0` | accepted, changed nothing (argv byte-identical) | exit 1, named refusal naming `--change-id=0:0:0` |
+| `--root-id` | exit 2, "unexpected argument" | exit 1, named refusal |
+| `--link2symlink` | accepted, changed nothing | accepted; the guest runs and prints `OK` |
+| `-l` | exit 2 | exit 2, deliberately: the short form collides with `daemon logs --lines` |
+
+`crates/podnext/tests/stub_refusals.rs` gains
+`root_id_refuses_by_name_because_the_guest_is_already_root`, which asserts exit 1 (not 2) for both spellings, the
+flag named in the message, the measured reason present, and that `daemon logs --help` still renders with exit 0 -
+the last line is the unit-speed version of the collision the help-dump gate caught. 7 passed, 0 failed; with the
+refusal disabled (`if false && cli.root_id`) the test went red on its own assertion, and the file was restored from
+a saved copy (verified identical).
+
+**CI for the previous batch is green**: `7f25e43` reports 15 success and 0 non-success, which covers the flip, the
+optional-proot work, the user documentation, the login refusals and the release entry.

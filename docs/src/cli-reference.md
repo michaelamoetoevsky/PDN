@@ -67,7 +67,8 @@ podnext [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [-- <CMD_ARGS>...]
 | `--bind <HOST:GUEST>` | `-b` | Bind mount (repeatable) |
 | `--pwd <DIR>` | `-w` | Set working directory |
 | `--qemu <BIN>` | `-q` | Execute through QEMU user-mode |
-| `--link2symlink` | `-0` | Enable hardlink emulation via symlinks |
+| `--link2symlink` | | Enable hardlink emulation via symlinks. No short form: the reference's `-l` is taken by `daemon logs --lines` |
+| `-0, --root-id` | `-0` | Make the guest appear as root. Refused by name: every guest id is already mapped to root through `--change-id=0:0:0` |
 | `--no-sysvipc` | | Disable System V IPC emulation |
 | `--kernel <VER>` | | Override kernel release string |
 | `--hostname <NAME>` | | Set hostname |

@@ -183,6 +183,19 @@ async fn run() -> Result<()> {
         );
     }
 
+    // Same class again (issue #63), measured with a decoy PROOT_BIN on 2026-11-09: the generated
+    // proot argv is 139 arguments and byte-identical with and without `-0` / `--root-id`, because
+    // `proot-core` already passes `--change-id=0:0:0` unconditionally. On the reference,
+    // `proot -0 <cmd>` reports uid 0 where plain `proot <cmd>` reports uid 10396 - and PDN's guest
+    // is already root, so the flag cannot change anything on either engine.
+    if cli.root_id {
+        anyhow::bail!(
+            "--root-id (the reference's `-0`) is not implemented: the guest is already mapped to \
+             root by `--change-id=0:0:0`, so the flag would be accepted and never enforced (the \
+             measured proot argv is byte-identical with and without it). Drop the flag."
+        );
+    }
+
     // Direct execution mode (like proot) - clap parsed case
     if cli.command.is_none() && cli.rootfs.is_some() {
         return execute_direct(&cli, &cli_trailing_args).await;
@@ -193,7 +206,8 @@ async fn run() -> Result<()> {
         pn_trace!("DEBUG main: Executing command: {:?}", cmd);
         // `-b/--bind` is a global option, so `login` and `run` must see it too; it used to
         // reach only the direct-execution path below. `--engine` is likewise global, so a run
-        // or login selects its engine from it (default `proot`, unchanged).
+        // or login selects its engine from it (default `native` since 2026-11-09; `proot` remains
+        // one flag away).
         return execute_command(cmd, cli.bind.clone(), cli.engine).await;
     }
 

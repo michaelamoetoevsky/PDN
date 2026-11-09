@@ -196,3 +196,37 @@ fn login_refuses_the_unimplemented_proot_flags_by_name_with_a_remedy() {
     assert_eq!(code, 2, "a typo must still be a parse error: {stderr}");
     assert!(stderr.contains("unexpected argument"), "{stderr}");
 }
+
+/// The installed `proot --help` gives `-0` to `--root-id` ("make current user appear as root and fake
+/// its privileges") and `-l` to `--link2symlink`. PDN had `-0` on `--link2symlink`, so a reader of
+/// the proot documentation asked for root identity and silently got hardlink emulation. PDN's guest
+/// is already root - `--change-id=0:0:0` is passed unconditionally, measured with a decoy PROOT_BIN:
+/// 139 argv entries, byte-identical with and without the flag, and `proot -0` on this device reports
+/// uid 0 where plain proot reports uid 10396 - so `-0` and `--root-id` now refuse by name, under the
+/// reference's own spelling.
+#[test]
+fn root_id_refuses_by_name_because_the_guest_is_already_root() {
+    for arg in ["-0", "--root-id"] {
+        let (code, _stdout, stderr) = run(&["run", "no-such-container", arg, "--", "/bin/sh"]);
+        assert_ne!(
+            code, 2,
+            "{arg} must be parsed, not read as a typo: {stderr}"
+        );
+        assert_eq!(code, 1, "{arg} must refuse with exit 1: {stderr}");
+        assert!(
+            stderr.contains("--root-id"),
+            "the message must name the flag in the reference's spelling: {stderr}"
+        );
+        assert!(
+            stderr.contains("--change-id=0:0:0"),
+            "and the measured reason: {stderr}"
+        );
+    }
+
+    // The short flag that moved must not collide with a subcommand's own: `daemon logs` owns `-l`,
+    // and making `-l` global made clap panic for that one command only ("Short option names must be
+    // unique for each argument, but '-l' is in use by both 'lines' and 'link2symlink'"). The
+    // help-dump gate saw it as a screen printing <<exit 101>>; this is the same check at unit speed.
+    let (code, _stdout, stderr) = run(&["daemon", "logs", "--help"]);
+    assert_eq!(code, 0, "every subcommand's help must render: {stderr}");
+}
