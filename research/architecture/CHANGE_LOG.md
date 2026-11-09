@@ -2483,3 +2483,32 @@ Measured after: `cargo test -p proot-core --test native_exec_translation` -> 14 
 
 The pattern behind both: a rule derived from ONE observation on ONE host is a hypothesis, not a rule - and the
 harness that disagrees with it is usually right.
+
+### I "fixed" a rule that was already right, and CI proved it (2026-11-10 02:20 WIB)
+
+Twice CI failed `a_relative_path_is_translated_against_the_plans_cwd` with `exit=126`, and twice I changed the
+bootstrap-chdir exemption to a cleverer rule: first "the path is unreadable at that stop", then also "already a host
+path inside the rootfs". Both were inferences from ONE observation on ONE host, and the second one still failed on
+the runner.
+
+The measurement that settles it was never taken: what `execve_handled` actually says at each chdir. Taken now, with
+the engine's own debug line:
+
+```text
+DEBUG chdir pid_child=true execve_handled=false seen=Ok(None)          <- the engine's bootstrap chdir
+DEBUG chdir pid_child=true execve_handled=true  seen=Ok(Some("/etc"))  <- the guest's own `cd`
+```
+
+So the ORIGINAL rule - `number == SYS_chdir && pid == child && !execve_handled` - was correct and deterministic:
+the flag is set at the EXECVE ENTRY stop, which comes AFTER the bootstrap chdir and BEFORE anything the guest runs.
+My earlier claim that "the flag is already true at the bootstrap" was an assumption dressed as a measurement: the
+refusals I saw in that run came from the write-side calls I was adding at the same time, not from chdir, and I
+never checked which syscall produced them.
+
+Restored to the deterministic rule, and `cargo test -p proot-core --test native_exec_translation` is
+**14 passed, 0 failed**. No heuristics on syscall arguments remain in that path: engine bookkeeping the engine
+already keeps is the identity of its own call.
+
+The lesson is older than this file and worth repeating anyway: when a rule derived from one host fails on another,
+measure the quantity the rule is about before inventing a second rule to cover the gap - and read WHICH syscall a
+refusal came from before concluding anything about the syscall you were working on.

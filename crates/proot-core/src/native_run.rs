@@ -1330,24 +1330,17 @@ fn parent_loop(
                     // path is the guest's and goes through the table. Deciding it by readability rather than
                     // by pid or by comparing host paths keeps one rule: the engine never refuses its own
                     // setup call, and never leaves a guest call to the kernel.
-                    // TWO branches, both measured. On this device the engine's own chdir is
-                    // UNREADABLE at its stop (`seen=Ok(None)`), which is why readability was the first
-                    // rule. On the CI runner that same call IS readable - it carries the translated host
-                    // cwd - so readability alone translated it a second time and the child exited 126
-                    // (`a_relative_path_is_translated_against_the_plans_cwd`: cwd=Some("/probe")
-                    // exit=126). A path that already lies under the resolved rootfs is the other
-                    // observable form of the same call, so both are exempt:
-                    //   unreadable  OR  already a host path inside the rootfs
-                    let engine_bootstrap_chdir = if number == nix::libc::SYS_chdir as i64 {
-                        match peek_cstr(pid, args[0]) {
-                            Ok(None) | Err(_) => true,
-                            Ok(Some(raw)) => resolve_cwd(plan, "/")
-                                .map(|root| std::path::Path::new(&raw).starts_with(&root))
-                                .unwrap_or(false),
-                        }
-                    } else {
-                        false
-                    };
+                    // DETERMINISTIC, and measured on both platforms (2026-11-10): the bootstrap chdir of a
+                    // run reports `pid_child=true execve_handled=false`, and the guest's own `cd` reports
+                    // `execve_handled=true`. An earlier version of this rule tried readability and then
+                    // "already a host path", because I had concluded - WITHOUT measuring - that
+                    // `execve_handled` was already true at the bootstrap. It is false, the flag is set later
+                    // at the execve entry stop, and those heuristics turned a working exemption into a
+                    // double translation that failed CI (`cwd=Some("/probe") exit=126`). Bookkeeping the
+                    // engine already keeps beats any inference from the syscall's arguments.
+                    let engine_bootstrap_chdir = number == nix::libc::SYS_chdir as i64
+                        && pid == child
+                        && !slots[idx].execve_handled;
                     // TWO-PATH CALLS (2026-11-09). `renameat`/`renameat2` and `linkat` each take two guest
                     // paths and the one-path table cannot express them, so they were refused by name while
                     // the proot arm ran `mv` and `ln`. Both go through the SAME helper the one-path calls
