@@ -1898,4 +1898,68 @@ in `p7-2`/`p7-flip` and none of them blocks the default, which is why the flip w
 **Provenance of the measurement:** binary `target/debug/podnext` mtime `17:48:26`, built by `heavy` (exit 0, 39 s)
 with `CARGO_TARGET_DIR`/`PDNEXT_BIN`/`TMPDIR`/`PROOT_BIN`/`LD_LIBRARY_PATH` all unset in the parent shell; the
 `--help` of that same binary shows `Container engine: native (default) or proot`, so the flag default is read from
-the artifact rather than from the source that was edited.
+the artifact rather than from the source that was edited.## p7 step 8, second half: proot is optional, and the no-execve claim is proven (2026-11-09 18:40 WIB)
+
+**What the operator hit.** Running `proot-distro login` produced `Error: container 'deb-renamed' is not
+installed.` and the impression that containers still need proot. Two separate causes, both measured:
+
+1. `command -v proot-distro` resolves to `/data/data/com.termux/files/usr/bin/proot-distro`, which is a **Python
+   script** (`#!/data/data/com.termux/files/usr/bin/python3.14`) - the REFERENCE implementation, a different
+   program with its own container store. It never reads `~/.podnext`, so it answered about a store PDN does not
+   use. Nothing in this project changed that; the name collision did the damage.
+2. `podnext doctor` still reported the proot binary as a **`fail`** row whenever it was missing, which is true to
+   the old default and false now. That is the row that told an operator a package was required.
+
+**Changes, all surgical, all with the requirement quoted in the source.**
+
+- `crates/podnext/src/doctor.rs` (`proot_binary_check`): both "missing"/"broken" arms changed from `Verdict::Fail`
+  to `Verdict::Warn`, with a comment naming the requirement verbatim - WORKLIST section Z step 8, "doctor reports
+  the proot binary as optional (not a `fail` row)" - and a detail that names the one consequence: only
+  `--engine proot` is affected.
+- `crates/podnext/tests/doctor_contract.rs`: `a_failing_check_fails_the_command_and_names_itself` (which asserted
+  the opposite) is replaced by `a_missing_proot_is_a_warning_not_a_failure`, asserting the row starts with `warn`,
+  carries the path it came from, and that no `fail` row names proot.
+- `install.sh:89-106`: `pkg install -y proot` and `pkg install -y proot-distro` are no longer run behind the
+  operator's back. proot is installed only with `PDN_WITH_PROOT=1` (the legacy `--engine proot` path needs it),
+  and the reference `proot-distro` only with the same opt-in, with a comment explaining the store difference.
+- `scripts/own_engine_acceptance.py`: a THIRD arm, which supplies the proof the requirement demands in its own
+  words ("dibuktikan juga dengan melacak execve anak: tidak ada execve menuju path biner proot"). `PROOT_BIN`
+  points at a decoy that writes a marker if it is ever executed, so the marker's absence is the proof and its
+  presence is the counter-example. PASS now requires the default arm AND the decoy arm; a default that runs while
+  the decoy fires reports the counter-example instead of passing.
+
+**Measured, in this order.**
+
+```
+$ PROOT_BIN=/definitely/not/here/proot podnext doctor
+  warn  proot binary  /definitely/not/here/proot: No such file or directory (os error 2) - optional: the
+        default engine is podnext's own, so only `--engine proot` is affected
+  14 checks: 0 failed, 3 warnings, 2 unknown          exit=0
+```
+
+Negative control, run against the real source: the missing-binary arm was put back to `Verdict::Fail`, rebuilt,
+and the new test went red on its own assertion, quoting the row -
+
+```
+test a_missing_proot_is_a_warning_not_a_failure ... FAILED
+  a missing proot must be a warning, not a failure: fail  proot binary  /definitely/not/here/proot: ...
+test result: FAILED. 3 passed; 1 failed
+```
+
+- then the file was restored from a saved copy (verified identical) and the same target passed
+`4 passed; 0 failed`.
+
+Acceptance harness, canonical binary, no engine flag:
+
+```
+[default] exit=0 ran=True
+[engine-native] exit=0 ran=True
+[decoy] exit=0 ran=True proot-executed=False
+[decoy] proof: the guest ran and PROOT_BIN was never executed (no decoy-proot-ran)
+PASS: the DEFAULT path runs a container with no proot binary available to the process,
+      and a decoy PROOT_BIN proves the proot binary is never executed either
+```
+
+**Still open in step 8, and not claimed as done:** the demonstration was run on a fixture store, and the
+onboarding/documentation half of the same step (the four-part user documentation that this project requires for
+every feature) is not finished; neither is a release entry.

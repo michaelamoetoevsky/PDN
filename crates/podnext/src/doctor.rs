@@ -83,6 +83,13 @@ fn version_token(text: &str) -> Option<String> {
 }
 
 fn proot_binary_check() -> Check {
+    // OPTIONAL SINCE 2026-11-09 (p7 step 8). The default engine is podnext's own in-tree ptrace
+    // engine, so a host without `proot` runs containers; only `--engine proot` needs the binary.
+    // This check therefore WARNS when it is missing instead of failing. The old `Fail` was correct
+    // while proot was the default and is now a false alarm - it sent operators looking for a
+    // package they no longer need, which is exactly the confusion reported from real use.
+    // Requirement, verbatim from workbench/WORKLIST.md section Z step 8: "doctor reports the proot
+    // binary as optional (not a `fail` row)".
     // The same resolver the rest of PDN uses, so a relocated prefix is reported as the path
     // the run path would actually use rather than a second guess at it.
     let binary = std::env::var("PROOT_BIN").unwrap_or_else(|_| {
@@ -114,15 +121,25 @@ fn proot_binary_check() -> Check {
             } else {
                 Check::new(
                     "proot binary",
-                    Verdict::Fail,
+                    Verdict::Warn,
                     format!(
-                        "{binary} exited {:?} without a version line",
+                        "{binary} exited {:?} without a version line - optional: the default \
+                         engine is podnext's own, so only `--engine proot` is affected",
                         out.status.code()
                     ),
                 )
             }
         }
-        Err(err) => Check::new("proot binary", Verdict::Fail, format!("{binary}: {err}")),
+        // Absent, not broken: the default engine never spawns it, so this is a warning that names
+        // the one thing it does affect rather than a failure implying containers cannot run.
+        Err(err) => Check::new(
+            "proot binary",
+            Verdict::Warn,
+            format!(
+                "{binary}: {err} - optional: the default engine is podnext's own, so only \
+                 `--engine proot` is affected"
+            ),
+        ),
     }
 }
 

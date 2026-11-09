@@ -69,19 +69,31 @@ fn the_host_checks_run_and_the_exit_status_follows_the_verdicts() {
 }
 
 #[test]
-fn a_failing_check_fails_the_command_and_names_itself() {
-    // `PROOT_BIN` is read by the check, so a missing binary is a deterministic failure on any
-    // machine instead of an assumption about what the host has installed.
-    let (code, stdout, stderr) =
+fn a_missing_proot_is_a_warning_not_a_failure() {
+    // p7 step 8, verbatim from workbench/WORKLIST.md section Z: "doctor reports the proot binary as
+    // optional (not a `fail` row)". The default engine is podnext's own, so a host without proot
+    // runs containers and only `--engine proot` is affected. This replaces the test that asserted
+    // the opposite - and it still detects a revert: restoring `Verdict::Fail` makes this row say
+    // "fail" and the first assertion goes red.
+    let (_code, stdout, _stderr) =
         run_with(&["doctor"], &[("PROOT_BIN", "/definitely/not/here/proot")]);
-    assert_eq!(code, 1, "a check that fails must exit 1: {stdout}{stderr}");
+    let row = stdout
+        .lines()
+        .find(|line| line.contains("proot binary"))
+        .unwrap_or_else(|| panic!("the proot row must still be reported: {stdout}"));
     assert!(
-        reported_failures(&stdout) >= 1 && stdout.contains("proot binary"),
-        "the failing row must name the check: {stdout}"
+        row.trim_start().starts_with("warn"),
+        "a missing proot must be a warning, not a failure: {row}"
     );
     assert!(
-        stdout.contains("/definitely/not/here/proot"),
-        "the row must carry the value it came from: {stdout}"
+        row.contains("/definitely/not/here/proot"),
+        "the row must carry the value it came from: {row}"
+    );
+    assert!(
+        !stdout
+            .lines()
+            .any(|l| l.trim_start().starts_with("fail") && l.contains("proot binary")),
+        "no failing row may name the proot binary any more: {stdout}"
     );
 }
 

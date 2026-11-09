@@ -86,14 +86,26 @@ for cmd in curl tar dpkg sha256sum; do
     fi
 done
 
-# Check for proot and proot-distro
+# proot is OPTIONAL since 2026-11-09 (p7 step 8): the default engine is podnext's own in-tree
+# ptrace engine, so a system without proot runs containers. The binary is needed only by the legacy
+# `--engine proot` path. It is no longer installed behind the operator's back - opt in with
+# PDN_WITH_PROOT=1.
 if ! command -v proot &> /dev/null; then
-    echo -e "${YELLOW}Installing proot...${NC}"
-    pkg install -y proot
+    if [ "${PDN_WITH_PROOT:-0}" = "1" ]; then
+        echo -e "${YELLOW}Installing optional proot (legacy --engine proot only)...${NC}"
+        pkg install -y proot
+    else
+        echo -e "${BLUE}proot not installed - optional: the default engine is podnext's own.${NC}"
+        echo -e "${BLUE}Set PDN_WITH_PROOT=1 to install it for the legacy --engine proot path.${NC}"
+    fi
 fi
 
-if ! command -v proot-distro &> /dev/null; then
-    echo -e "${YELLOW}Installing proot-distro...${NC}"
+# `proot-distro` is the REFERENCE implementation: a different program with its own container store
+# (~/var/lib/proot-distro), which PDN never reads. Installing it silently is exactly what made a
+# command that looks like PDN's ("proot-distro login") answer "container is not installed" about a
+# store PDN does not use. Opt in with PDN_WITH_PROOT=1.
+if ! command -v proot-distro &> /dev/null && [ "${PDN_WITH_PROOT:-0}" = "1" ]; then
+    echo -e "${YELLOW}Installing optional proot-distro (reference implementation)...${NC}"
     pkg install -y proot-distro
 fi
 

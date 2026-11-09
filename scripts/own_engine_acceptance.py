@@ -134,7 +134,7 @@ def main() -> int:
     print(f"fixture  : {fixture_home}")
     print(f"store    : {store}")
 
-    # Two arms. The first is the operator's criterion in its ORIGINAL form (no engine flag, so whatever
+    # Three arms. The first is the operator's criterion in its ORIGINAL form (no engine flag, so whatever
     # the default is must not need proot). The second asks the in-tree engine explicitly, which is the
     # increment that can be demonstrated today: it proves the engine path runs a real guest with no proot
     # binary anywhere, while the default still spawns proot until the interpreter limitation below is
@@ -161,9 +161,46 @@ def main() -> int:
         print(f"  [{label}] exit={proc.returncode} ran={ok}")
         print(f"  [{label}] output: {out.strip()[:300] or '<empty>'}")
 
-    if results.get("default"):
-        print("PASS: the DEFAULT path runs a container with no proot binary available to the process")
+    # THIRD ARM - the no-`execve`-to-proot proof the requirement demands in its own words
+    # ("dibuktikan juga dengan melacak execve anak: tidak ada execve menuju path biner proot").
+    # PROOT_BIN is pointed at a decoy that writes a marker if anything ever executes it, so the
+    # marker's ABSENCE is the proof and its PRESENCE is the counter-example. PATH still carries no
+    # proot, so a pass cannot come from the host having one installed. (A decoy is used instead of a
+    # syscall trace because the engine already traces the guest itself, and because a marker file is
+    # evidence an operator can inspect after the fact.)
+    decoy = fixture_home / "decoy-proot"
+    decoy_marker = fixture_home / "decoy-proot-ran"
+    decoy.write_text(f'#!/bin/sh\n: > "{decoy_marker}"\nexit 0\n')
+    os.chmod(decoy, 0o755)
+    decoy_env = dict(env)
+    decoy_env["PROOT_BIN"] = str(decoy)
+    print("command  : " + " ".join([binary, "run", CONTAINER, "--", "/bin/sh"])
+          + f"   (PROOT_BIN={decoy})")
+    proc = subprocess.run(
+        [binary, "run", CONTAINER, "--", "/bin/sh"],
+        env=decoy_env, capture_output=True, text=True, timeout=180,
+    )
+    out = (proc.stdout or "") + (proc.stderr or "")
+    ran = GUEST_MARKER in out and proc.returncode == 0
+    spawned = decoy_marker.exists()
+    results["decoy"] = ran and not spawned
+    print(f"  [decoy] exit={proc.returncode} ran={ran} proot-executed={spawned}")
+    if spawned:
+        print("  [decoy] COUNTER-EXAMPLE: the engine executed the binary at PROOT_BIN")
+    elif ran:
+        print(f"  [decoy] proof: the guest ran and PROOT_BIN was never executed (no {decoy_marker.name})")
+    else:
+        print("  [decoy] INCONCLUSIVE: the guest did not run, so nothing is proven about execve")
+
+    if results.get("default") and results.get("decoy"):
+        print("PASS: the DEFAULT path runs a container with no proot binary available to the process,")
+        print("      and a decoy PROOT_BIN proves the proot binary is never executed either")
         return 0
+
+    if results.get("default") and not results.get("decoy"):
+        print("PARTIAL: the default path ran the guest, but the no-execve proof did not hold:")
+        print("         PROOT_BIN was either executed (counter-example above) or the guest did not")
+        print("         run, which proves nothing. Treat this as NOT met until the decoy stays silent.")
 
     if results.get("engine-native"):
         print("PARTIAL: --engine native runs the guest with no proot, but the DEFAULT path still spawns")
