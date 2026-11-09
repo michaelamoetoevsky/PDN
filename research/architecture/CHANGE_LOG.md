@@ -1791,4 +1791,67 @@ blocker: the default path still selects proot. What is unproven is the DEFAULT p
 were measured, so the refusal covers "does not fit", not "that window is unmapped or holds a live frame";
 `report.interpreter` records only the FIRST interpreter seen, so a run with two distinct missing interpreters
 under-reports; the x86_64 register arms are compiled but have never been executed (this device is aarch64); and
-the differential harness spawns no descendants, so it cannot detect a regression in this path.
+the differential harness spawns no descendants, so it cannot detect a regression in this path.## p7 extern: a real Debian container runs ordinary shell workloads under the native engine (2026-11-09 17:10 WIB)
+
+**What landed.** `baef0a3` (child worktree `wt-extern`, branch `dept/extern`, base `4bd1c20`; builder plus an
+independent verifier). Parent fast-forwarded master, proved the binary's provenance (fresh mtime `16:59:23`,
+3 occurrences of the new `guest_access` symbol), and re-ran the battery itself.
+
+Three defects, three fixes, all in `crates/proot-core/src/native_run.rs`:
+
+1. **The loader's PROGRAM argument is the execve TARGET, not the caller's argv[0].** My previous brief demanded
+   that "the original argv[0] must survive as argv[1]", which is wrong for the ordinary case: a shell execs
+   `/usr/bin/ls` with `argv[0] = "ls"`, so the loader was told to load a program named `ls` and answered
+   `cannot open shared object file: ls`. The substitution now passes the target's guest path, and preserves the
+   caller's name through the interpreter's own `--argv0`.
+2. **Every execve is translated, not only the first per tracee** - a second execve from the same process (dash's
+   `exec` builtin) was previously skipped.
+3. **`faccessat2` is answered when the host refuses it.** This was the real blocker for a plain `ls /etc`, and it
+   had nothing to do with the loader: Android's seccomp filter traps `faccessat2` (SIGSYS, x8 = 439), the kernel
+   returns without writing x0, Debian's glibc has no `faccessat` fallback, and `dash`'s PATH lookup therefore
+   denies every command (measured: `[ -x /bin/ls ]` answered N where proot answers Y). The engine now resolves
+   the guest path itself and writes the answer into x0 only when the host never answered.
+
+**`--argv0` measured on three loaders rather than assumed** (my brief guessed musl would lack it, and the guess was
+wrong): glibc `ld-linux-aarch64.so.1 --help` lists `--argv0 STRING`; Alpine musl 1.2.4's option table contains
+`argv0`; this host's bionic `/system/bin/linker64` has no such token, so the fallback form applies there and the
+program sees the guest program path as argv[0] - pinned by a test.
+
+**Parent's battery, real 173 MB Debian 13 rootfs (fixture copied read-only out of `deb-renamed` with tar),
+native against proot, same fixture and command:**
+
+| command | native | proot |
+|---|---|---|
+| `ls /etc` | rc 0 | rc 0 |
+| `test -x /bin/ls && echo Y \|\| echo N` | `Y` | `Y` |
+| `command -v ls` | `/usr/bin/ls` | same |
+| `exec /bin/ls /etc` | rc 0 | rc 0 |
+| `ls -l /etc \| head -2` | rc 0, `total 169` | rc 0, `total 173` |
+| `cat /etc/hostname` | `debuerreotype` | same |
+| `ls /usr/bin \| wc -l` | `257` | `257` |
+| `/usr/bin/apt-get --version` | `apt 3.0.3 (arm64)` | same |
+
+Owner test target `cargo test -p proot-core --test native_exec_translation` -> **14 passed** (12 before, two new
+tests, nothing removed or weakened); `native_dynamic_guest` unchanged at 1; differential harness
+`DIFFERENTIAL: EQUAL ...` rc=0; acceptance harness `[default] exit=1 ran=False`, `[engine-native] exit=0
+ran=True`, verdict PARTIAL with the default selection as the only remaining blocker.
+
+**The two children disagreed, and resolving it is part of the record.** The verifier reported that `dept/extern`
+never moved off base, that the change was left uncommitted, and that `ls /etc` still exited 127. The commit
+exists (`baef0a3`, worktree clean) and my measurement of it gives rc 0: the verifier's window closed about 37
+minutes before the builder committed (7119 s against 4888 s), so "no commit" was a timing artefact, and its
+`ls /etc` finding was true of the frozen snapshots it tested (which predate the `faccessat2` fix) and false of
+the final commit. Neither child lied; only the committed artifact could decide, which is why the parent measures
+it before accepting either summary.
+
+**Findings from the verifier that DO stand and are kept:** the `/proc/<pid>/cmdline` of a shell-spawned external
+shows the loader form (`/lib/ld-linux-aarch64.so.1|--argv0|cat|/bin/cat|`) where proot shows `cat|`; `ls -l`
+prints the host uid/gid (`10396`) and a stray mode suffix, the pre-existing `st_uid` gap; `ls /` still differs
+from proot (native = the rootfs exactly, proot also exposes Android host directories, mechanism unestablished);
+and `total 169` against proot's `total 173` in `/etc` is explained by proot's synthetic `/etc/mtab` plus those
+stat columns.
+
+**Named limits:** the glibc `--argv0` path is not exercised end-to-end with a bare name, because a bare name only
+arises through PATH search and `dash`'s `exec <name>` aborts the whole run when the execve target does not exist
+(pre-existing refusal policy, unchanged); `set_robust_list` and `rseq` are also seccomp-trapped and are tolerated
+rather than emulated.
