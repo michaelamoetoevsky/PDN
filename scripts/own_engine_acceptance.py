@@ -168,9 +168,12 @@ def main() -> int:
     if results.get("engine-native"):
         print("PARTIAL: --engine native runs the guest with no proot, but the DEFAULT path still spawns")
         print("         proot, so the operator's requirement is not met yet. Blockers, measured:")
-        print("           * the default still selects proot (deliberate until parity is demonstrated);")
-        print("           * PT_INTERP cannot be translated - a real distro rootfs whose interpreter is")
-        print("             not present at its absolute HOST path will not start under the native engine.")
+        print("           * the default still selects proot (deliberate until the remaining gaps are modelled);")
+        print("           The PT_INTERP blocker that used to be listed here is CLOSED (0ab0e45) and the fork")
+        print("           DESCENDANT case with it (b7c5d49): a real Debian rootfs whose interpreter is absent")
+        print("           from the host now starts, and so do the external programs it executes, because the")
+        print("           engine execs the guest's own interpreter with the program as its argument. What is")
+        print("           still unproven is the DEFAULT path, not the capability.")
         return 1
 
     print("FAIL: neither the default path nor --engine native ran the guest without proot.")

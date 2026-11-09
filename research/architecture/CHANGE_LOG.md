@@ -1730,4 +1730,65 @@ makes the fix load-bearing rather than cosmetic.
 worktree into the SAME `CARGO_TARGET_DIR` produced "one stale-interleave run showing base behaviour"; it cleared
 that with `cargo clean -p proot-core` and re-took every number from the clean rebuild. That is the third
 distinct way the shared target directory has now produced a false reading, and it is why every number in this
-entry comes from a run whose provenance is stated.
+entry comes from a run whose provenance is stated.## p7 descendants: a real container can now run the programs it spawns (2026-11-09 11:45 WIB)
+
+**What landed.** `b7c5d49` (child worktree `wt-desc`, branch `dept/desc`, base `bd8f5f0`; builder plus an
+independent verifier that built both binaries in its own worktrees with its own per-build target directories
+and reproduced the negative control itself). Parent fast-forwarded master, so the child's commit object is
+preserved, and re-measured.
+
+`translate_execve_remote` now applies the SAME three-condition policy the child path already used (it calls
+`guest_interpreter`, it does not re-implement it) and, when it fires, redirects the descendant's exec onto the
+interpreter: the exec path becomes the interpreter's HOST path and the descendant's own argv becomes
+`[<interpreter GUEST path>, <original argv[0]>, <original argv[1]>, ...]`. The new pointer array and the two
+strings are written on the DESCENDANT's stack (`write_substitution_remote` via `peek_cstr`/`poke_bytes` + one
+`PTRACE_SETREGSET`); a layout that does not fit the scratch window is refused BY NAME rather than truncated.
+New helpers: `poke_bytes`, `read_ptr_array`, `stack_pointer` (per-arch).
+
+**A SECOND semantic change rode along, and it is load-bearing - stated plainly.** `translate_path_remote` used to
+refuse any relative path containing `.` or `..`. The descendant's loader issues
+`newfstatat(AT_FDCWD, ".")`, so the run printed its output and still exited 1. The predicate is now
+`escapes = raw.split('/').any(|c| c == "..")` - only `..` is refused, because `.` is the identity and cannot
+escape. The verifier proved the coupling by sabotaging ONLY that relaxation: restoring the `.` refusal yields
+`Error: the native engine did not translate 1 path syscall(s): SYS_newfstatat (79) [relative]`, rc=1. So the
+descendant fix DEPENDS on it; it is a broader change than "descendant substitution" and is recorded here as such,
+with its own in-code comment naming the measurement.
+
+**Verified end to end on a real Debian fixture, both engines, same fixture and command** (parent's own run, with
+the numbers below coming from a binary whose provenance was checked, see the error note):
+
+| case | native | proot |
+|---|---|---|
+| `/bin/sh -c '/bin/dash -c "echo CHILD-RAN"'` | `CHILD-RAN`, rc 0 | `CHILD-RAN`, rc 0 |
+| nested `/bin/dash -c "/bin/dash -c \"echo DEPTH3\""` | `DEPTH3`, rc 0 | `DEPTH3`, rc 0 |
+| with arguments `... echo A0=$0 A1=$1 one two` | `A0=/bin/sh A1=`, rc 0 | identical |
+
+Before the change the first case was `exit=127`, `/bin/sh: 1: /bin/dash: not found`. Owner test target
+`cargo test -p proot-core --test native_exec_translation` -> `12 passed` (11 before); `native_dynamic_guest`
+unchanged at 1 passed; the differential harness (which does NOT exercise descendants) still returns
+`DIFFERENTIAL: EQUAL ...` with rc=0.
+
+**MY OWN MEASUREMENT WAS WRONG FIRST, and the way it was wrong is the lesson.** My first post-integration run
+reported the fix failing (`/bin/dash: not found`). The binary I tested had mtime `09:48:41` while the source was
+`11:22:58`, and it contained **0** occurrences of the new symbol `write_substitution_remote` against **1** of the
+old `needs_normalising` - i.e. it was the previous build. Cause: my shell had picked up `CARGO_TARGET_DIR`
+pointing at a child's target dir, so every `cargo build` I ran wrote THERE and `repo/target/debug/podnext` never
+refreshed - and a `touch` + rebuild kept "succeeding" in 144 s without touching the canonical binary. The same
+leak had `PDNEXT_BIN` pointing at the VERIFIER's worktree binary, so the acceptance harness was testing a foreign
+build. Both were exported into my shell by commands run on behalf of the children. Corrected by unsetting both,
+rebuilding the canonical target dir (verified fresh: mtime `11:33:40`, 6 occurrences of the new symbol), and
+re-measuring - the table above is from that corrected run. THIS IS THE FOURTH DISTINCT false reading caused by
+build-artifact location on this project, and the first where the parent's own environment was the culprit.
+
+**Harness prose corrected.** `scripts/own_engine_acceptance.py` told the operator that "PT_INTERP cannot be
+translated - a real distro rootfs whose interpreter is not present at its absolute HOST path will not start under
+the native engine". That became false at `0ab0e45` and doubly false at `b7c5d49`. The verdict still says
+PARTIAL (`[default] exit=1 ran=False`, `[engine-native] exit=0 ran=True`), and now names the only remaining
+blocker: the default path still selects proot. What is unproven is the DEFAULT path, not the capability.
+
+**Residual risks the verifier named and I am keeping on the record:**
+`DESCENDANT_SCRATCH_BYTES = 0x1000` is a chosen ceiling; neither the free stack nor the guard pages below `sp`
+were measured, so the refusal covers "does not fit", not "that window is unmapped or holds a live frame";
+`report.interpreter` records only the FIRST interpreter seen, so a run with two distinct missing interpreters
+under-reports; the x86_64 register arms are compiled but have never been executed (this device is aarch64); and
+the differential harness spawns no descendants, so it cannot detect a regression in this path.
