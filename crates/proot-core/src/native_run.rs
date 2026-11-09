@@ -445,6 +445,62 @@ fn path_syscall(number: i64) -> Option<PathSyscall> {
             dirfd_arg: Some(0),
         });
     }
+    // WRITE-SIDE PATHS (2026-11-09). The table covered the read side (open/stat/readlink/faccess), so a
+    // guest could READ the rootfs but not change it: `mkdir -p /root/x` in the guest was refused with
+    // "SYS_mkdirat takes a path but this engine has no translation for it", while the proot arm created
+    // the directory. These are the single-path calls the reference translates; each takes its path at
+    // arg1 with the dirfd at arg0, the same shape as openat.
+    if number == nix::libc::SYS_mkdirat as i64 {
+        return Some(PathSyscall {
+            name: "SYS_mkdirat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
+    }
+    if number == nix::libc::SYS_unlinkat as i64 {
+        return Some(PathSyscall {
+            name: "SYS_unlinkat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
+    }
+    if number == nix::libc::SYS_fchmodat as i64 {
+        return Some(PathSyscall {
+            name: "SYS_fchmodat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
+    }
+    if number == nix::libc::SYS_utimensat as i64 {
+        return Some(PathSyscall {
+            name: "SYS_utimensat",
+            arg_index: 1,
+            dirfd_arg: Some(0),
+        });
+    }
+    // `symlinkat(target, newdirfd, linkpath)`: the LINK path is arg2; the target (arg0) is a string the
+    // guest stores, not a path resolved now, so it is left exactly as the guest wrote it.
+    if number == nix::libc::SYS_symlinkat as i64 {
+        return Some(PathSyscall {
+            name: "SYS_symlinkat",
+            arg_index: 2,
+            dirfd_arg: Some(1),
+        });
+    }
+    // 2026-11-09: THE GUEST COULD NOT `cd`. Measured with a real Debian rootfs:
+    //   podnext --engine native run <ctr> -- /bin/sh -c 'cd /tmp; ...'
+    // exited 1 with "the native engine did not translate 2 path syscall(s): SYS_chdir (49) [takes a path but
+    // has no translator]", while the same command on the proot arm ran - so any guest script that changes
+    // directory failed, which is most of them. `chdir` takes its path at arg0 and resolves it against the
+    // process's cwd, which is exactly what `dirfd_arg: None` already means here; `fchdir` takes a descriptor
+    // and is deliberately absent.
+    if number == nix::libc::SYS_chdir as i64 {
+        return Some(PathSyscall {
+            name: "SYS_chdir",
+            arg_index: 0,
+            dirfd_arg: None,
+        });
+    }
     #[cfg(target_arch = "x86_64")]
     {
         if number == nix::libc::SYS_open as i64 {
@@ -965,6 +1021,12 @@ fn parent_loop(
         pid: Pid,
         at_entry: bool,
         execve_handled: bool,
+        /// The guest's CURRENT directory for this tracee, as a guest-absolute path (2026-11-09).
+        /// `plan.cwd` is only the STARTING directory: a guest that runs `cd` moves, and every later
+        /// relative path must resolve against where it actually is - proot tracks this per process too.
+        /// Measured: with only `plan.cwd`, `cd /etc && head -1 os-release` translated the relative open
+        /// against `/` and answered `cannot open 'os-release'`.
+        cwd: String,
         started: bool,
         /// The answer the engine computed for a `faccessat2` whose path it resolved, applied at the
         /// exit stop only if the host refused the call with `-ENOSYS` (see `parent_loop`).
@@ -974,6 +1036,7 @@ fn parent_loop(
         pid: child,
         at_entry: true,
         execve_handled: false,
+        cwd: plan.cwd.clone().unwrap_or_else(|| "/".to_string()),
         started: true,
         faccessat_result: None,
     }];
@@ -1032,6 +1095,7 @@ fn parent_loop(
                         pid,
                         at_entry: false,
                         execve_handled: false,
+                        cwd: plan.cwd.clone().unwrap_or_else(|| "/".to_string()),
                         started: false,
                         faccessat_result: None,
                     });
@@ -1185,12 +1249,33 @@ fn parent_loop(
                     // dynamic loader's own opens land inside the rootfs. `Ok(false)` is a path the
                     // engine could not translate (unreadable, empty, relative, or no rootfs plan);
                     // it is recorded as a named refusal rather than left to the host silently.
+                    // 2026-11-09: `chdir` joined the table so a GUEST `cd` translates, and that made
+                    // the engine's OWN pre-exec chdir (setup on a host path `resolve_cwd` already
+                    // translated) go through translation too - measured: every `--engine native` run
+                    // then exited 1 with "SYS_chdir (49) [its path could not be translated]". The
+                    // exemption branch below already exists for exactly that call, so the table lookup
+                    // is filtered for it and the old branch keeps handling it.
+                    // The engine's own bootstrap chdir is handed the ALREADY-TRANSLATED host path, and a
+                    // guest `chdir` is handed a guest path, so the two are told apart by where the path
+                    // points rather than by `execve_handled` (measured 2026-11-09: that flag is true once
+                    // the main child's execve has been handled, which is BEFORE the engine chdirs it into
+                    // the guest, so it cannot distinguish the two).
+                    // A `chdir` whose path cannot be READ at that stop is the engine's own bootstrap: the
+                    // child is chdir'd into the translated host cwd before it execs, and at that point the
+                    // argument is not a readable guest string (measured 2026-11-09: `seen=Ok(None)` for the
+                    // first chdir of a run, `seen=Ok(Some("/etc"))` for the guest's own `cd`). A readable
+                    // path is the guest's and goes through the table. Deciding it by readability rather than
+                    // by pid or by comparing host paths keeps one rule: the engine never refuses its own
+                    // setup call, and never leaves a guest call to the kernel.
+                    let engine_bootstrap_chdir = number == nix::libc::SYS_chdir as i64
+                        && !matches!(peek_cstr(pid, args[0]), Ok(Some(_)));
                     if let Some(PathSyscall {
                         name,
                         arg_index,
                         dirfd_arg,
-                    }) = path_syscall(number)
+                    }) = path_syscall(number).filter(|_| !engine_bootstrap_chdir)
                     {
+                        let tracee_cwd = slots[idx].cwd.clone();
                         match translate_path_remote(
                             pid,
                             arg_index,
@@ -1199,9 +1284,22 @@ fn parent_loop(
                             number,
                             &args,
                             plan,
+                            &tracee_cwd,
                             &mut report,
                         ) {
-                            Ok(true) => {}
+                            Ok(true) => {
+                                // A successful `chdir` MOVES the guest: remember where it went so the
+                                // next relative path resolves there (guest-absolute, lexically joined).
+                                if name == "SYS_chdir" {
+                                    if let Ok(Some(raw)) = peek_cstr(pid, args[arg_index]) {
+                                        slots[idx].cwd = if raw.starts_with('/') {
+                                            raw
+                                        } else {
+                                            format!("{}/{}", tracee_cwd.trim_end_matches('/'), raw)
+                                        };
+                                    }
+                                }
+                            }
                             Ok(false) => {
                                 let refusal = Refusal {
                                     number,
@@ -1289,10 +1387,20 @@ fn parent_loop(
                 // arrives as its own waitpid event and is consumed there.
                 let new_pid = ptrace_event_msg(pid)?;
                 if new_pid.as_raw() > 0 && !slots.iter().any(|s| s.pid == new_pid) {
+                    // A child inherits the PARENT's current directory, not the plan's starting one
+                    // (2026-11-09). Measured: `cd /etc && head -1 os-release` still failed after the
+                    // per-tracee cwd landed, because `head` is a child and its slot started at the plan
+                    // cwd - so its relative open resolved against `/` instead of `/etc`.
+                    let inherited_cwd = slots
+                        .iter()
+                        .find(|s| s.pid == pid)
+                        .map(|s| s.cwd.clone())
+                        .unwrap_or_else(|| plan.cwd.clone().unwrap_or_else(|| "/".to_string()));
                     slots.push(TraceeSlot {
                         pid: new_pid,
                         at_entry: false,
                         execve_handled: false,
+                        cwd: inherited_cwd,
                         started: false,
                         faccessat_result: None,
                     });
@@ -1949,6 +2057,55 @@ fn write_path_and_redirect_arg(pid: Pid, arg_index: usize, bytes: &[u8]) -> Resu
 /// The translated host path is written even when it does not exist: the kernel must answer `ENOENT`
 /// for a guest path the rootfs does not carry, and leaving the guest path in place would let the
 /// HOST file answer instead - the false positive this module exists to prevent.
+/// The guest path of the directory a tracee's descriptor refers to, if it is inside the rootfs.
+///
+/// `/proc/<pid>/fd/<fd>` answers the HOST path the descriptor was opened on; stripping the rootfs
+/// prefix maps it back into the guest, which is what a `dirfd`-relative name must be joined onto.
+/// A descriptor outside the rootfs answers `None` and the caller refuses, as before.
+fn host_dir_for_fd_as_guest(pid: Pid, fd: i32, rootfs: &Path) -> Option<String> {
+    let target = std::fs::read_link(format!("/proc/{}/fd/{}", pid.as_raw(), fd)).ok()?;
+    let rel = target.strip_prefix(rootfs).ok()?;
+    Some(format!("/{}", rel.display()))
+}
+
+/// Resolve `guest` through the same `resolve` the rest of the engine uses, write the host path into
+/// the tracee and redirect the argument. Split out so the cwd-relative path and the `dirfd`-relative
+/// path share one implementation instead of two that can disagree.
+#[allow(clippy::too_many_arguments)]
+fn finish_translation(
+    pid: Pid,
+    arg_index: usize,
+    rootfs: &Path,
+    plan: &RunPlan,
+    name: &'static str,
+    number: i64,
+    guest: String,
+    report: &mut NativeRunReport,
+) -> Result<bool> {
+    let host = resolve(rootfs, &guest, &plan.binds);
+    if host.as_path() == Path::new(&guest) {
+        return Ok(true);
+    }
+    let bytes = host.as_os_str().as_encoded_bytes();
+    if bytes.len() > PATH_CAPACITY {
+        return Err(anyhow!(
+            "translated path of {} bytes does not fit the {} byte translation area: {} (syscall {}, number {})",
+            bytes.len(),
+            PATH_CAPACITY,
+            host.display(),
+            name,
+            number
+        ));
+    }
+    write_path_and_redirect_arg(pid, arg_index, bytes)?;
+    report.translations.push(Translation {
+        guest,
+        host,
+        syscall: name,
+    });
+    Ok(true)
+}
+
 fn translate_path_remote(
     pid: Pid,
     arg_index: usize,
@@ -1957,6 +2114,7 @@ fn translate_path_remote(
     number: i64,
     args: &[u64; 6],
     plan: &RunPlan,
+    tracee_cwd: &str,
     report: &mut NativeRunReport,
 ) -> Result<bool> {
     let Some(rootfs) = plan.rootfs.as_ref() else {
@@ -1993,15 +2151,41 @@ fn translate_path_remote(
     let guest = if raw.starts_with('/') {
         raw
     } else {
+        // A DIRFD-RELATIVE name with a REAL descriptor (2026-11-09). `rm -rf /root/x` refused with
+        // "SYS_unlinkat (35) [its path could not be translated]" because `rm` opens the directory and
+        // unlinks children through that fd, and this code only joined onto the cwd for `AT_FDCWD`.
+        // The descriptor's own path is readable through /proc, so the name is resolved against the
+        // directory it actually belongs to: mapping that host path back into the guest keeps the
+        // translation honest (and a descriptor outside the rootfs is still refused).
+        let mut fd_guest_dir: Option<String> = None;
         let against_cwd = match dirfd_arg {
-            Some(i) => args
-                .get(i)
-                .map(|v| *v as i32 == nix::libc::AT_FDCWD)
-                .unwrap_or(false),
+            Some(i) => match args.get(i).map(|v| *v as i32) {
+                Some(fd) if fd == nix::libc::AT_FDCWD => true,
+                Some(fd) if fd >= 0 => {
+                    fd_guest_dir = host_dir_for_fd_as_guest(pid, fd, rootfs);
+                    false
+                }
+                _ => false,
+            },
             None => true,
         };
         let escapes = raw.split('/').any(|c| c == "..");
-        match plan.cwd.as_deref() {
+        if let (Some(dir), false) = (fd_guest_dir.as_deref(), against_cwd) {
+            if escapes {
+                return Ok(false);
+            }
+            return finish_translation(
+                pid,
+                arg_index,
+                rootfs,
+                plan,
+                name,
+                number,
+                format!("{}/{}", dir.trim_end_matches('/'), raw),
+                report,
+            );
+        }
+        match Some(tracee_cwd) {
             Some(cwd) if against_cwd && !escapes => {
                 format!("{}/{}", cwd.trim_end_matches('/'), raw)
             }

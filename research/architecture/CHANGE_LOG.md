@@ -2244,3 +2244,60 @@ does not have.
 
 **Build error caught by the compiler, not by me:** `paths::host::home()` answers `Option<PathBuf>`, and my first
 version assumed `PathBuf`. It now refuses by name when the host home cannot be resolved.
+## The guest could not `cd`, and could not write: path translation now covers both (2026-11-09 22:20 WIB)
+
+**What a real container showed.** On a Debian 13 rootfs the native arm refused, by name, the calls a shell
+script needs most:
+
+```
+podnext --engine native run <ctr> -- /bin/sh -c 'cd /etc && head -1 os-release'
+  Error: the native engine did not translate 1 path syscall(s): SYS_chdir (49) [takes a path but this engine
+  has no translation for it; the kernel resolves it on the HOST filesystem]
+podnext --engine native run <ctr> -- /bin/sh -c 'mkdir -p /root/x'
+  Error: ... SYS_mkdirat ...
+```
+
+The proot arm ran both. So the engine could READ a rootfs but not enter it or change it - the difference between
+"can start a program" and "behaves like the reference".
+
+**Three mechanisms had to land, each found by measurement rather than assumption.**
+
+1. `chdir` joined the path table (arg0, no dirfd). That immediately broke EVERY run, because the engine's own
+   bootstrap chdir got translated too and refused. A debug print (`seen=Ok(None)` for the bootstrap, `seen=Ok(Some("/etc"))`
+   for the guest's own `cd`) settled the rule: **a chdir whose path is not readable at that stop is the engine's
+   setup call and is exempt; a readable one is the guest's and is translated.** pids and
+   `execve_handled` could not tell them apart - that flag is true before the engine chdirs the child.
+2. The engine tracked only `plan.cwd`, the STARTING directory. A guest that runs `cd` moves, so every later
+   relative path resolved against the wrong directory (`head: cannot open 'os-release'`). Each tracee now carries
+   its current guest cwd, updated on a successful chdir, and **a fork child inherits its parent's cwd** - the
+   second half was needed because `head` and `rm` are children of the shell that moved.
+3. The write side was missing entirely: `mkdirat`, `unlinkat`, `fchmodat`, `utimensat`, `symlinkat` are now in
+   the table (arg1 with the dirfd at arg0, symlinkat's link path at arg2). `rm -rf` then still refused with
+   `SYS_unlinkat`, because `rm` unlinks through an OPEN DESCRIPTOR: a dirfd-relative name is now resolved against
+   the directory that descriptor actually points at, read from `/proc/<pid>/fd/<n>` and mapped back into the
+   guest, and a descriptor outside the rootfs is still refused.
+
+**Measured, both arms, same rootfs, same command:**
+
+```
+$ PN_TEST_ROOT=<fixture> PDN_PARITY_CONTAINER=deb-renamed python3 scripts/engine_write_parity.py
+  seeded .../deb-renamed from ~/.podnext/containers/deb-renamed/rootfs (read-only copy)
+  [proot] exit=0   total 4 / WRITE-OK
+  [native] exit=0  total 4 / WRITE-OK
+  DIFFERENTIAL: EQUAL on exit and stdout for the write workload
+```
+
+and the read-and-enter case that started it:
+
+```
+proot  cd -> PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+native cd -> PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+```
+
+`scripts/engine_write_parity.py` is new and keeps this honest: it runs the same workload on both engines, requires
+a real rootfs (refusing rather than skipping when there is none), and answers `DIFFERENTIAL: BOTH ARMS FAILED the
+same way - that is not parity, it is a broken fixture` instead of treating two identical failures as a pass.
+
+**Still refused, by name, and named here so nobody assumes otherwise:** `renameat` and `linkat` take TWO paths and
+have no translator yet, so a workload that renames or hardlinks a guest path will still stop with a named refusal.
+The `dirfd`-relative rule covers unlinkat/openat/stat-family; the two-path calls need the same treatment next.
