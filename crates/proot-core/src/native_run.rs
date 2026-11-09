@@ -383,6 +383,13 @@ const SYS_NEWFSTATAT: i64 = nix::libc::SYS_newfstatat as i64;
 #[cfg(all(target_os = "android", target_arch = "aarch64"))]
 const SYS_NEWFSTATAT: i64 = 79;
 
+/// `fstat` follows the same story as `newfstatat`: the libc crate does not declare it for
+/// android/aarch64, and the arm64 table fixes it at 80.
+#[cfg(any(not(target_os = "android"), target_arch = "x86_64"))]
+const SYS_FSTAT: i64 = nix::libc::SYS_fstat as i64;
+#[cfg(all(target_os = "android", target_arch = "aarch64"))]
+const SYS_FSTAT: i64 = 80;
+
 /// The syscalls whose path argument this engine rewrites at ENTRY, and which argument holds it.
 ///
 /// Only numbers the TARGET's libc actually declares are named. arm64 has no legacy
@@ -1199,6 +1206,20 @@ fn parent_loop(
                     }
                 }
 
+                // The stat RESULT carries the identity too (2026-11-09). Only when the same mapping that
+                // answers `getuid` with 0 is in force, and only on success, so a failed call's buffer is
+                // never touched; `PDN_NATIVE_NO_ID_MAP=1` turns this off with the rest of the mapping.
+                if !slots[idx].at_entry
+                    && std::env::var_os("PDN_NATIVE_NO_ID_MAP").is_none()
+                    && matches!(syscall_result(pid), Ok(0))
+                {
+                    if let Some((arg_index, offset)) = stat_result_identity(number) {
+                        if let Some(ptr) = args.get(arg_index).copied() {
+                            let _ = poke_bytes(pid, ptr + offset, &[0u8; 8]);
+                        }
+                    }
+                }
+
                 if !slots[idx].at_entry
                     && number == SYS_LINKAT
                     && plan.link2symlink
@@ -1668,6 +1689,37 @@ fn id_reporting(number: i64) -> bool {
         || number == nix::libc::SYS_geteuid as i64
         || number == nix::libc::SYS_getgid as i64
         || number == nix::libc::SYS_getegid as i64
+}
+
+/// Where a stat-family call leaves its result, and where uid/gid sit inside it.
+///
+/// MEASURED 2026-11-09: with the identity mapping in force the guest answers `id -u` with 0, but `stat -c %u`
+/// and `ls -l` still printed the HOST's 10396 on the native arm while the proot arm printed 0 - because
+/// `--change-id=0:0:0` makes proot rewrite the stat result and this engine only rewrote the syscalls that
+/// RETURN an id. The two fields are adjacent in both structures, so one 8-byte write covers them:
+///   aarch64 `struct stat`:  st_mode@16 (u32), st_nlink@20 (u32), st_uid@24, st_gid@28
+///   aarch64 `struct statx`: stx_uid@20, stx_gid@24
+/// x86_64 layouts differ and are NOT covered here - a named gap, not a silent one.
+fn stat_result_identity(number: i64) -> Option<(usize, u64)> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // ARG 2, not 1: `newfstatat(dirfd, path, buf, flags)` puts its RESULT in the third argument, and
+        // writing at the second one overwrote the guest's PATH string - measured 2026-11-09 by the
+        // acceptance harness, whose guest stopped running (exit 1, no output) the moment this hook
+        // landed, while the differential and write-parity harnesses stayed green and could not see it.
+        // `fstat(fd, buf)` keeps its buffer at arg1.
+        if number == SYS_NEWFSTATAT {
+            return Some((2, 24));
+        }
+        if number == SYS_FSTAT {
+            return Some((1, 24));
+        }
+        if number == nix::libc::SYS_statx as i64 {
+            return Some((4, 20));
+        }
+    }
+    let _ = number;
+    None
 }
 
 /// The syscall's return value at an exit stop, on either surviving architecture.

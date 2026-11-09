@@ -254,8 +254,9 @@ assumed. None of them blocks a normal shell session; all of them are visible if 
 - **Identity is mapped to zero.** `getuid`, `geteuid`, `getgid` and `getegid` answer `0` inside the guest,
   which mirrors what the legacy path does with `--change-id=0:0:0`. The mapping can be turned off for a run
   with `PDN_NATIVE_NO_ID_MAP=1`, and then the calls report the host identity instead.
-- **`st_uid`/`st_gid` in `stat` results are not rewritten**, so `ls -l` prints the host's numeric uid next to
-  each file even though the file is the guest's.
+- **`st_uid`/`st_gid` in `stat` results ARE rewritten** to 0 alongside `getuid` (2026-11-09), so `ls -l` prints
+  `root root` the way the proot arm does; `PDN_NATIVE_NO_ID_MAP=1` turns that off together with the syscall
+  mapping. `getresuid`/`getresgid`/`getgroups` write through a POINTER and are still not rewritten.
 - **`argv[0]` of a program the guest spawns is the guest interpreter** under the native engine, because the
   engine invokes the interpreter that lives inside the rootfs with the program as its argument. The program's
   own `argv[0]` is preserved through the interpreter's `--argv0` option where the interpreter has one. The same

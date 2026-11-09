@@ -2373,3 +2373,61 @@ the same.
 The parity harness with that exclusion reports `DIFFERENTIAL: EQUAL on exit and stdout` on the real Debian rootfs,
 and the emulation is covered by the `LINK-OK` arms above plus the write workload that still prints `WRITE-OK` on
 both engines.
+
+## `stat` now reports uid 0, closing the last measured parity gap (2026-11-10 00:05 WIB)
+
+**The gap.** With the identity mapping in force the guest answered `id -u` with 0 on both engines, but the proot
+arm printed `root root` for a file while the native arm printed the host's numeric uid:
+
+```
+proot   id -u -> 0 | stat -> uid=0 gid=0     | ls -l -> root root
+native  id -u -> 0 | stat -> uid=10396 gid=10396 | ls -l -> 10396 10396
+```
+
+`--change-id=0:0:0` makes proot rewrite the stat RESULT; this engine only rewrote the syscalls that RETURN an id,
+which is why `id` agreed and `ls` did not.
+
+**What landed.** `stat_result_identity()` names where each stat-family call leaves its buffer and where the ids sit
+inside it, and the exit-stop hook writes eight zero bytes there - `st_uid` and `st_gid` are adjacent in both
+structures, so one write covers them:
+
+```text
+aarch64 `struct stat`:  st_mode@16 (u32), st_nlink@20 (u32), st_uid@24, st_gid@28
+aarch64 `struct statx`: stx_uid@20, stx_gid@24
+```
+
+It runs only when the same mapping that answers `getuid` is in force, and only on success, so a failed call's buffer
+is never touched. `SYS_FSTAT` needed its own constant for the same reason `newfstatat` did: the libc crate does not
+declare it for android/aarch64, and the arm64 table fixes it at 80.
+
+**Measured after, with the control that proves the write is what changed it.**
+
+```
+proot   stat -> uid=0 gid=0     | ls -l -> root root
+native  stat -> uid=0 gid=0     | ls -l -> root root
+control PDN_NATIVE_NO_ID_MAP=1  stat -> uid=10396
+```
+
+**Still named, not hidden:** `getresuid`/`getresgid`/`getgroups` write through a POINTER into guest memory and are
+not rewritten; the x86_64 `struct stat` layout differs and is not covered by this hook.
+
+### Correction inside the same change: the harness that caught the wrong argument (2026-11-10 00:25 WIB)
+
+The `st_uid` rewrite first wrote at argument 1 for `newfstatat`, which is the PATH pointer, not the result buffer -
+`newfstatat(dirfd, path, buf, flags)` keeps its result in the THIRD argument. The two heavier harnesses stayed green
+(`engine_differential` and `engine_write_parity` both EQUAL) because their guests do not stat a file the way the
+acceptance guest does; the acceptance harness went red instead:
+
+```
+[default] exit=1 ran=False
+[default] output: NOTE: the guest runs as root (uid 0): ...   (and nothing else)
+```
+
+A guest that had been running stopped running, and the only output was the engine's own note - which is what
+memory corruption inside a guest looks like from outside. Fixed by naming the buffer argument per call
+(`newfstatat` -> 2, `fstat` -> 1, `statx` -> 4) and re-measured: the acceptance harness returns
+`[default] exit=0 ran=True` with `[decoy] proot-executed=False`, and the uid parity still reads
+`proot uid=0|root` and `native uid=0|root`.
+
+The lesson is the one this project keeps paying for: one harness passing is not the suite passing, and a guest that
+exits with no message is evidence of a defect, not of a quiet success.
