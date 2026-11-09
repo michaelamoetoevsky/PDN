@@ -14,6 +14,11 @@ Companion artifacts, all generated from source rather than written from memory:
 | `research/architecture/DIGEST_ONE_LINE.txt` | one line per file: path, size, module doc first sentence | same walker |
 
 Measured state at commit `48e86b7`: **6 crates + a root test crate, 188 `.rs` files, 72,257 lines**,
+
+Re-measured at `ac9198f` (2026-11-09): **190 `.rs` files, 78,257 lines**, from
+`find crates -name '*.rs' | wc -l` and `find crates -name '*.rs' -exec cat {} + | wc -l`. The difference is the
+native engine and CLI work landed since `48e86b7`; the commit-anchored figures above are kept because they are
+the reading that commit was written at, and a number that silently follows the tree cannot be checked.
 1,877 public items, 3 files with no module doc (§8).
 
 ---
