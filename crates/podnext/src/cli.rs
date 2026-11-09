@@ -236,13 +236,13 @@ pub(crate) struct Cli {
     // is global a multi-line `long_help` switches EVERY screen to next-line layout (measured:
     // research/cli-help-baseline.txt went 4733 -> 10168 lines for an 8-line option). One line keeps the
     // published surface reviewable.
-    /// Container engine: `proot` (host binary, the default) or `native` (in-tree engine)
+    /// Container engine: `native` (in-tree ptrace engine, the default) or `proot` (host binary)
     #[arg(
         long = "engine",
         global = true,
         value_enum,
-        default_value = "proot",
-        help = "Container engine: proot (default) or native"
+        default_value = "native",
+        help = "Container engine: native (default) or proot"
     )]
     pub(crate) engine: EngineChoice,
 }

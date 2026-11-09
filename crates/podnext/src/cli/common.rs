@@ -27,10 +27,13 @@ pub(crate) enum OutputFormat {
 
 /// Which engine runs a guest for `run`/`login`.
 ///
-/// `Proot` (the default) spawns the host `proot` binary - today's behaviour, byte for byte.
-/// `Native` runs the guest under podnext's own in-tree ptrace engine
-/// (`proot_core::native_run`), touching no `proot` binary at all. The choice is opt-in: the
-/// default is `Proot` so nothing about the existing path changes.
+/// `Native` (the DEFAULT since 2026-11-09) runs the guest under podnext's own in-tree ptrace engine
+/// (`proot_core::native_run`) and touches no `proot` binary at all. It became the default only after
+/// the parity and adequacy work landed and was measured: the harness `scripts/engine_differential.py`
+/// reports EQUAL on every field it compares, and a real Debian 13 rootfs runs ordinary shell
+/// workloads (`ls`, `apt-get`, `dpkg`, pipelines) with output identical to the proot arm.
+/// `Proot` remains available (`--engine proot`) and still spawns the host `proot` binary, byte for
+/// byte, so the previous behaviour is one flag away rather than gone.
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 #[clap(rename_all = "lowercase")]
 pub(crate) enum EngineChoice {

@@ -1854,4 +1854,48 @@ stat columns.
 **Named limits:** the glibc `--argv0` path is not exercised end-to-end with a bare name, because a bare name only
 arises through PATH search and `dash`'s `exec <name>` aborts the whole run when the execve target does not exist
 (pre-existing refusal policy, unchanged); `set_robust_list` and `rseq` are also seccomp-trapped and are tolerated
-rather than emulated.
+rather than emulated.## p7 GOAL CLOSED: podnext's own engine is now the DEFAULT (2026-11-09 17:55 WIB)
+
+**The operator's goal was "podnext runs containers with its own binary, not the proot binary". That is now the
+measured default.** `--engine` changed from `proot` to `native` in `crates/podnext/src/cli.rs:239-247` (the
+`default_value` plus its one-line doc and help text), and the enum's own documentation was rewritten in
+`crates/podnext/src/cli/common.rs:30-39` to say why the default moved and that `--engine proot` still gives the
+previous behaviour byte for byte.
+
+**The acceptance harness flipped from PARTIAL to PASS, run against the canonical binary with no engine flag:**
+
+```
+[default] exit=0 ran=True
+[engine-native] exit=0 ran=True
+PASS: the DEFAULT path runs a container with no proot binary available to the process
+```
+
+That harness is the operator's own criterion: it runs the guest with `PATH=/nonexistent-bin` and
+`PROOT_BIN=/nonexistent/proot`, so a pass means the container really started without any proot binary reachable.
+
+**A real Debian 13 container, default path, no flag:**
+
+| command | default (native) | explicit proot |
+|---|---|---|
+| `ls /etc \| head -3` | rc 0 | rc 0 |
+| `test -x /bin/ls && echo Y \|\| echo N` | `Y` | `Y` |
+| `/usr/bin/apt-get --version` | **17 lines, identical** | identical |
+| `ls /usr/bin \| wc -l` | `257` | `257` |
+
+**Fixture re-recorded deliberately, not overwritten in silence.** The change moves the help text of a GLOBAL flag,
+so it appears on every one of the 123 help screens; `research/cli-help-baseline.txt` is a tracked fixture compared
+byte for byte by the gate, so it had to be re-recorded. Measured before recording: the dump still reports
+`123 help screens`, the file length is unchanged at 4956 lines (no layout shift), the diff is 143 hunks, and
+**zero** changed lines fail to mention engine/proot/native - i.e. the whole diff is the intended block, with no
+collateral edit hiding behind it.
+
+**What this does NOT claim.** The parity gaps are not all closed: `getuid`/`geteuid` are mapped to `0` (a
+deliberate, documented lie mirroring proot's `--change-id=0:0:0`), `st_uid` still shows the host uid in `ls -l`,
+proot's `/` listing exposes Android host directories that native does not, and the five remaining proot argv
+features (`--kill-on-exit`, `--link2symlink`, `--sysvipc`, `-L`, `--change-id`) are not implemented. Each is named
+in `p7-2`/`p7-flip` and none of them blocks the default, which is why the flip was made rather than deferred.
+
+**Provenance of the measurement:** binary `target/debug/podnext` mtime `17:48:26`, built by `heavy` (exit 0, 39 s)
+with `CARGO_TARGET_DIR`/`PDNEXT_BIN`/`TMPDIR`/`PROOT_BIN`/`LD_LIBRARY_PATH` all unset in the parent shell; the
+`--help` of that same binary shows `Container engine: native (default) or proot`, so the flag default is read from
+the artifact rather than from the source that was edited.
