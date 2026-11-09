@@ -1671,3 +1671,188 @@ fn the_kernel_argv0_is_the_guest_path_under_a_substitution() {
          substitution here would be the NON-substituted regression this arm guards"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// p7 interp-desc (added 2026-11-09): a fork DESCENDANT whose PT_INTERP is absent on the host.
+//
+// MEASURED defect (2026-11-09, real Debian rootfs `deb-pdn`): `run realroot -- /bin/sh -c
+// '/bin/dash -c "echo CHILD-RAN"'` exited 127 under `--engine native` with `/bin/sh: 1: /bin/dash:
+// not found`, while the same command under proot printed CHILD-RAN and exited 0. The engine
+// substituted the interpreter for its OWN child (the first `/bin/sh`, via the shared page) but NOT
+// for the descendant (`/bin/dash`), whose path went through `translate_execve_remote`: the kernel
+// then opened the rootfs copy's ABSENT PT_INTERP on the host and the descendant's execve failed.
+// The fix gives the descendant path the SAME substitution `guest_interpreter` already enforces,
+// written onto the descendant's own stack.
+//
+// Fixture, no Debian rootfs needed: a forker is the engine's OWN child - an ordinary dynamic binary
+// whose loader IS on the host, so NO substitution happens for it - and it forks a child that execs a
+// guest whose PT_INTERP is absent on the host and whose interpreter is present in the rootfs. The
+// failure under test is therefore only the DESCENDANT's exec. The descendant writes its own argv[0]
+// and exits 9, which the forker propagates.
+//
+// Negative control: sabotage the substitution (make `guest_interpreter` return `None`) and the
+// descendant's execve fails - the forker's child falls through to `_exit(90)` - so the exit-code
+// assertion goes red. The arm that is NOT the descendant needs nothing, which is what isolates the
+// descendant path as the subject.
+#[test]
+fn a_forked_descendants_missing_interpreter_is_substituted_too() {
+    let root = fixture_root("interp-desc");
+    let _guard = InterpGuard(root.clone());
+    let _ = std::fs::remove_dir_all(&root);
+    let rootfs = root.join("rootfs-interp-desc");
+    std::fs::create_dir_all(rootfs.join("bin")).expect("create fixture rootfs");
+    let probe = root.join("probe-out");
+    std::fs::create_dir_all(&probe).expect("create probe dir");
+
+    // The descendant: a dynamically linked guest whose loader the host does NOT have. It writes its
+    // own argv[0] into a bound HOST directory and exits 9, so "it ran" and "its name survived the
+    // interpreter form" are both readable back. stdout is not used (this file's tests share one
+    // process; capturing fd 1 would swallow a sibling's output).
+    let source = r#"#include <unistd.h>
+#include <fcntl.h>
+int main(int argc, char **argv) {
+    int fd = open("/probe/desc-report", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) { return 71; }
+    const char *a0 = (argc > 0 && argv[0]) ? argv[0] : "<none>";
+    unsigned n = 0;
+    while (a0[n]) { n++; }
+    if (write(fd, a0, n) < 0) { return 72; }
+    close(fd);
+    return 9;
+}
+"#;
+
+    // The host's OWN interpreter - taken from a guest the host toolchain links normally - and a path
+    // the host does NOT have.
+    let normal = root.join("guest-normal");
+    compile_c(&normal, source);
+    let real_interp = proot_core::native_run::elf_interp(&normal).unwrap_or_else(|| {
+        panic!(
+            "{} names no PT_INTERP; it is not the dynamically linked guest this test needs",
+            normal.display()
+        )
+    });
+    assert!(
+        Path::new(&real_interp).exists(),
+        "the host's own interpreter {real_interp} must exist for this fixture to mean anything"
+    );
+    const MISSING: &str = "/pdn-interp-missing/ld.so";
+    assert!(
+        !Path::new(MISSING).exists(),
+        "the fixture's PT_INTERP path {MISSING} exists on this host, so it would not reproduce the \
+         measured failure (the interpreter is created INSIDE the rootfs, never on the host)"
+    );
+
+    let guest = rootfs.join("bin").join("guest");
+    compile_c_with(
+        &guest,
+        source,
+        &[&format!("-Wl,--dynamic-linker={MISSING}")],
+    );
+    assert_eq!(
+        proot_core::native_run::elf_interp(&guest).as_deref(),
+        Some(MISSING),
+        "the fixture guest must name the absent interpreter as its PT_INTERP"
+    );
+
+    let interp_in_rootfs = rootfs.join(MISSING.trim_start_matches('/'));
+    std::fs::create_dir_all(interp_in_rootfs.parent().unwrap()).expect("create interp dir");
+    std::fs::copy(&real_interp, &interp_in_rootfs).unwrap_or_else(|e| {
+        panic!(
+            "copy {} -> {}: {e}",
+            real_interp,
+            interp_in_rootfs.display()
+        )
+    });
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&interp_in_rootfs)
+            .expect("stat interpreter copy")
+            .permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&interp_in_rootfs, perm).expect("chmod interpreter copy");
+    }
+    eprintln!("[interp-desc] host interpreter {real_interp}");
+    eprintln!("[interp-desc] absent PT_INTERP {MISSING}");
+    eprintln!(
+        "[interp-desc] interp in rootfs {}",
+        interp_in_rootfs.display()
+    );
+
+    // The forker is the engine's OWN child and its loader is on the host, so it is NOT substituted:
+    // whatever goes wrong below is the DESCENDANT's exec, not the child path.
+    make_forker(&rootfs.join("bin").join("forker"), "/bin/guest");
+
+    // The fixture reproduces the problem: the guest is NOT runnable directly on the host.
+    let direct = std::process::Command::new(&guest).arg("host").output();
+    match &direct {
+        Ok(o) => assert!(
+            !o.status.success(),
+            "the guest RAN directly on the host (exit {:?}); the fixture does not reproduce the \
+             missing-interpreter failure and this test would prove nothing",
+            o.status.code()
+        ),
+        Err(e) => eprintln!("[interp-desc] direct host exec refused as expected: {e}"),
+    }
+
+    // ---- the descendant's exec must be substituted and run ------------------------------------
+    let mut binds = host_runtime_binds();
+    binds.push(("/probe".to_string(), probe.clone()));
+    let plan = RunPlan {
+        rootfs: Some(rootfs.clone()),
+        binds,
+        cwd: Some("/".to_string()),
+        env: Vec::new(),
+    };
+    let run = run_native(&["/bin/forker".to_string()], &plan, false)
+        .expect("traced run of the forking fixture");
+    eprintln!(
+        "[interp-desc] exit={} interpreter={:?} executed={:?} translations={:?}",
+        run.exit_code, run.interpreter, run.executed, run.translations
+    );
+
+    assert_eq!(
+        run.interpreter.as_deref(),
+        Some(MISSING),
+        "the engine must record the DESCENDANT's interpreter; `None` means the descendant's exec was \
+         left to the kernel, which cannot open the absent PT_INTERP"
+    );
+    let t = run
+        .translations
+        .iter()
+        .find(|t| t.syscall == "SYS_execve" && t.guest == MISSING)
+        .unwrap_or_else(|| {
+            panic!(
+                "the engine must record the descendant's execve of its interpreter {MISSING}; \
+                 translations={:?}",
+                run.translations
+            )
+        });
+    assert_eq!(
+        canon(&t.host),
+        canon(&interp_in_rootfs),
+        "the descendant's substituted exec must land on the interpreter inside the rootfs"
+    );
+
+    // The forker propagates the descendant's own exit code (9). 90 is the forker's child falling
+    // through because its execve failed - the missing-interpreter failure this test exists to catch.
+    assert_eq!(
+        run.exit_code, 9,
+        "the descendant ran through its interpreter and exited 9; 90 means its execve failed (the \
+         missing-interpreter failure), 127 the kernel's refusal"
+    );
+
+    let report = std::fs::read_to_string(probe.join("desc-report")).unwrap_or_else(|e| {
+        panic!(
+            "the descendant did not write its report (exit {}): {e}",
+            run.exit_code
+        )
+    });
+    eprintln!("[interp-desc] descendant report {report:?}");
+    assert_eq!(
+        report, "/bin/guest",
+        "the descendant must see its OWN argv[0] - the guest path the caller passed - preserved as \
+         the interpreter's argv[1]"
+    );
+}

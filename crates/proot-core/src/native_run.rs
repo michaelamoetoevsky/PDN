@@ -114,10 +114,14 @@
 //!
 //! NOT DONE HERE, named so the gap is explicit rather than implied:
 //! the other five argv features; the guest's environment (an empty `envp` is passed on purpose -
-//! see `child_main`); `dirfd`-relative path translation (a RELATIVE guest path is still refused by
-//! name rather than guessed - only the STARTING cwd is modelled, not a per-syscall `dirfd`); and a
-//! fork DESCENDANT's `execve` whose PT_INTERP is missing on the host (the substitution above runs on
-//! the engine's own child, which is the `podnext run` path).
+//! see `child_main`); and `dirfd`-relative path translation (a RELATIVE guest path is still refused
+//! by name rather than guessed - only the STARTING cwd is modelled, not a per-syscall `dirfd`).
+//! A fork DESCENDANT's `execve` gets the SAME substitution, written onto the descendant's own stack
+//! by `translate_execve_remote`/`write_substitution_remote` (2026-11-09, p7 interp-desc): a real
+//! container runs a shell that spawns `/bin/dash`, `ls`, an init script - every one of those is a
+//! descendant exec, and without the substitution the kernel opens the rootfs copy's absent
+//! `PT_INTERP` on the host and the exec fails (measured: `native` exit 127, `/bin/sh: 1: /bin/dash:
+//! not found`, against proot printing `CHILD-RAN` and exiting 0).
 
 use anyhow::{anyhow, Result};
 use nix::sys::ptrace::{self, Options};
@@ -159,6 +163,16 @@ const ARGV_SLOTS: usize =
 /// A translated path must fit below `ARGV0_OFFSET`; anything longer is refused by name rather than
 /// written over the guest's argv[0].
 const PATH_CAPACITY: usize = ARGV0_OFFSET - 1;
+/// How much room a descendant's interpreter substitution may use below the tracee's stack pointer
+/// (2026-11-09, p7 interp-desc). The child path reserves its strings in the page mapped before the
+/// fork; a descendant has only its own stack, so this is the window the engine writes into - the
+/// same `[sp - N, sp)` region `write_path_and_redirect_arg` uses, widened because a substitution
+/// writes TWO strings plus a fresh pointer array. Exceeding it is a NAMED refusal, never a
+/// truncated argv.
+const DESCENDANT_SCRATCH_BYTES: u64 = 0x1000;
+/// Upper bound on a descendant's original argv the engine will carry through a substitution. A
+/// longer array is refused BY NAME: the engine rewrites the WHOLE array and will not write a prefix.
+const DESCENDANT_ARGV_MAX: usize = 256;
 /// `"P4NR"` + version, so a header that was never written (or was written by something else) is
 /// visible as such instead of read as zeroes.
 const HEADER_MAGIC: u64 = 0x5034_4E52_0000_0001;
@@ -1063,7 +1077,7 @@ fn parent_loop(
                         // string lives in the tracee's memory, so it is read and rewritten there
                         // (PTRACE_PEEKDATA / POKEDATA + SETREGSET). A non-entry stop, where arg0 is
                         // a return value instead of a pointer, is not readable and is `false`.
-                        match translate_execve_remote(pid, arg0, plan, &mut report) {
+                        match translate_execve_remote(pid, arg0, args[1], plan, &mut report) {
                             Ok(true) => slots[idx].execve_handled = true,
                             Ok(false) => {
                                 if slots[idx].at_entry {
@@ -1489,11 +1503,18 @@ fn peek_cstr(pid: Pid, addr: u64) -> Result<Option<String>> {
 fn poke_cstr(pid: Pid, addr: u64, bytes: &[u8]) -> Result<()> {
     let mut buf = bytes.to_vec();
     buf.push(0);
+    poke_bytes(pid, addr, &buf)
+}
+
+/// Write `bytes` into a STOPPED tracee at `addr`, word by word through `PTRACE_POKEDATA`, the final
+/// partial word zero-padded. No terminator is added - the caller chooses the exact bytes - so this
+/// is what `poke_cstr` builds on and what the substitution uses for its argv pointer array.
+fn poke_bytes(pid: Pid, addr: u64, bytes: &[u8]) -> Result<()> {
     let mut i = 0usize;
-    while i < buf.len() {
+    while i < bytes.len() {
         let mut chunk = [0u8; 8];
-        let n = std::cmp::min(8, buf.len() - i);
-        chunk[..n].copy_from_slice(&buf[i..i + n]);
+        let n = std::cmp::min(8, bytes.len() - i);
+        chunk[..n].copy_from_slice(&bytes[i..i + n]);
         let word = i64::from_ne_bytes(chunk);
         let rc = unsafe {
             nix::libc::ptrace(
@@ -1505,7 +1526,8 @@ fn poke_cstr(pid: Pid, addr: u64, bytes: &[u8]) -> Result<()> {
         };
         if rc < 0 {
             return Err(anyhow!(
-                "PTRACE_POKEDATA failed writing the translated path into pid {}: {}",
+                "PTRACE_POKEDATA failed writing at {:#x} into pid {}: {}",
+                addr.wrapping_add(i as u64),
                 pid,
                 std::io::Error::last_os_error()
             ));
@@ -1513,6 +1535,140 @@ fn poke_cstr(pid: Pid, addr: u64, bytes: &[u8]) -> Result<()> {
         i += 8;
     }
     Ok(())
+}
+
+/// Read a NUL-terminated pointer array (a tracee's `argv`) out of a STOPPED tracee, word by word
+/// through `PTRACE_PEEKDATA`, bounded by `DESCENDANT_ARGV_MAX`. Returns the pointers WITHOUT the
+/// terminating null. A NULL `addr` is an empty array. An array longer than the bound is refused BY
+/// NAME: the substitution rewrites the WHOLE array and must not carry a truncated one (2026-11-09,
+/// p7 interp-desc).
+fn read_ptr_array(pid: Pid, addr: u64) -> Result<Vec<u64>> {
+    let mut out: Vec<u64> = Vec::new();
+    if addr == 0 {
+        return Ok(out);
+    }
+    let mut at = addr;
+    loop {
+        if out.len() >= DESCENDANT_ARGV_MAX {
+            return Err(anyhow!(
+                "a fork descendant's argv has more than {} entries; a substitution rewrites the \
+                 whole array, and this engine refuses to carry a truncated one",
+                DESCENDANT_ARGV_MAX
+            ));
+        }
+        // errno cleared before the call for the same reason `peek_cstr` clears it: a valid word can
+        // read as -1 and ptrace signals failure through errno.
+        nix::errno::Errno::clear();
+        let word = unsafe {
+            nix::libc::ptrace(
+                nix::libc::PTRACE_PEEKDATA as _,
+                pid.as_raw(),
+                at as *mut nix::libc::c_void,
+                std::ptr::null_mut::<nix::libc::c_void>(),
+            )
+        };
+        if std::io::Error::last_os_error().raw_os_error().unwrap_or(0) != 0 {
+            return Err(anyhow!(
+                "could not read a fork descendant's argv array at {:#x} (pid {})",
+                at,
+                pid
+            ));
+        }
+        let ptr = word as u64;
+        if ptr == 0 {
+            return Ok(out);
+        }
+        out.push(ptr);
+        at = at.wrapping_add(8);
+    }
+}
+
+/// Write a fork descendant's interpreter substitution into the tracee's OWN stack (2026-11-09, p7
+/// interp-desc): the interpreter's HOST path (the new execve path), the interpreter's GUEST path
+/// (the new argv[0]), and a fresh argv pointer array `[<interp guest>, <original argv[0..]>, NULL]`.
+/// Argument 0 (path) and argument 1 (argv) are published through ONE `PTRACE_SETREGSET`; envp
+/// (argument 2) is left untouched, exactly as the child path leaves it.
+///
+/// The strings and array are laid out in `[sp - DESCENDANT_SCRATCH_BYTES, sp)`, the same window
+/// `write_path_and_redirect_arg` writes into, each region 8-byte aligned (so the zero padding of a
+/// string's final word cannot reach into the next region). The total is computed BEFORE anything is
+/// written and refused BY NAME when it does not fit - the engine's discipline is that nothing is
+/// silently dropped, so an argv is never truncated.
+///
+/// The original argv pointers are reused as-is: the caller's argv[0] string already exists in the
+/// tracee, so only the interpreter's guest path and the pointer array are new. envp is untouched.
+fn write_substitution_remote(
+    pid: Pid,
+    host_interp: &Path,
+    guest_interp: &str,
+    original_argv: &[u64],
+) -> Result<()> {
+    let host_bytes = host_interp.as_os_str().as_encoded_bytes();
+    let guest_bytes = guest_interp.as_bytes();
+    let align8 = |n: usize| (n + 7) & !7usize;
+    let host_len = align8(host_bytes.len() + 1);
+    let guest_len = align8(guest_bytes.len() + 1);
+    // interpreter + original argv + terminating null
+    let array_len = (original_argv.len() + 2) * std::mem::size_of::<u64>();
+    let total = host_len + guest_len + array_len;
+    if total as u64 > DESCENDANT_SCRATCH_BYTES {
+        return Err(anyhow!(
+            "a fork descendant's interpreter substitution needs {} bytes of stack scratch ({} argv \
+             entries) and this engine reserves {} below the stack pointer; refusing rather than \
+             truncating the argv",
+            total,
+            original_argv.len(),
+            DESCENDANT_SCRATCH_BYTES
+        ));
+    }
+
+    let mut raw = get_regs(pid)?;
+    let sp = stack_pointer(&raw);
+    let scratch = sp.wrapping_sub(DESCENDANT_SCRATCH_BYTES) & !0xf;
+    let host_at = scratch;
+    let guest_at = scratch + host_len as u64;
+    let array_at = guest_at + guest_len as u64;
+
+    poke_cstr(pid, host_at, host_bytes)?;
+    poke_cstr(pid, guest_at, guest_bytes)?;
+    let mut array: Vec<u8> = Vec::with_capacity(array_len);
+    array.extend_from_slice(&guest_at.to_ne_bytes());
+    for p in original_argv {
+        array.extend_from_slice(&p.to_ne_bytes());
+    }
+    array.extend_from_slice(&0u64.to_ne_bytes());
+    poke_bytes(pid, array_at, &array)?;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        // x0 = path, x1 = argv; the argument registers, matching `write_path_and_redirect_arg`.
+        raw.regs[0] = host_at;
+        raw.regs[1] = array_at;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        raw.rdi = host_at;
+        raw.rsi = array_at;
+    }
+    set_regs(pid, raw)?;
+    Ok(())
+}
+
+/// The tracee's stack pointer: `sp` on aarch64, `rsp` on x86_64. Kept in one place so the two
+/// register-file layouts are named once, the same rule `write_path_and_redirect_arg` follows.
+#[cfg(target_arch = "aarch64")]
+fn stack_pointer(raw: &nix::libc::user_regs_struct) -> u64 {
+    raw.sp
+}
+
+#[cfg(target_arch = "x86_64")]
+fn stack_pointer(raw: &nix::libc::user_regs_struct) -> u64 {
+    raw.rsp
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+fn stack_pointer(_raw: &nix::libc::user_regs_struct) -> u64 {
+    0
 }
 
 /// Write the translated path into the tracee and make argument `arg_index` of the stopped syscall
@@ -1622,8 +1778,13 @@ fn translate_path_remote(
     // Two conditions keep the join honest. The syscall must resolve the name against the cwd - `AT_FDCWD`
     // (`arg0 == -100`) or a legacy no-dirfd syscall - because for any other fd the kernel resolves it
     // against THAT directory and joining onto the cwd would silently open a different file. And the name
-    // must carry no `.`/`..` component: collapsing those is the lexical work the cwd guard already does,
-    // and guessing it here would be a new guess rather than a translation.
+    // must carry no `..` component: that is the ONLY component that can walk a lexically joined name out
+    // of the rootfs (through a symlink), so it is refused rather than joined. A `.` component is the
+    // identity - the kernel resolves `cwd/.` to `cwd` for the guest exactly as the join does - so it is
+    // translated like any other relative name. This test used to be `== "." || == ".."`, which also
+    // refused `.`; that refused the loader's `newfstatat(AT_FDCWD, ".")` for a fork descendant (measured
+    // 2026-11-09 on a real Debian rootfs: `-- /bin/sh -c '/bin/dash -c "echo CHILD-RAN"'` printed
+    // CHILD-RAN but exited 1 on the un-translated `.`), a path that cannot escape the rootfs.
     let guest = if raw.starts_with('/') {
         raw
     } else {
@@ -1634,9 +1795,9 @@ fn translate_path_remote(
                 .unwrap_or(false),
             None => true,
         };
-        let needs_normalising = raw.split('/').any(|c| c == "." || c == "..");
+        let escapes = raw.split('/').any(|c| c == "..");
         match plan.cwd.as_deref() {
-            Some(cwd) if against_cwd && !needs_normalising => {
+            Some(cwd) if against_cwd && !escapes => {
                 format!("{}/{}", cwd.trim_end_matches('/'), raw)
             }
             _ => return Ok(false),
@@ -1672,15 +1833,23 @@ fn translate_path_remote(
 }
 
 /// Rewrite the `execve` path argument of a tracee whose path the engine did NOT publish (a fork
-/// descendant). Reads the guest path from the tracee at `arg0`, resolves it through the SAME
-/// `resolve` the shared-page translation uses (binds first, then the rootfs), and points `arg0` at
-/// a copy of the host path written into the tracee's own memory.
+/// descendant), substituting the guest's interpreter when its `PT_INTERP` is absent on the host -
+/// the SAME substitution the child path makes through the shared page (2026-11-09, p7 interp-desc).
+///
+/// Reads the guest path from the tracee at `arg0`, resolves it through the SAME `resolve` the
+/// shared-page translation uses (binds first, then the rootfs), and points `arg0` at a copy of the
+/// host path written into the tracee's own memory. When `guest_interpreter` reports a substitution
+/// (its three conditions: absolute, absent on the host, present in the rootfs - REUSED, not
+/// re-implemented), the exec is redirected instead: `arg0` becomes the interpreter's HOST path and
+/// `arg1` a NEW argv array on the tracee's own stack (`write_substitution_remote`), so the loader
+/// runs the guest program exactly as the child path does.
 ///
 /// Returns `Ok(false)` when `arg0` does not point at a readable string (a non-entry stop) or when
 /// there is no plan, so the caller can tell "nothing to do here" from a real refusal.
 fn translate_execve_remote(
     pid: Pid,
     arg0: u64,
+    argv_ptr: u64,
     plan: &RunPlan,
     report: &mut NativeRunReport,
 ) -> Result<bool> {
@@ -1695,6 +1864,28 @@ fn translate_execve_remote(
     if guest.is_empty() {
         return Ok(false);
     }
+
+    // The descendant's interpreter substitution: the SAME three-condition policy the child path
+    // uses, reused through `guest_interpreter`. A substitution only happens when the interpreter is
+    // absent on the host and present in the rootfs, so an ordinary guest executable (its loader on
+    // the host) takes the plain path below, unchanged.
+    if let Some(interp) = guest_interpreter(plan, &guest) {
+        let host_interp = resolve(rootfs, &interp, &plan.binds);
+        let original = read_ptr_array(pid, argv_ptr)?;
+        write_substitution_remote(pid, &host_interp, &interp, &original)?;
+        // Record the interpreter the way the child path does: the report names it, and the execve
+        // translation names the interpreter's GUEST path -> its HOST path inside the rootfs.
+        if report.interpreter.is_none() {
+            report.interpreter = Some(interp.clone());
+        }
+        report.translations.push(Translation {
+            guest: interp,
+            host: host_interp,
+            syscall: "SYS_execve",
+        });
+        return Ok(true);
+    }
+
     let host = resolve(rootfs, &guest, &plan.binds);
     if !host.exists() {
         // The honest failure, identical to the shared-page translation: no fallback to the host
