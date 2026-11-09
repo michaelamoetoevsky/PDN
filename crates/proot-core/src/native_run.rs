@@ -363,6 +363,12 @@ impl NativeRunReport {
     }
 }
 
+/// The two-path calls: `renameat`/`renameat2` and `linkat`. Declared here because the one-path table
+/// below cannot express them and the kernel keeps them as separate numbers.
+const SYS_RENAMEAT: i64 = nix::libc::SYS_renameat as i64;
+const SYS_RENAMEAT2: i64 = nix::libc::SYS_renameat2 as i64;
+const SYS_LINKAT: i64 = nix::libc::SYS_linkat as i64;
+
 /// `SYS_newfstatat` is declared by the libc crate for linux-gnu (79 on arm64, 262 on x86_64) and
 /// for android/x86_64, but NOT for android/aarch64 - measured 2026-11-08 on libc 0.2.191, whose
 /// `android/b64/aarch64/mod.rs` has no such constant. The arm64 table (`asm-generic/unistd.h`)
@@ -1269,7 +1275,60 @@ fn parent_loop(
                     // setup call, and never leaves a guest call to the kernel.
                     let engine_bootstrap_chdir = number == nix::libc::SYS_chdir as i64
                         && !matches!(peek_cstr(pid, args[0]), Ok(Some(_)));
-                    if let Some(PathSyscall {
+                    // TWO-PATH CALLS (2026-11-09). `renameat`/`renameat2` and `linkat` each take two guest
+                    // paths and the one-path table cannot express them, so they were refused by name while
+                    // the proot arm ran `mv` and `ln`. Both go through the SAME helper the one-path calls
+                    // use - source at arg1/dirfd arg0, destination at arg3/dirfd arg2 - so there is one
+                    // translation policy, not two.
+                    let two_path =
+                        number == SYS_RENAMEAT || number == SYS_RENAMEAT2 || number == SYS_LINKAT;
+                    if two_path && !engine_bootstrap_chdir {
+                        let name = if number == SYS_LINKAT {
+                            "SYS_linkat"
+                        } else {
+                            "SYS_renameat"
+                        };
+                        let tracee_cwd = slots[idx].cwd.clone();
+                        for (arg_index, dirfd_arg) in [(1usize, Some(0usize)), (3, Some(2))] {
+                            match translate_path_remote(
+                                pid,
+                                arg_index,
+                                dirfd_arg,
+                                name,
+                                number,
+                                &args,
+                                plan,
+                                &tracee_cwd,
+                                &mut report,
+                            ) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    // Half a rename is worse than a refusal: rewriting one side and
+                                    // leaving the other on the host path is exactly what this engine
+                                    // refuses, so the whole call is recorded as untranslated.
+                                    let refusal = Refusal {
+                                        number,
+                                        name: Some(name),
+                                        reason: "one of its two paths could not be translated",
+                                    };
+                                    if strict {
+                                        report.strict_failure = Some(refusal.label());
+                                        report.refusals.push(refusal);
+                                        report.translations.clear();
+                                        for s in &slots {
+                                            let _ = ptrace::kill(s.pid);
+                                        }
+                                        break;
+                                    }
+                                    report.refusals.push(refusal);
+                                }
+                                Err(e) => {
+                                    let _ = ptrace::kill(pid);
+                                    return Err(e);
+                                }
+                            }
+                        }
+                    } else if let Some(PathSyscall {
                         name,
                         arg_index,
                         dirfd_arg,
@@ -2001,10 +2060,16 @@ fn stack_pointer(_raw: &nix::libc::user_regs_struct) -> u64 {
 /// named; any other target needs its own arm.
 fn write_path_and_redirect_arg(pid: Pid, arg_index: usize, bytes: &[u8]) -> Result<()> {
     const SCRATCH_BELOW_SP: u64 = 0x200;
+    // ONE SLOT PER ARGUMENT (2026-11-09). A two-path call translates two arguments, and with a single
+    // scratch address the second write landed on the first: measured on `mv a b`, the source and the
+    // destination both pointed at the LAST translated path, so the kernel answered
+    // `mv: cannot move 'a' to 'b': No such file or directory` while the proot arm renamed it.
+    const SCRATCH_SLOT: u64 = 512;
+    let slot_offset = SCRATCH_SLOT * arg_index.min(3) as u64;
     let mut raw = get_regs(pid)?;
     #[cfg(target_arch = "aarch64")]
     {
-        let scratch = raw.sp.wrapping_sub(SCRATCH_BELOW_SP) & !0xf;
+        let scratch = raw.sp.wrapping_sub(SCRATCH_BELOW_SP + slot_offset) & !0xf;
         let Some(slot) = raw.regs.get_mut(arg_index) else {
             return Err(anyhow!(
                 "syscall argument {} has no register on aarch64 (only 0..=5 do)",
@@ -2016,7 +2081,7 @@ fn write_path_and_redirect_arg(pid: Pid, arg_index: usize, bytes: &[u8]) -> Resu
     }
     #[cfg(target_arch = "x86_64")]
     {
-        let scratch = raw.rsp.wrapping_sub(SCRATCH_BELOW_SP) & !0xf;
+        let scratch = raw.rsp.wrapping_sub(SCRATCH_BELOW_SP + slot_offset) & !0xf;
         let slot = match arg_index {
             0 => &mut raw.rdi,
             1 => &mut raw.rsi,

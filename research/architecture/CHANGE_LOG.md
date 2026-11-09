@@ -2301,3 +2301,30 @@ same way - that is not parity, it is a broken fixture` instead of treating two i
 **Still refused, by name, and named here so nobody assumes otherwise:** `renameat` and `linkat` take TWO paths and
 have no translator yet, so a workload that renames or hardlinks a guest path will still stop with a named refusal.
 The `dirfd`-relative rule covers unlinkat/openat/stat-family; the two-path calls need the same treatment next.
+
+## `mv` and `ln` in the guest: two-path translation, and one scratch slot per argument (2026-11-09 23:05 WIB)
+
+**The calls.** `renameat`/`renameat2` and `linkat` each take TWO guest paths, which the one-path table cannot
+express, so they were refused by name while the proot arm ran `mv` and `ln`. They now go through the SAME
+translation helper as the one-path calls - source at arg1 with dirfd arg0, destination at arg3 with dirfd arg2 -
+and a two-path call where EITHER side is untranslatable is refused as a whole, because rewriting one side of a
+rename and leaving the other on the host path is the half-translation this engine exists to refuse.
+
+**A second defect the first fix exposed.** With both paths translated, `mv a b` still failed with
+`mv: cannot move 'a' to 'b': No such file or directory`: the translated strings were written to a SINGLE scratch
+address below the stack pointer, so the destination overwrote the source and the kernel was asked to rename a path
+onto itself. Each argument now gets its own slot (`SCRATCH_SLOT * arg_index`), which is what made `mv` work:
+
+```
+proot  -> LINK-OK | b c | RENAME-OK
+native -> (after the slot fix) b | RENAME-OK, with `ln` still refused by the KERNEL, not by the engine:
+          ln: failed to create hard link 'b' => 'a': Permission denied
+```
+
+**The remaining difference is a kernel policy, and the reference covers it with a feature PDN's native engine does
+not have yet.** Android's SELinux policy refuses hardlinks inside the app's data area; proot succeeds because
+proot-core passes `--link2symlink` unconditionally and proot replaces the hardlink with a symlink. That emulation
+is NOT in the native engine yet - it was designed here (capture both paths at the entry stop, and at the exit stop,
+when the result is an error, create the symlink from the engine and report success) and the code was NOT landed,
+because the patch's anchors no longer matched after rustfmt and a half-applied edit is worse than none. Named here
+so this document does not read as if `ln` worked.
