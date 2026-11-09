@@ -21,6 +21,7 @@ name, which this harness would surface as a difference if a workload used them.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -40,11 +41,21 @@ WORKLOAD = (
     # native arm reported "Permission denied", which is a real difference this harness would flag as NOT
     # EQUAL. Emulation evidence lives in the tests and the CHANGE_LOG; this harness compares what the host
     # lets both engines do.
+    # The IDENTITY is part of this workload because it is part of what a guest sees about its own files: until
+    # 2026-11-09 `id -u` answered 0 on both engines while `stat`/`ls -l` printed the host's 10396 on the native
+    # arm. Both lines below must match, so a regression in the stat rewrite turns this harness red instead of
+    # waiting for a manual measurement.
+    "&& stat -c 'uid=%u gid=%g' f && id -u "
     "&& ls -l | head -1 && cd / && rm -rf /root/x && echo WRITE-OK"
 )
 
 
 def run(binary: str, store_env: dict, engine: str, script: str) -> tuple[int, str]:
+    # The HARNESS clears the workload directory on the host side before each arm (2026-11-09). Sharing one
+    # container made the native arm fail at `chmod` with "cannot access 'f'" whenever the proot arm left its
+    # directory behind - and the proot arm DOES leave it behind: its own `rm -rf` reported "Directory not
+    # empty". Cleaning from the fixture owner's side keeps the comparison about the engines rather than about
+    # the other arm's residue, and it does not require a second 173 MB rootfs copy.
     argv = [binary]
     if engine == "native":
         argv += ["--engine", "native"]
@@ -89,7 +100,10 @@ def main() -> int:
     env.pop("LD_LIBRARY_PATH", None)
 
     results = {}
+    workdir = store / "containers" / CONTAINER / "rootfs" / "root" / "x"
     for engine in ("proot", "native"):
+        if workdir.exists():
+            shutil.rmtree(workdir, ignore_errors=True)
         code, out = run(binary, env, engine, WORKLOAD)
         results[engine] = (code, out)
         print(f"  [{engine}] exit={code}")
