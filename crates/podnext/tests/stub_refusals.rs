@@ -166,14 +166,18 @@ fn run_still_accepts_tty_and_interactive() {
 fn login_refuses_the_unimplemented_proot_flags_by_name_with_a_remedy() {
     // (argument to pass, name the message must carry, remedy to look for). The first two differ for a
     // flag that takes a value: the caller types `--change-id=0:0:0` and the refusal names `--change-id`.
-    // Only flags that were a PARSE error before this change: `--kill-on-exit`, `--no-kill-on-exit` and
-    // `--no-sysvipc` are global options already refused by name elsewhere, so they are deliberately not
-    // duplicated here (one source of truth per flag).
-    let cases: [(&str, &str, &str); 5] = [
-        ("--shared-home", "--shared-home", "-b"),
-        ("--shared-tmp", "--shared-tmp", "-b"),
-        ("--termux-home", "--termux-home", "-b"),
-        ("--detach", "--detach", "podnext run --detach"),
+    // 2026-11-09: `--shared-home`, `--termux-home`, `--shared-tmp`, `--shared-x11` and `-d/--detach`
+    // are IMPLEMENTED now, with the reference's own bind mapping (see login_shares.rs), so this test
+    // covers what is still refused and the ledger's #42/#47/#62 checks keep their teeth. `--fix-low-ports`
+    // stays refused because the reference maps it to proot's own `-p` port redirection, which the native
+    // engine does not have; `--no-link2symlink` and `--change-id` cannot be honoured either.
+    let cases: [(&str, &str, &str); 3] = [
+        ("--fix-low-ports", "--fix-low-ports", "port_switch"),
+        (
+            "--no-link2symlink",
+            "--no-link2symlink",
+            "hardlink emulation cannot be switched off",
+        ),
         ("--change-id=0:0:0", "--change-id", "--engine proot"),
     ];
     for (arg, flag, remedy) in cases {
