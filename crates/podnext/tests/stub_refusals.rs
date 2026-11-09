@@ -261,3 +261,38 @@ fn container_commands_refuse_the_inert_proot_flags() {
         );
     }
 }
+
+/// After the engine default flipped to native (`b07cd18`), `podnext run --detach <container>` exited 1
+/// with the "`--engine native` is not implemented for `--detach`" refusal for EVERY caller who had not
+/// named an engine - and the documented example in `docs/src/cli-reference.md` is that exact command
+/// line. The doc-example checker lists `run` under CANNOT_RUN ("needs an installed container"), so CI
+/// could not see it. The detached path now selects the proot path itself and says so in one line,
+/// while an explicit `--engine native` is still refused by name.
+#[test]
+fn detach_selects_the_proot_path_by_default_and_refuses_an_explicit_native_engine() {
+    let (code, _stdout, stderr) = run(&["run", "--detach", "no-such-container", "--", "/bin/sh"]);
+    assert_ne!(code, 2, "the command must parse: {stderr}");
+    assert!(
+        !stderr.contains("not implemented for `--detach`"),
+        "an engine the caller did not name must not be refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("--detach runs the guest through the proot path"),
+        "and the choice must be visible in one line: {stderr}"
+    );
+
+    let (code, _stdout, stderr) = run(&[
+        "--engine",
+        "native",
+        "run",
+        "--detach",
+        "no-such-container",
+        "--",
+        "/bin/sh",
+    ]);
+    assert_eq!(code, 1, "an explicit native engine must refuse: {stderr}");
+    assert!(
+        stderr.contains("not implemented for `--detach`"),
+        "and name what it cannot do: {stderr}"
+    );
+}

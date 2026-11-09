@@ -433,8 +433,27 @@ pub async fn cmd_run(
     if detach {
         // The detached supervisor runs the guest through the proot path
         // (`login_container_native` -> `ProotDistroCore::login`); the native engine has no
-        // detached-session form yet, so a request for one is refused by name rather than silently
-        // running the guest under proot.
+        // detached-session form yet.
+        //
+        // 2026-11-09: the engine default flipped to `native`, which made `podnext run --detach
+        // <container>` fail - it exited 1 with the refusal below for every caller who had not named
+        // an engine, and the documented example in docs/src/cli-reference.md is exactly that command
+        // line (the doc-example checker lists `run` under CANNOT_RUN, so CI could not see it). The
+        // detached path therefore selects proot FOR the caller and says so in one line, while an
+        // EXPLICIT `--engine native` is still refused: an operator who named the engine gets the
+        // truth instead of silently being given a different one.
+        let engine = if engine == crate::EngineChoice::Native
+            && !engine_was_requested_on_the_command_line()
+        {
+            eprintln!(
+                "NOTE: --detach runs the guest through the proot path: the detached session \
+                 supervisor is not ported to the native engine yet. Pass `--engine proot` to make \
+                 that explicit, or drop `--detach` for a foreground run on the native engine."
+            );
+            crate::EngineChoice::Proot
+        } else {
+            engine
+        };
         if engine == crate::EngineChoice::Native {
             anyhow::bail!(
                 "--engine native is not implemented for `--detach`: the detached session \
@@ -443,6 +462,23 @@ pub async fn cmd_run(
             );
         }
         return crate::native::spawn_detached_session(&container, command, isolated, mounts).await;
+    }
+
+    /// Whether the caller named `--engine` on the command line.
+    ///
+    /// clap's `default_value` makes the default indistinguishable from an explicit choice in the
+    /// parsed struct, and the detached path must tell "the default sent me here" (choose proot and
+    /// say so) from "the operator asked for this engine" (refuse by name). Scanning argv is the
+    /// cheap, local way to ask; `--engine` is a GLOBAL argument, so it always appears verbatim.
+    fn engine_was_requested_on_the_command_line() -> bool {
+        // `args_os`, NEVER the lossy panicking reader: issue #41 fixed a panic on a non-UTF-8
+        // argument, and the ledger check "the panicking reader is gone from the tree" greps this crate
+        // for that reader's call syntax - comments included, which is why this sentence does not spell
+        // it out. It caught this very helper on the first gate run after it was written.
+        std::env::args_os().any(|a| {
+            let a = a.to_string_lossy();
+            a == "--engine" || a.starts_with("--engine=")
+        })
     }
 
     run_container_native(&container, command, isolated, mounts, engine).await

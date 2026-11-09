@@ -2116,4 +2116,73 @@ assertion, and the file was restored from a saved copy (verified identical) and 
 further measurement - the earlier session had already shown what measuring a sabotage-built binary costs.
 
 **CI:** `7f25e43` reports 15 success and 0 non-success; the local gate for `6eb43a7` is GREEN with
-`136 PASS, 0 FAIL, 0 SKIPPED`.
+`136 PASS, 0 FAIL, 0 SKIPPED`.## Regression from the flip, found and repaired: `run --detach` no longer refused (2026-11-09 21:10 WIB)
+
+**What broke, and why CI could not see it.** After `--engine` defaulted to `native` (`b07cd18`), this command -
+the one printed in `docs/src/cli-reference.md` - exited 1 for every caller who had not named an engine:
+
+```
+$ podnext run --detach alpine -- sh -c 'echo hello-detached; sleep 6'
+Error: --engine native is not implemented for `--detach`: the detached session supervisor runs the guest
+through the proot path. Drop `--detach` (a foreground `run` uses the native engine), or use `--engine proot`.
+```
+
+The refusal itself is honest and named, but the flip changed behaviour for an existing command line without
+changing the documentation, which is the class reported from real use. The doc-example checker could not catch it:
+`("run",)` is listed under `CANNOT_RUN` with the reason "needs an installed container", so the block is declared
+unrunnable rather than executed.
+
+**The change.** `crates/podnext/src/commands/container.rs`: the detached branch now selects the proot path itself
+when the caller named no engine, and prints one line saying so
+
+```
+NOTE: --detach runs the guest through the proot path: the detached session supervisor is not ported to the
+native engine yet. Pass `--engine proot` to make that explicit, or drop `--detach` for a foreground run on the
+native engine.
+```
+
+An EXPLICIT `--engine native --detach` is still refused by name, because an operator who named an engine deserves
+the truth rather than a silently substituted one. Telling the two apart needs the command line, not the parsed
+struct: clap's `default_value` makes the default indistinguishable from an explicit choice, so a local helper
+scans argv for `--engine` / `--engine=` (the flag is global, so it always appears verbatim).
+
+**Measured.**
+
+| command | before this change | after |
+|---|---|---|
+| `run --detach <ctr> -- ...` | exit 1, refused | selects proot, prints the NOTE, proceeds |
+| `--engine native run --detach <ctr>` | exit 1, refused | exit 1, refused (unchanged, correct) |
+| `--engine proot run --detach <ctr>` | exit 1 | exit 1, same error as the default path |
+| `run <ctr> -- /bin/sh -c 'echo FG-OK'` | `FG-OK`, exit 0 | `FG-OK`, exit 0 (control unchanged) |
+
+**A failure that is NOT this change, and is left named rather than explained away.** On the fixture store both
+detached forms end with `the detached session ended before it could be attached (pid <n>, status exit status: ...)`
+- the same message with `--engine proot`, which is the pre-flip routing, so the engine choice is not its cause.
+What fails is the detached session on this fixture; it is recorded here as unresolved and belongs to the
+session/PTY path rather than to the engine.
+
+`crates/podnext/tests/stub_refusals.rs` gains
+`detach_selects_the_proot_path_by_default_and_refuses_an_explicit_native_engine`, asserting that an unnamed engine
+is NOT refused and that the one-line NOTE is present, while an explicit `--engine native` is refused by name.
+9 passed, 0 failed; with the selection disabled (`if false && !engine_was_requested...`) the test went red on its
+own assertion, and the file was restored from a saved copy (verified identical) and the binary rebuilt
+(`20:01:44`, the NOTE string present) before further measurement.
+
+**Gates:** the local gate for `0a7c049` is GREEN (`136 PASS, 0 FAIL, 0 SKIPPED`); CI for `7f25e43` reports
+15 success and 0 non-success.
+### Correction inside the same change: the gate caught a regression I introduced (2026-11-09 21:25 WIB)
+
+The first gate run after the `--detach` routing fix was RED with `135 PASS, 1 FAIL` and the failing check was not
+the one I expected: issue #41, "the panicking reader is gone from the tree", which greps `crates/podnext/src` for
+`std::env::args()` and requires ZERO hits, because #41 fixed a panic on a non-UTF-8 argument by moving to the
+byte-oriented reader.
+
+My new helper `engine_was_requested_on_the_command_line()` used exactly that panicking reader. The predicate is a
+past decision and was NOT weakened: the helper now uses `args_os()` and converts each argument with
+`to_string_lossy()`, which cannot panic on invalid UTF-8. A second round was needed because the FIRST fix left the
+literal in a comment explaining the rule - the check greps sources including comments - so the comment was
+rewritten to describe the rule without spelling out the call syntax.
+
+Ledger after both rounds: `checks: 136 PASS, 0 FAIL, 0 SKIPPED`, with all four #41 checks PASS. The gate was right
+and the code was wrong, which is the order this project requires: read the failing check, fix the code, keep the
+predicate.
