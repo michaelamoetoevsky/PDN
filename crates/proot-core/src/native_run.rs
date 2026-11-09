@@ -1042,12 +1042,13 @@ fn parent_loop(
         /// text). Filled at the ENTRY stop and consumed at the EXIT stop, because at exit the argument
         /// registers already hold the result (2026-11-09, link2symlink).
         pending_link: Option<(std::path::PathBuf, std::path::PathBuf, String)>,
-        /// The guest's CURRENT directory for this tracee, as a guest-absolute path (2026-11-09).
+        /// The guest's CURRENT directory for this tracee as a guest-absolute path, or `None` when the engine
+        /// does not know it (2026-11-09).
         /// `plan.cwd` is only the STARTING directory: a guest that runs `cd` moves, and every later
         /// relative path must resolve against where it actually is - proot tracks this per process too.
         /// Measured: with only `plan.cwd`, `cd /etc && head -1 os-release` translated the relative open
         /// against `/` and answered `cannot open 'os-release'`.
-        cwd: String,
+        cwd: Option<String>,
         started: bool,
         /// The answer the engine computed for a `faccessat2` whose path it resolved, applied at the
         /// exit stop only if the host refused the call with `-ENOSYS` (see `parent_loop`).
@@ -1058,7 +1059,11 @@ fn parent_loop(
         at_entry: true,
         execve_handled: false,
         pending_link: None,
-        cwd: plan.cwd.clone().unwrap_or_else(|| "/".to_string()),
+        // NO default: `None` means the engine does not know where the guest is, and a relative path must then
+        // be refused rather than joined onto a guess. Measured by the p7-relative control arm: defaulting this
+        // to "/" made the engine rewrite `relative-report` to `<rootfs>/relative-report` while the kernel
+        // resolved it against the HOST cwd, i.e. a translation to the wrong place.
+        cwd: plan.cwd.clone(),
         started: true,
         faccessat_result: None,
     }];
@@ -1118,7 +1123,7 @@ fn parent_loop(
                         at_entry: false,
                         execve_handled: false,
                         pending_link: None,
-                        cwd: plan.cwd.clone().unwrap_or_else(|| "/".to_string()),
+                        cwd: plan.cwd.clone(),
                         started: false,
                         faccessat_result: None,
                     });
@@ -1325,8 +1330,24 @@ fn parent_loop(
                     // path is the guest's and goes through the table. Deciding it by readability rather than
                     // by pid or by comparing host paths keeps one rule: the engine never refuses its own
                     // setup call, and never leaves a guest call to the kernel.
-                    let engine_bootstrap_chdir = number == nix::libc::SYS_chdir as i64
-                        && !matches!(peek_cstr(pid, args[0]), Ok(Some(_)));
+                    // TWO branches, both measured. On this device the engine's own chdir is
+                    // UNREADABLE at its stop (`seen=Ok(None)`), which is why readability was the first
+                    // rule. On the CI runner that same call IS readable - it carries the translated host
+                    // cwd - so readability alone translated it a second time and the child exited 126
+                    // (`a_relative_path_is_translated_against_the_plans_cwd`: cwd=Some("/probe")
+                    // exit=126). A path that already lies under the resolved rootfs is the other
+                    // observable form of the same call, so both are exempt:
+                    //   unreadable  OR  already a host path inside the rootfs
+                    let engine_bootstrap_chdir = if number == nix::libc::SYS_chdir as i64 {
+                        match peek_cstr(pid, args[0]) {
+                            Ok(None) | Err(_) => true,
+                            Ok(Some(raw)) => resolve_cwd(plan, "/")
+                                .map(|root| std::path::Path::new(&raw).starts_with(&root))
+                                .unwrap_or(false),
+                        }
+                    } else {
+                        false
+                    };
                     // TWO-PATH CALLS (2026-11-09). `renameat`/`renameat2` and `linkat` each take two guest
                     // paths and the one-path table cannot express them, so they were refused by name while
                     // the proot arm ran `mv` and `ln`. Both go through the SAME helper the one-path calls
@@ -1350,7 +1371,7 @@ fn parent_loop(
                                 number,
                                 &args,
                                 plan,
-                                &tracee_cwd,
+                                tracee_cwd.as_deref(),
                                 &mut report,
                             ) {
                                 Ok(true) => {}
@@ -1410,7 +1431,7 @@ fn parent_loop(
                             number,
                             &args,
                             plan,
-                            &tracee_cwd,
+                            tracee_cwd.as_deref(),
                             &mut report,
                         ) {
                             Ok(true) => {
@@ -1418,11 +1439,20 @@ fn parent_loop(
                                 // next relative path resolves there (guest-absolute, lexically joined).
                                 if name == "SYS_chdir" {
                                     if let Ok(Some(raw)) = peek_cstr(pid, args[arg_index]) {
-                                        slots[idx].cwd = if raw.starts_with('/') {
+                                        slots[idx].cwd = Some(if raw.starts_with('/') {
                                             raw
                                         } else {
-                                            format!("{}/{}", tracee_cwd.trim_end_matches('/'), raw)
-                                        };
+                                            match tracee_cwd.as_deref() {
+                                                Some(base) => {
+                                                    format!(
+                                                        "{}/{}",
+                                                        base.trim_end_matches('/'),
+                                                        raw
+                                                    )
+                                                }
+                                                None => raw,
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -1521,7 +1551,7 @@ fn parent_loop(
                         .iter()
                         .find(|s| s.pid == pid)
                         .map(|s| s.cwd.clone())
-                        .unwrap_or_else(|| plan.cwd.clone().unwrap_or_else(|| "/".to_string()));
+                        .unwrap_or_else(|| plan.cwd.clone());
                     slots.push(TraceeSlot {
                         pid: new_pid,
                         at_entry: false,
@@ -2293,7 +2323,7 @@ fn translate_path_remote(
     number: i64,
     args: &[u64; 6],
     plan: &RunPlan,
-    tracee_cwd: &str,
+    tracee_cwd: Option<&str>,
     report: &mut NativeRunReport,
 ) -> Result<bool> {
     let Some(rootfs) = plan.rootfs.as_ref() else {
@@ -2364,7 +2394,7 @@ fn translate_path_remote(
                 report,
             );
         }
-        match Some(tracee_cwd) {
+        match tracee_cwd {
             Some(cwd) if against_cwd && !escapes => {
                 format!("{}/{}", cwd.trim_end_matches('/'), raw)
             }

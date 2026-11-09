@@ -2457,3 +2457,29 @@ Two things came out of it:
 Fixing it by script also damaged two literals (a duplicated `env:` field, and a field inserted AFTER `..base`, which
 the compiler rejected by name), so the repair was verified by the compiler rather than by reading the diff - three
 iterations, each one caught by `cargo check -p proot-core --tests` naming the exact line.
+
+### The bootstrap-chdir rule needed a second branch, and the cwd default was a lie (2026-11-10 01:40 WIB)
+
+Two CI failures, both caused by rules that were true only on this device.
+
+**1. `a_relative_path_is_translated_against_the_plans_cwd` failed on the runner with `exit=126`.** The rule that
+identifies the engine's own bootstrap `chdir` was "its path is not readable at that stop", measured here
+(`seen=Ok(None)`). On the runner that same call IS readable - it carries the translated host cwd - so the rule did
+not fire, the already-translated path was translated a second time, and the child's chdir failed: the engine exits
+126 when its own bootstrap chdir fails. The rule now names BOTH observable forms of the same call:
+
+```text
+unreadable at the stop   OR   an already-host path inside the resolved rootfs
+```
+
+**2. The per-tracee cwd defaulted to `/`, which silently mistranslated relative paths.** The p7-relative control arm
+exists to prove that with no known cwd a relative name is REFUSED - the kernel resolves it against the HOST cwd, so
+rewriting it into the rootfs would point the guest at a different file. Giving the slot a `unwrap_or("/")` default
+made the engine translate `relative-report` to `<rootfs>/relative-report` while the kernel looked elsewhere, and the
+control caught it. The slot is now `Option<String>` and `None` means unknown, so the refusal stands.
+
+Measured after: `cargo test -p proot-core --test native_exec_translation` -> 14 passed, 0 failed, and
+`cargo test --workspace --no-run` -> exit 0.
+
+The pattern behind both: a rule derived from ONE observation on ONE host is a hypothesis, not a rule - and the
+harness that disagrees with it is usually right.
