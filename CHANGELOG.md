@@ -52,6 +52,32 @@ that carries it, so it can be re-derived with `git show <sha>`.
   remedy than the one those documents recommended: dispatch the workflow by hand on the release commit, so its
   own artifact exists. Each correction is visible in place rather than rewritten silently.
 
+- **Containers now run on PodNext's own engine by default.** `--engine` changed from `proot` to `native`, so a
+  run needs no `proot` binary at all; `--engine proot` keeps the previous path byte for byte. The acceptance
+  harness `scripts/own_engine_acceptance.py` flipped from PARTIAL to PASS and now also proves the claim the way
+  the requirement words it: `PROOT_BIN` points at a decoy that writes a marker if anything ever executes it,
+  and PASS requires the marker to stay absent. Measured on a real Debian 13 rootfs with the same fixture and
+  the same binary, `ls /etc`, `test -x /bin/ls`, `command -v ls`, `exec /bin/ls`, a pipeline,
+  `apt-get --version` and `ls /usr/bin | wc -l` (257 = 257) all match the proot arm (`b07cd18`, `1fd91b0`).
+
+- **`proot` is optional and is no longer installed behind the operator's back.** `podnext doctor` warns instead
+  of failing when the binary is missing, because only `--engine proot` needs it, and `install.sh` installs
+  neither `proot` nor `proot-distro` unless `PDN_WITH_PROOT=1` is set. `proot-distro` is the reference
+  implementation - a different program with its own container store - which is why a command that looks like
+  PDN's answered "container is not installed" about a store PDN never reads (`1fd91b0`).
+
+- **`podnext login` refuses the unimplemented proot flags by name, with a remedy,** instead of answering clap's
+  `error: unexpected argument ... found`: `--shared-home`, `--shared-tmp`, `--shared-x11`, `--termux-home`,
+  `--detach`, `--fix-low-ports`, `--no-link2symlink`. Each message names the flag, the reason and a command
+  that works; a genuine typo still fails as a parse error, and `--kill-on-exit`, `--no-kill-on-exit` and
+  `--no-sysvipc` are not duplicated because they are already global flags refused by name (`00cb46f`).
+
+- `docs/src/engines.md` documents the engine choice in four parts and states plainly what each engine does not
+  do, with a "two programs, two stores" table, and `docs/src/known-limitations.md` now lists the measured
+  engine gaps (identity mapped to zero and switchable with `PDN_NATIVE_NO_ID_MAP`, `st_uid` not rewritten,
+  `argv[0]` of spawned programs showing the guest interpreter, the five unimplemented proot argv features, and
+  the guest `/` listing being the rootfs itself) (`052a08a`).
+
 ### Removed
 
 - The second, tag-triggered release job in `ci.yml`. The tag commit's `PDN CI/CD` run was **red** because of
