@@ -230,3 +230,34 @@ fn root_id_refuses_by_name_because_the_guest_is_already_root() {
     let (code, _stdout, stderr) = run(&["daemon", "logs", "--help"]);
     assert_eq!(code, 0, "every subcommand's help must render: {stderr}");
 }
+
+/// Measured 2026-11-09 with a decoy PROOT_BIN: on every container command the generated proot argv is
+/// the same with no flag, with `--link2symlink`, with `--kill-on-exit`, with `--sysvipc` and with
+/// `--no-sysvipc` (normalised, because the sysdata binds carry `/proc/<pid>`; two runs per variant to
+/// prove stability), because `proot-core` passes all four unconditionally (`lib.rs:201`, `:343`). The
+/// direct path already refused them (`direct.rs:315-339`); container commands dropped them in silence,
+/// which is the class #62/#63 forbids.
+#[test]
+fn container_commands_refuse_the_inert_proot_flags() {
+    for flag in [
+        "--link2symlink",
+        "--kill-on-exit",
+        "--sysvipc",
+        "--no-sysvipc",
+    ] {
+        let (code, _stdout, stderr) = run(&["run", "no-such-container", flag, "--", "/bin/sh"]);
+        assert_ne!(
+            code, 2,
+            "{flag} must be parsed, not read as a typo: {stderr}"
+        );
+        assert_eq!(code, 1, "{flag} must refuse with exit 1: {stderr}");
+        assert!(
+            stderr.contains(flag),
+            "the message must name {flag}: {stderr}"
+        );
+        assert!(
+            stderr.contains("identical with and without it"),
+            "and carry the measured reason: {stderr}"
+        );
+    }
+}

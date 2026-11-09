@@ -69,7 +69,7 @@ podnext [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [-- <CMD_ARGS>...]
 | `--qemu <BIN>` | `-q` | Execute through QEMU user-mode |
 | `--link2symlink` | | Enable hardlink emulation via symlinks. No short form: the reference's `-l` is taken by `daemon logs --lines` |
 | `-0, --root-id` | `-0` | Make the guest appear as root. Refused by name: every guest id is already mapped to root through `--change-id=0:0:0` |
-| `--no-sysvipc` | | Disable System V IPC emulation |
+| `--no-sysvipc` | | Disable System V IPC emulation. Refused by name on container commands and on the direct path: `proot-core` passes `--sysvipc` unconditionally |
 | `--kernel <VER>` | | Override kernel release string |
 | `--hostname <NAME>` | | Set hostname |
 | `--env <VAR=VALUE>` | `-e` | Set environment variable (repeatable) |
@@ -822,3 +822,4 @@ podnext completion fish > ~/.config/fish/completions/podnext.fish
 - [Configuration](configuration.md)
 - [Security](security.md)
 - [Architecture](architecture.md)
+| `--kill-on-exit` | | Kill processes when the command exits. Refused by name on container commands and on the direct path: it is the default and is passed to proot unconditionally |

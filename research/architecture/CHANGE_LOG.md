@@ -2069,4 +2069,51 @@ refusal disabled (`if false && cli.root_id`) the test went red on its own assert
 a saved copy (verified identical).
 
 **CI for the previous batch is green**: `7f25e43` reports 15 success and 0 non-success, which covers the flip, the
-optional-proot work, the user documentation, the login refusals and the release entry.
+optional-proot work, the user documentation, the login refusals and the release entry.## Four inert proot flags now refuse on container commands too (2026-11-09 20:35 WIB)
+
+**The finding.** The direct-execution path already refused `--link2symlink`, `--kill-on-exit`, `--sysvipc` and
+`--no-sysvipc` by name (`direct.rs:315-339`), but every container command accepted them in silence. Measured on
+`podnext --engine proot run <container>` with a decoy `PROOT_BIN` that records its arguments:
+
+```
+none            stabil  token=49  digest=f6f88b695474
+link2symlink    stabil  token=49  digest=f6f88b695474
+killon          stabil  token=49  digest=f6f88b695474
+sysvipc         stabil  token=49  digest=f6f88b695474
+nosysvipc       stabil  token=49  digest=f6f88b695474
+```
+
+All five variants produce the same argv, because `proot-core` passes all four unconditionally
+(`lib.rs:201`, `:343`). So a caller who passed them was told nothing while nothing happened - the class
+issues #62 and #63 forbid.
+
+**A measurement error of mine, corrected here rather than left standing.** The first comparison used the raw
+argv digest and showed five DIFFERENT digests, which I nearly reported as "the flags do change the argv". The
+difference was the sysdata binds, which carry `/proc/<pid>` (for example
+`--bind=.../sysdata/sys_empty:/proc/8043`) and therefore shift between runs. The valid comparison normalises
+those tokens and runs each variant twice to prove the digest is stable, which is the table above. Both halves are
+recorded because the wrong reading was one step away from becoming a claim in the log.
+
+**The change.** `main.rs` refuses the four flags when a subcommand is present, naming each flag, the reason, and
+the evidence ("the measured proot argv is identical with and without it"), so the container path and the direct
+path now say the same thing about the same flags. No help text changed: the dump is byte-identical to the pinned
+baseline (`123 help screens`, `cmp` reports IDENTIK).
+
+**Measured after the change.**
+
+| command | before | after |
+|---|---|---|
+| `podnext run <ctr> --link2symlink -- /bin/sh` | ran, flag ignored | exit 1, names `--link2symlink` and why |
+| `podnext run <ctr> --kill-on-exit -- /bin/sh` | ran, flag ignored | exit 1, named |
+| `podnext run <ctr> --sysvipc -- /bin/sh` | ran, flag ignored | exit 1, named |
+| `podnext run <ctr> --no-sysvipc -- /bin/sh` | ran, flag ignored | exit 1, named |
+| `podnext run <ctr> -- /bin/sh -c 'echo OK'` | `OK` | `OK` (control unchanged) |
+
+`crates/podnext/tests/stub_refusals.rs` gains `container_commands_refuse_the_inert_proot_flags`, which asserts
+for each flag that the exit code is 1 and not 2, that the message names the flag and carries the measured reason.
+8 passed, 0 failed; with the refusal gated off (`if false && cli.command.is_some()`) the test went red at its own
+assertion, and the file was restored from a saved copy (verified identical) and the binary rebuilt before any
+further measurement - the earlier session had already shown what measuring a sabotage-built binary costs.
+
+**CI:** `7f25e43` reports 15 success and 0 non-success; the local gate for `6eb43a7` is GREEN with
+`136 PASS, 0 FAIL, 0 SKIPPED`.

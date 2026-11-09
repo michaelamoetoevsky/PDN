@@ -196,6 +196,46 @@ async fn run() -> Result<()> {
         );
     }
 
+    // The four flags the direct path already refuses (direct.rs:315-339) were accepted in silence by
+    // every container command. Measured 2026-11-09 with a decoy PROOT_BIN under `--engine proot`:
+    // `podnext run <container>` builds the same argv set with no flag, with --link2symlink, with
+    // --kill-on-exit, with --sysvipc and with --no-sysvipc. The comparison is normalised because the
+    // sysdata binds carry `/proc/<pid>` and differ between runs, and each variant was measured twice
+    // to prove the digests were stable. proot-core passes all four unconditionally (lib.rs:201 and
+    // :343), so no container command can honour them - which is the class this project refuses
+    // (#62/#63) rather than dropping the caller's flag without a word.
+    if cli.command.is_some() {
+        for (set, flag, why) in [
+            (
+                cli.link2symlink,
+                "--link2symlink",
+                "hardlink emulation is the default and is passed to proot unconditionally",
+            ),
+            (
+                cli.kill_on_exit,
+                "--kill-on-exit",
+                "killing on exit is the default and is passed to proot unconditionally",
+            ),
+            (
+                cli.sysvipc,
+                "--sysvipc",
+                "proot-core passes `--sysvipc` to proot unconditionally",
+            ),
+            (
+                cli.no_sysvipc,
+                "--no-sysvipc",
+                "proot-core passes `--sysvipc` to proot unconditionally, so it cannot be turned off",
+            ),
+        ] {
+            if set {
+                anyhow::bail!(
+                    "{flag} is not implemented for container commands: {why} (the measured proot \
+                     argv is identical with and without it). Drop the flag."
+                );
+            }
+        }
+    }
+
     // Direct execution mode (like proot) - clap parsed case
     if cli.command.is_none() && cli.rootfs.is_some() {
         return execute_direct(&cli, &cli_trailing_args).await;
