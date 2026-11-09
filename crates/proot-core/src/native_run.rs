@@ -278,6 +278,10 @@ pub struct RunPlan {
     /// them. Container-configured variables arrive here through this field, exactly as they reach the
     /// proot argv through `config.env`.
     pub env: Vec<(String, String)>,
+    /// Mirror the reference's `--link2symlink`: when the kernel refuses a guest hardlink (Android's
+    /// SELinux policy does - measured `ln: failed to create hard link 'b' => 'a': Permission denied`),
+    /// the engine creates a symlink and reports success, which is what proot does for the same call.
+    pub link2symlink: bool,
 }
 
 /// A path the engine rewrote at a syscall stop.
@@ -1027,6 +1031,10 @@ fn parent_loop(
         pid: Pid,
         at_entry: bool,
         execve_handled: bool,
+        /// The last `linkat` this tracee made: (source host path, destination host path, guest link
+        /// text). Filled at the ENTRY stop and consumed at the EXIT stop, because at exit the argument
+        /// registers already hold the result (2026-11-09, link2symlink).
+        pending_link: Option<(std::path::PathBuf, std::path::PathBuf, String)>,
         /// The guest's CURRENT directory for this tracee, as a guest-absolute path (2026-11-09).
         /// `plan.cwd` is only the STARTING directory: a guest that runs `cd` moves, and every later
         /// relative path must resolve against where it actually is - proot tracks this per process too.
@@ -1042,6 +1050,7 @@ fn parent_loop(
         pid: child,
         at_entry: true,
         execve_handled: false,
+        pending_link: None,
         cwd: plan.cwd.clone().unwrap_or_else(|| "/".to_string()),
         started: true,
         faccessat_result: None,
@@ -1101,6 +1110,7 @@ fn parent_loop(
                         pid,
                         at_entry: false,
                         execve_handled: false,
+                        pending_link: None,
                         cwd: plan.cwd.clone().unwrap_or_else(|| "/".to_string()),
                         started: false,
                         faccessat_result: None,
@@ -1186,6 +1196,27 @@ fn parent_loop(
                     if let Err(e) = override_id_result(pid) {
                         let _ = ptrace::kill(pid);
                         return Err(e);
+                    }
+                }
+
+                if !slots[idx].at_entry
+                    && number == SYS_LINKAT
+                    && plan.link2symlink
+                    && slots[idx].pending_link.is_some()
+                {
+                    // LINK2SYMLINK (2026-11-09). Android's SELinux policy refuses a hardlink inside the
+                    // app's data area, and proot answers that by creating a symlink instead - which is
+                    // why the proot arm succeeds and the native arm did not. The engine does the same
+                    // from the host side, on the translated destination, with the guest's own link text,
+                    // and reports the success the guest asked for. proot-core passes `--link2symlink` to
+                    // proot unconditionally, so this mirrors the shipped behaviour rather than adding an
+                    // option nobody asked for.
+                    if let Some((_source, destination, link_text)) = slots[idx].pending_link.take()
+                    {
+                        let failed = matches!(syscall_result(pid), Ok(r) if r < 0);
+                        if failed && std::os::unix::fs::symlink(&link_text, &destination).is_ok() {
+                            override_id_result(pid)?;
+                        }
                     }
                 }
 
@@ -1328,6 +1359,21 @@ fn parent_loop(
                                 }
                             }
                         }
+                        if number == SYS_LINKAT {
+                            // Both paths are known at this ENTRY stop; the exit stop carries only the
+                            // result, so the source, the destination and the guest's own link text are
+                            // captured here for the handler below.
+                            if let (Ok(Some(src)), Ok(Some(dst))) =
+                                (peek_cstr(pid, args[1]), peek_cstr(pid, args[3]))
+                            {
+                                let rootfs = plan.rootfs.as_deref().unwrap_or(Path::new("/"));
+                                slots[idx].pending_link = Some((
+                                    resolve(rootfs, &src, &plan.binds),
+                                    resolve(rootfs, &dst, &plan.binds),
+                                    dst,
+                                ));
+                            }
+                        }
                     } else if let Some(PathSyscall {
                         name,
                         arg_index,
@@ -1459,6 +1505,7 @@ fn parent_loop(
                         pid: new_pid,
                         at_entry: false,
                         execve_handled: false,
+                        pending_link: None,
                         cwd: inherited_cwd,
                         started: false,
                         faccessat_result: None,
@@ -1621,6 +1668,21 @@ fn id_reporting(number: i64) -> bool {
         || number == nix::libc::SYS_geteuid as i64
         || number == nix::libc::SYS_getgid as i64
         || number == nix::libc::SYS_getegid as i64
+}
+
+/// The syscall's return value at an exit stop, on either surviving architecture.
+fn syscall_result(pid: Pid) -> Result<i64> {
+    let raw = get_regs(pid)?;
+    #[cfg(target_arch = "aarch64")]
+    {
+        // The struct exposes the general registers as `regs[0..=30]` on aarch64 - the compiler said so
+        // when this first said `raw.x0` - and x0 IS the syscall result there.
+        Ok(raw.regs[0] as i64)
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        Ok(raw.rax as i64)
+    }
 }
 
 /// Make an id-reporting syscall answer 0, the fake root proot presents via `--change-id=0:0:0`.

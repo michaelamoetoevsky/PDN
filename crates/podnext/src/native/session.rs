@@ -391,6 +391,9 @@ fn run_native_engine(
     let plan = RunPlan {
         rootfs: Some(container.rootfs_path.clone()),
         binds,
+        // proot-core passes `--link2symlink` to proot on every run, so the native engine mirrors the same
+        // behaviour: a hardlink the kernel refuses becomes a symlink instead of a failure.
+        link2symlink: true,
         // The configured working directory, defaulting to `/` - the SAME value the proot path gives
         // proot (`container.config.working_dir.unwrap_or("/")`, see `container.rs:234-240` and
         // `runtime.rs:152-158`), so the guest's cwd no longer depends on which engine ran it.

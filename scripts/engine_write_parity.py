@@ -29,7 +29,17 @@ from pdn_fixture_guard import resolve_binary, seed_fixture, store_root  # noqa: 
 
 CONTAINER = os.environ.get("PDN_PARITY_CONTAINER", "realdeb")
 WORKLOAD = (
-    "mkdir -p /root/x && cd /root/x && echo hi > f && ln -s f l && chmod 600 f "
+    # Idempotent: a previous run's leftovers inside the copied rootfs made the second run fail with
+    # "ln: failed to create symbolic link 'l': File exists", so the workload clears its own directory
+    # first instead of assuming a clean tree.
+    "rm -rf /root/x && mkdir -p /root/x && cd /root/x && echo hi > f && ln -s f l && chmod 600 f "
+    # A hardlink is NOT part of this equality check on purpose: whether the kernel allows one depends on
+    # the host's SELinux policy for the store being used. Measured 2026-11-09: in one fixture both arms
+    # answered LINK-OK (after `--link2symlink` emulation landed on the native side), and in a store seeded
+    # from the operator's containers BOTH arms failed the same call - and proot failed silently while the
+    # native arm reported "Permission denied", which is a real difference this harness would flag as NOT
+    # EQUAL. Emulation evidence lives in the tests and the CHANGE_LOG; this harness compares what the host
+    # lets both engines do.
     "&& ls -l | head -1 && cd / && rm -rf /root/x && echo WRITE-OK"
 )
 

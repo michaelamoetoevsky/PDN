@@ -2328,3 +2328,48 @@ is NOT in the native engine yet - it was designed here (capture both paths at th
 when the result is an error, create the symlink from the engine and report success) and the code was NOT landed,
 because the patch's anchors no longer matched after rustfmt and a half-applied edit is worse than none. Named here
 so this document does not read as if `ln` worked.
+
+## `--link2symlink`: the engine now creates the symlink the kernel refuses (2026-11-09 23:40 WIB)
+
+**Why it exists, measured.** With the two-path translation in place, a guest hardlink reached the kernel and was
+refused by the host policy:
+
+```
+$ podnext --engine native run <ctr> -- /bin/sh -c 'echo x > a && ln a b'
+ln: failed to create hard link 'b' => 'a': Permission denied
+$ podnext --engine proot run <ctr> -- /bin/sh -c 'echo x > a && ln a b && ls'
+a
+b
+```
+
+That is Android's SELinux policy on the app's data area, and it is exactly what the reference covers:
+`proot-core` passes `--link2symlink` to proot on EVERY run, so proot replaces the hardlink with a symlink and
+reports success. The native engine did not.
+
+**What landed.** `RunPlan::link2symlink` (defaulted `true` in `crates/podnext/src/native/session.rs`, mirroring the
+unconditional flag the proot path already sends), a `pending_link` slot on each tracee, the capture of both paths at
+the `linkat` ENTRY stop (the exit stop carries only the result), and the handler at the EXIT stop: when the kernel's
+answer is an error, the engine creates a symlink at the translated destination using the guest's own link text and
+overwrites the result with success - the same substitution the reference makes, done from the host side because a
+syscall number cannot be rewritten on arm64.
+
+**Measured after.**
+
+```
+proot  ln -> LINK-OK | 3 | rm: cannot remove '/root/w4': Directory not empty
+native ln -> LINK-OK | 2 | DONE
+```
+
+Both arms now link. The native arm also cleans up where the proot arm leaves a residue, which is the reference's
+own emulation showing through - recorded because it is a difference in PDN's favour, not a defect to hide.
+
+**The other half, stated rather than glossed.** Whether a hardlink is allowed at all depends on the store's host
+policy: in a fixture built under `$PREFIX/tmp` both arms answered `LINK-OK`, and in a store seeded from the
+operator's containers BOTH arms failed the same call - and there proot failed SILENTLY (exit 1, no message) while
+the native arm printed `Permission denied`. `scripts/engine_write_parity.py` therefore does not put a hardlink in
+its equality workload; it says so in the file, with these measurements, instead of pretending the two hosts behave
+the same.
+
+The parity harness with that exclusion reports `DIFFERENTIAL: EQUAL on exit and stdout` on the real Debian rootfs,
+and the emulation is covered by the `LINK-OK` arms above plus the write workload that still prints `WRITE-OK` on
+both engines.
