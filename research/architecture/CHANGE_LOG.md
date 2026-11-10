@@ -1,21 +1,21 @@
-# Change log — source fixes, with provenance
+# Change log: source fixes, with provenance
 
-One entry per source change: what was found, what was measured, what was changed (file and line), when, and
-the verification that actually ran. Timestamps are WIB (UTC+7) on the device.
+One entry for each source change: what was found, what was measured, what was changed and its file and line, when, and
+the verification that actually ran. Timestamps are WIB, UTC+7, on the device.
 
 ---
 
 ## ASEC3-SEC-001 / ASEC3-SEC-002 — `copy` and `sync` wrote outside the rootfs through a symlink whose leaf did not exist
 
 **Found.** `guest_to_host()` in `crates/podnext/src/commands/sync.rs` refuses `..` lexically, then performs
-its real-path containment check only when `std::fs::canonicalize(&resolved)` succeeds — that is, only when
+its real-path containment check only when `std::fs::canonicalize(&resolved)` succeeds. That is, only when
 the destination already exists. A copy creates its destination, so the interesting case never reached the
 check: with `<rootfs>/esc -> /somewhere/else`, a destination of `c:esc/pwn.txt` skipped the check entirely
 and the write followed the link out of the rootfs.
 
 **Reproduced 2026-11-08, 07:50 WIB**, against the binary built from commit `48e86b7`
-(`./target/debug/podnext`, 349,099,888 bytes, built 08 Nov 00:37) with a fixture store selected through
-`PN_TEST_ROOT` — the operator's real store was not touched:
+`./target/debug/podnext`, 349,099,888 bytes, built 08 Nov 00:37, with a fixture store selected through
+`PN_TEST_ROOT`. The operator's real store was not touched:
 
 | case | command | result |
 |---|---|---|
@@ -27,44 +27,44 @@ Control 2 is what proves the hole is precisely the missing leaf: the same link i
 leaf exists.
 
 **Action.** The containment check now walks up to the deepest ancestor that does exist and verifies *that*
-one, stopping at the lexical rootfs boundary. Legitimate shapes are unaffected: a plain path with a missing
-leaf is a normal copy, and a relative symlink that stays inside the rootfs (Debian's `/etc/os-release` is
-this shape) still resolves.
+one. The walk stops at the lexical rootfs boundary. Legitimate shapes are unaffected: a plain path with a missing
+leaf is a normal copy, and a relative symlink that stays inside the rootfs still resolves. Debian's
+`/etc/os-release` has this shape.
 
 **Change.** `crates/podnext/src/commands/sync.rs`
-- lines 133–171 (was 133–146): the single `if let (Ok(root), Ok(real)) = (canonicalize(rootfs), canonicalize(resolved))`
+- lines 133 to 171, was 133 to 146: the single `if let (Ok(root), Ok(real)) = (canonicalize(rootfs), canonicalize(resolved))`
   block is replaced by an ancestor walk with the same refusal message.
-- lines 610–677 (new): `#[cfg(test)] mod tests` with `missing_leaf_under_a_symlinked_parent_is_refused`,
-  which asserts the subject plus four controls (plain missing leaf allowed, in-rootfs relative link allowed,
-  existing leaf through the escaping link still refused, existing leaf behind the in-rootfs link still
-  reachable).
+- lines 610 to 677, new: `#[cfg(test)] mod tests` with `missing_leaf_under_a_symlinked_parent_is_refused`,
+which asserts the subject plus four controls: a plain missing leaf is allowed, an in-rootfs relative link is allowed,
+an existing leaf through the escaping link is still refused, and an existing leaf behind the in-rootfs link is still
+reachable.
 
 **Verification.** Two routes, each with a negative control on the pre-fix binary
-(`~/.hermes/cache/scratch/wt-asec-fs/target/debug/podnext`, built 01:43) and a positive result on the
-fixed one (built 07:56), all against fixture stores selected with `PN_TEST_ROOT`:
+`~/.hermes/cache/scratch/wt-asec-fs/target/debug/podnext`, built 01:43, and a positive result on the
+fixed one, built 07:56, all against fixture stores selected with `PN_TEST_ROOT`:
 
 | route | pre-fix binary | fixed binary |
 |---|---|---|
 | `copy $F/src/payload.txt esc:esc/pwn.txt` | `rc=0`, `Copied …`, wrote `$F/outside/pwn.txt` | `rc=1`, `path 'esc/pwn.txt' resolves outside the container rootfs`, nothing written outside |
 | `sync $F/src/tree esc:esc/newdir` (subdirectory missing) | `Synced … 2 copied`, then 2 files landed outside (`outside/newdir/a.txt`, `outside/newdir/sub/b.txt`) | `rc=1`, same refusal message, nothing written outside |
 
-Controls, all passing after the fix: `copy … esc:plain/ok.txt` and `sync … esc:inj/` still write inside the
-rootfs (the latter reports `2 copied`); an in-rootfs relative symlink (`good -> real`) still resolves;
-`copy … esc:esc/existing.txt` with a pre-created leaf is still refused; `copy … esc:../pwn2.txt` is still
+After the fix, all controls pass: `copy ... esc:plain/ok.txt` and `sync ... esc:inj/` still write inside the
+rootfs, and the latter reports `2 copied`. An in-rootfs relative symlink `good -> real` still resolves.
+`copy ... esc:esc/existing.txt` with a pre-created leaf is still refused. `copy ... esc:../pwn2.txt` is still
 refused for `..`. Note for the record: for `sync` the pre-fix hole only appeared when the destination
-**subdirectory did not exist yet** — syncing onto an existing directory such as `esc:esc/` was already
+**subdirectory did not exist yet**. A sync onto an existing directory such as `esc:esc/` was already
 refused, because that path canonicalized successfully. That is why the first sync attempt was not accepted
 as evidence for this finding.
 
-Unit test: `cargo test -p podnext --bin podnext -- sync::tests` → `1 passed; 0 failed` in 34 s (heavy label
-`p1-sync`, log `~/.hermes/logs/heavy/20261108T005228Z-p1-sync.log`). Formatting: `cargo fmt --all -- --check`
+Unit test: `cargo test -p podnext --bin podnext -- sync::tests` → `1 passed; 0 failed` in 34 s, heavy label
+`p1-sync`, log `~/.hermes/logs/heavy/20261108T005228Z-p1-sync.log`. Formatting: `cargo fmt --all -- --check`
 → rc=0. Commit `edd8d45`.
 
-**Deliberately not changed.** The source-side symlink resolution in `cmd_copy` (lines 165–180) keeps
-following a leaf link when copying *out* of a container, because that is `cp` semantics and the containment
-check now covers it. `sync.rs`'s other write paths (`mirror_dir`, `prune_extras`) reach the same
-`guest_to_host` translation through the command layer, so they inherit the fix; verifying that each of them
-calls it before writing is recorded as a follow-up rather than assumed here.
+**Deliberately not changed.** The source-side symlink resolution in `cmd_copy` at lines 165 to 180 follows
+a leaf link for a copy *out* of a container, because that is `cp` semantics and the containment
+check now covers it. The other write paths in `sync.rs`, `mirror_dir` and `prune_extras`, reach the same
+`guest_to_host` translation through the command layer, so they inherit the fix. A check that each of them
+calls it before a write is recorded as a follow-up rather than assumed here.
 
 ---
 
@@ -72,14 +72,14 @@ calls it before writing is recorded as a follow-up rather than assumed here.
 
 **Found.** `cmd_kill` decided "gone" from the **registered pid** alone: after the ladder it pushed every
 signalled session into `killed`, and the teardown called `session::wait_and_clear(pid, start_time, …)`,
-which returns true as soon as `process_is_alive(pid)` is false — then deletes the record, the socket and the
-transcript. But the registry's own liveness rule is the **inherited descriptor** (`active_sessions` probes
+which returns true as soon as `process_is_alive(pid)` is false and then deletes the record, the socket and the
+transcript. But the registry's own liveness rule is the **inherited descriptor**: `active_sessions` probes
 the session file's `flock`), and a guest that outlived its supervisor keeps that descriptor. So the record
-could go while the session was still live by the rule `ps` uses: `Container 'x' killed.` printed, exit 0, and
+can go while the session was still live by the rule `ps` uses: `Container 'x' killed.` printed, exit 0, and
 `podnext ps` blind to a running container.
 
-**Reproduced 2026-11-08, 08:15 WIB**, against the binary built before this change, using the same primitive
-the code itself uses for liveness — `flock` on the session file — as an in-vitro stand-in for the surviving
+**Reproduced 2026-11-08, 08:15 WIB**, against the binary built before this change. It uses the same primitive
+the code itself uses for liveness, `flock` on the session file, as an in-vitro stand-in for the surviving
 guest:
 
 | step | observation |
@@ -89,22 +89,22 @@ guest:
 | registered pid signalled, then `podnext kill fixt` | `Sent SIGTERM`, `Sent SIGQUIT`, **`Container 'fixt' killed.`**, **rc=0** |
 | immediately after | session directory **empty** — the record was deleted — while the descriptor holder was still alive |
 
-The first honest `kill` (no holder) was also measured and was **not** dishonest: the whole process tree
+The first honest `kill`, the one with no holder, was also measured and was **not** dishonest: the whole process tree
 disappeared, the record was cleared, `ps` was empty, rc=0. So the defect is specifically the
 pid-only liveness decision, not the ladder.
 
-**Action.** Before clearing anything, ask the registry the same question `ps` asks, and keep the record while
-the answer is yes; report success only when nothing survived.
+**Action.** Before the teardown clears anything, ask the registry the same question `ps` asks, and keep the record while
+the answer is yes. Report success only when nothing survived.
 
 **Change.** `crates/podnext/src/commands/container.rs`
-- new `session_still_active()` next to `wait_until_gone` (around line 546): true when `active_sessions()`
+- new `session_still_active()` next to `wait_until_gone` around line 546: true when `active_sessions()`
   still lists this `(pid, container_name)`.
-- in `cmd_kill`'s teardown (around lines 640–692): a session that is still active is pushed to `survivors`
-  and skipped **before** `wait_and_clear`, so its files survive; a failed `wait_and_clear` also records a
-  survivor; and a `survivors` list that is not empty ends the command with `anyhow::bail!` naming the PIDs
+- in `cmd_kill`'s teardown around lines 640 to 692: a session that is still active is pushed to `survivors`
+  and skipped **before** `wait_and_clear`, so its files survive. A failed `wait_and_clear` also records a
+  survivor. A `survivors` list that is not empty ends the command with `anyhow::bail!` naming the PIDs
   and the ladder, instead of the success line.
 
-**Verification** (fixed binary, 08:18, heavy label `p1b-bin`, build exit 0, peak 1410 MB):
+**Verification.** Fixed binary, 08:18, heavy label `p1b-bin`, build exit 0, peak 1410 MB:
 
 | case | expected | measured |
 |---|---|---|
@@ -112,12 +112,12 @@ the answer is yes; report success only when nothing survived.
 | fresh live session, no holder | succeed, no false refusal | `rc=0`; `Container 'fixt' killed.`; record cleared; 0 guest processes left |
 
 Both cases used the real PTY harness. `cargo fmt --all -- --check` → rc=0. Repo gate: `local_gate.sh --cargo`
-(log `~/.hermes/logs/heavy/20261108T012046Z-p1b-gate.log`).
+Log `~/.hermes/logs/heavy/20261108T012046Z-p1b-gate.log`.
 
 **Note on the control's honesty.** The refusal case models a surviving guest with a lock holder rather than
-producing one; what it tests is the *decision rule* the code uses, and on that rule the old binary was wrong
+one. What it tests is the *decision rule* the code uses, and on that rule the old binary was wrong
 and the new one is right. A guest that survives its supervisor end-to-end was not produced in this harness
-(it needs the detached-session path, which exits 1 in a fixture store — recorded as a separate anomaly).
+It needs the detached-session path, which exits 1 in a fixture store. That is recorded as a separate anomaly.
 
 ---
 
@@ -126,73 +126,73 @@ and the new one is right. A guest that survives its supervisor end-to-end was no
 **Found.** Three harnesses derived their paths from `HOME` and used fixed container names, so
 `casino_chaos_runner.py` renamed and killed the real `test-alpine`, `dice_monkey_test.py` renamed and
 reset the real `deb-renamed`/`ubuntu`/`alpine`, and `soak_sessions.py` logged into and SIGKILLed the real
-`alpine` (logins and kills measured by the assessment). `ASEC2-ARCH-016` explains why a
+`alpine`. The assessment measured the logins and the kills. `ASEC2-ARCH-016` explains why a
 `PN_TEST_ROOT`-only redirect was not enough: the CLI resolves `PN_TEST_ROOT -> HOME -> ...` and appends
-`.podnext` (`crates/proot-distro-core/src/paths.rs:27-53`) while the scripts resolved their own paths from
+`.podnext` in `crates/proot-distro-core/src/paths.rs:27-53`, while the scripts resolved their own paths from
 `HOME`, so the CLI acted on a fixture and the script acted on the real store. `QUOTA-014` is the same shape
 inside the test rig: `tests/integration/common.rs` redirected services/runtime/log/cni to a tempdir but never
 the home, and `ResourceQuotaManager::new` persists to `resolve_home()/.podnext/quotas.json`
-(`crates/pn-next/src/resource_quota/mod.rs:190-196`). Evidence that it was not theoretical: the operator's
+at `crates/pn-next/src/resource_quota/mod.rs:190-196`. Evidence that it was not theoretical: the operator's
 `~/.podnext/quotas.json` existed with the single key `quota-service`, which is the harness's own test
-service name (`tests/integration/v2_criteria.rs:488,492`), and the harness ignored the write's `Result`
-(`common.rs:517`) so the leak made no noise.
+service name in `tests/integration/v2_criteria.rs:488,492`, and the harness ignored the write's `Result`
+at `common.rs:517`, so the leak made no noise.
 
 **An incident, recorded because it changed the fix.** The first version of the new guard was script-side
-only. Running it with `PN_TEST_ROOT` set to a fixture, the harness's own paths were on the fixture but the
+only. When the guard ran with `PN_TEST_ROOT` set to a fixture, the harness's own paths were on the fixture but the
 binary it invoked - `/data/data/com.termux/files/usr/bin/podnext`, hardcoded in the script - **ignores
 `PN_TEST_ROOT`**, so `podnext rename test-alpine test-alpine-rnd1` renamed the container in the OPERATOR's
-store. Measured before restoring: with `PN_TEST_ROOT` pointing at a fixture that held only `test-alpine`,
+store. Measured before the restore: with `PN_TEST_ROOT` pointing at a fixture that held only `test-alpine`,
 the installed binary listed `alpine, deb-pdn, deb-renamed, pdn-bench, test-alpine, test-pdn-install, ubuntu`
 while the repo build listed only `test-alpine`. Restored and verified: the directory renamed back, and the
-two fields the rename had rewritten returned to their previous values
-(`name: test-alpine-rnd1 -> test-alpine`, `rootfs: .../test-alpine-rnd1/rootfs -> .../test-alpine/rootfs`),
-then a read (`podnext copy test-alpine:/etc/alpine-release` -> `3.18.12`) proved the record resolves again.
+two fields the rename had rewritten returned to their previous values:
+`name: test-alpine-rnd1 -> test-alpine` and `rootfs: .../test-alpine-rnd1/rootfs -> .../test-alpine/rootfs`.
+Then a read, `podnext copy test-alpine:/etc/alpine-release` -> `3.18.12`, proved the record resolves again.
 
-**Action.** One shared guard (`scripts/pdn_fixture_guard.py`) with three refusals, used by every harness:
+**Action.** One shared guard in `scripts/pdn_fixture_guard.py` with three refusals, used by every harness:
 
-1. `store_root()` - harness paths come from `PN_TEST_ROOT/.podnext`; a path landing on the real store is
+1. `store_root()` - harness paths come from `PN_TEST_ROOT/.podnext`. A path that lands on the real store is
    refused unless `PDN_ALLOW_REAL_STORE=1` is set deliberately.
 2. `resolve_binary()` - the binary under test is `PDNEXT_BIN` or the repo's debug build, never an arbitrary
-   installed binary (the incident's cause).
+   installed binary, which was the incident's cause.
 3. `assert_binary_honours_store()` - a read-only `list` must return exactly the fixture's containers
-   **before** the harness may do anything. This is the check that would have caught the incident.
+   **before** the harness can do anything. This is the check that can catch the incident.
 
-Every refusal exits 2 and prints "REFUSING is not a pass." so a skipped guard can never be read as a
-passing harness. `seed_fixture()` creates the named containers; `casino` seeds one from the real rootfs
-(read-only copy, `tar` because a rootfs holds mode-000 bind directories that stop `cp -a`) and `dice` seeds
+Every refusal exits 2 and prints "REFUSING is not a pass." so a skipped guard can never count as a pass.
+`seed_fixture()` creates the named containers. `casino` seeds one from the real rootfs as a read-only
+copy. It uses `tar`, because a rootfs holds mode-000 bind directories that stop `cp -a`. Then `dice` seeds
 four with an empty rootfs and says so, because it only exercises the store side.
 
-**Change (2026-11-08).**
+**Change, 2026-11-08.**
 - new `scripts/pdn_fixture_guard.py`
 - `scripts/soak_sessions.py`: `container_rootfs()` derives from `PN_TEST_ROOT` and refuses the real store
-  (`_guard`), with `PDN_ALLOW_REAL_STORE=1` as the explicit opt-out.
+  through `_guard`, with `PDN_ALLOW_REAL_STORE=1` as the explicit opt-out.
 - `scripts/casino_chaos_runner.py`: `store_root()` + `seed_fixture()` + `resolve_binary()` +
-  `assert_binary_honours_store()` before any chaos; `CONTAINERS_DIR` now derives from the fixture.
-- `scripts/dice_monkey_test.py`: imports the guard; `PODNEXT_BIN`, `LOCK_DIR_PN_NEXT`, `LOCK_DIR_PODNEXT`,
+  `assert_binary_honours_store()` before any chaos. `CONTAINERS_DIR` now derives from the fixture.
+- `scripts/dice_monkey_test.py`: imports the guard. `PODNEXT_BIN`, `LOCK_DIR_PN_NEXT`, `LOCK_DIR_PODNEXT`,
   `SESSIONS_DIR` and the seeded targets all derive from the fixture.
 - `tests/integration/common.rs`: `std::env::set_var("PN_TEST_ROOT", &temp_dir)` before the quota manager is
-  constructed (edition 2021, so no `unsafe`; the same pattern already exists at
-  `crates/proot-distro-core/tests/store_integrity.rs:59`).
+  constructed. That is edition 2021, so no `unsafe` is necessary. The same pattern already exists at
+  `crates/proot-distro-core/tests/store_integrity.rs:59`.
 
 **Verification.**
-- `soak`: refusal `rc=2` with a named message; predicate checked three ways - `SystemExit(2)` with no
+- `soak`: refusal `rc=2` with a named message. The predicate was checked three ways - `SystemExit(2)` with no
   opt-out, the path returned under `PDN_ALLOW_REAL_STORE=1`, and a path outside the store passing with no
-  opt-out (no false refusal).
+  opt-out and no false refusal.
 - `casino`: with the installed binary the probe refuses `rc=2` and prints the fixture's names against the
-  real ones; with the repo build the probe passes and the chaos starts. Real store unchanged: 10 containers,
+  real ones. With the repo build the probe passes and the chaos starts. Real store unchanged: 10 containers,
   `test-alpine` present, 0 `rnd*`, 0 sessions.
-- `dice`: same two directions, fixture holding `['alpine','deb-pdn','deb-renamed','ubuntu']`; real store
+- `dice`: same two directions, fixture holding `['alpine','deb-pdn','deb-renamed','ubuntu']`. Real store
   unchanged.
 - `QUOTA-014`: `cargo test -p pdn-integration-tests --test v2_criteria -- test_all_v2_criteria` ->
-  `1 passed; 0 failed` in 247.88 s (heavy label `v2crit`, peak 1839 MB). The operator's
+  `1 passed; 0 failed` in 247.88 s, heavy label `v2crit`, peak 1839 MB. The operator's
   `~/.podnext/quotas.json` is byte-identical before and after - sha256 `d9e496855b74f52f`, mtime
   `05 Nov 13:55` - while that test does call `set_resource_quota("quota-service", "memory", 50 MiB)`.
-- `cargo fmt --all -- --check` rc=0; `scripts/local_gate.sh --cargo` (label `p2-gate`).
+- `cargo fmt --all -- --check` rc=0. `scripts/local_gate.sh --cargo`, label `p2-gate`.
 
 **Not done, and said plainly.** `casino_chaos_runner.py` still carries an inline copy of the guard rather
-than importing the shared module; the copy is behaviourally identical and was verified, but two copies of a
+than importing the shared module. The copy is behaviourally identical and was verified, but two copies of a
 safety guard can drift, so folding it onto `pdn_fixture_guard` is a follow-up. The harness report path
-(`scripts/casino_chaos_report.json` is a tracked file) means a run rewrites a tracked artifact; that was
+`scripts/casino_chaos_report.json` is a tracked file, so a run rewrites a tracked artifact. That was
 reverted after the test run and is a harness-hygiene item outside these findings.
 
 ---
@@ -200,7 +200,7 @@ reverted after the test run and is a harness-hygiene item outside these findings
 ## WITHDRAWN, 8 Nov 2026 — the `kill` change in commit `6a9cd2a` is reverted, and ASEC3-PROC2-01 is open again
 
 CI on `6a9cd2a` reported `Rust Host Build` failed with one test failing
-(job 128590332193; the other 14 checks were green, including PRoot Distro Integration Test and Issue ledger):
+Job 128590332193. The other 14 checks were green, including PRoot Distro Integration Test and Issue ledger:
 
 ```
 test a_guest_ignoring_term_is_escalated_term_quit_kill ... FAILED
@@ -215,30 +215,30 @@ live session, and asserts that a completed ladder prints `Container 'x' killed.`
 probes, so the guard added in `6a9cd2a` saw a live session no matter what the ladder did. The CI log shows
 the same shape in the wild: `Terminate orphan process: pid (4638) (sleep)`.
 
-What this proves: the registry's descriptor rule answers "is anything still holding the session record",
+What this proves: the registry's descriptor rule answers "does a process still hold the session record",
 which is **not** the same question as "is the guest still running". The change conflated the two, so it is
 withdrawn rather than patched in place. `crates/podnext/src/commands/container.rs` is restored to its
 `18523ea` state in the commit that carries this note.
 
 Why the local gate missed it: the gate deliberately excludes test suites, and says so in its own header -
-"No builds or test suites. Those belong in CI (and on this device they need the memory guard), so a local
-gate that ran them would be skipped rather than respected" (`scripts/local_gate.sh:14-15`). So the remedy is
-not to widen the gate: it is to run the target that owns the changed code before claiming the fix. For this
+"No builds or test suites. Those belong in CI, and on this device they need the memory guard, so a local
+gate that ran them is skipped rather than respected" in `scripts/local_gate.sh:14-15`. So the remedy is
+not to widen the gate: it is to run the target that owns the changed code before the fix is claimed. For this
 change that is
 `cargo test -p podnext --test image_config_env -- a_guest_ignoring_term_is_escalated_term_quit_kill`, which
-after the revert reports `1 passed; 0 failed` (heavy label `killtest`, 36 s). A gate widened against its own
+after the revert reports `1 passed; 0 failed`, heavy label `killtest`, 36 s. A gate widened against its own
 stated rationale is a decision, not a cleanup, and it is not taken here.
 
 The in-vitro reproduction recorded above still stands: the pre-fix binary printed `Container 'fixt' killed.`
 with rc=0 while a descriptor holder was alive. What does not stand is that remedy. ASEC3-PROC2-01 returns to
-open with sharper evidence: the remedy has to distinguish the guest from other descriptor holders (the
-guest's own pid, or its process group), because refusing on any holder breaks the ladder's contract.
+open with sharper evidence: the remedy has to distinguish the guest from other descriptor holders,
+such as the guest's own pid or its process group, because a refusal on any holder breaks the ladder's contract.
 
 ---
 
 ## Metrics 010 / 011 — the dashboard served invented host numbers, not measurements
 
-**Found.** `update_system_stats` (`crates/pn-next/src/web_dashboard/mod.rs:800-807`) ended with
+**Found.** `update_system_stats` in `crates/pn-next/src/web_dashboard/mod.rs:800-807` ended with
 
 ```rust
 // Simulate CPU/memory
@@ -251,64 +251,64 @@ stats.disk_used = (stats.disk_total as f64 * 0.3) as u64;
 
 so a monitor that reads this dashboard as fact is told the machine has 8 GiB and a 100 GiB filesystem at
 40 % and 30 % used, and a CPU percentage that is random. These values flow out through `/api/metrics`
-(`:744-746`) and the JSON API, which is where the dishonesty stops being cosmetic.
+in `:744-746` and the JSON API, which is where the dishonesty stops being cosmetic.
 
-**Action.** Read the host instead of decorating it, and make "could not measure" a state the surface can
+**Action.** Read the host and do not decorate it. Make a missing measurement a state the surface can
 express: `SystemStats` gains `measured: bool`, and the metric lines are emitted only when it is true, with
 an explanatory comment line when it is not. A measured zero and "not measured here" are different
 statements, and only a flag can tell them apart.
 
-**Change (2026-11-08).** `crates/pn-next/src/web_dashboard/mod.rs`
+**Change, 2026-11-08.** `crates/pn-next/src/web_dashboard/mod.rs`
 - `:160-168` - `pub measured: bool` on `SystemStats`, with the reason it exists in its doc comment.
-- `:784-848` - new `read_cpu_percent()` (delta of `/proc/stat` between polls; the first call reports the
-  since-boot average, which is also a real figure), `read_memory_bytes()` (`/proc/meminfo`), and
-  `read_disk_bytes()` (`statvfs`).
+- `:784-848` - new `read_cpu_percent()`, the delta of `/proc/stat` between polls. The first call reports the
+  since-boot average, which is also a real figure. `read_memory_bytes()` reads `/proc/meminfo`, and
+  `read_disk_bytes()` reads `statvfs`.
 - `:858-884` - the fabricated block is replaced by those readings, and `measured` is their conjunction.
 - `:752-762` - `/api/metrics` emits the three samples only when `measured`, otherwise a comment naming why.
-- `:915-986` - two tests: the readers must satisfy relations a fabricated value need not (available never
-  exceeds total, a percentage stays in range), and the served numbers must equal the host's own readings -
-  the second is the discriminating one, since the old constants would pass any range check.
+- `:915-986` - two tests: the readers must satisfy relations that a fabricated value need not satisfy,
+  for example available never exceeds total and a percentage stays in range. The served numbers must equal
+  the host's own readings. The second test is the discriminating one, since the old constants pass any range check.
 
-**Verification.** `cargo test -p pn-next web_dashboard` -> `4 passed; 0 failed` (heavy label `metrics2`,
-75 s, peak 2763 MB), with the test printing which sources answered:
+**Verification.** `cargo test -p pn-next web_dashboard` -> `4 passed; 0 failed`, heavy label `metrics2`,
+75 s, peak 2763 MB, with the test printing which sources answered:
 `answered here: memory=true disk=true cpu=false`. Formatting: `cargo fmt --all -- --check` rc=0.
 
 **A measurement that corrected the change.** `/proc/stat` is **denied** to an app-uid process on Android
-(measured: DITOLAK, while `/proc/meminfo` and `statvfs` answer). So the first version of the test - which
+Measured: DITOLAK, while `/proc/meminfo` and `statvfs` answer. So the first version of the test - which
 required all three sources - failed at `:936` on this device, and it was the test that was wrong: the code
 had already returned `None` and flagged `measured = false`, which is the honest answer where a source is
-denied. The tests now assert the contract instead of assuming availability, and they print which sources
+denied. The tests now assert the contract and do not assume availability, and they print which sources
 answered rather than implying all three did.
 
 ---
 
 ## Media/UX 010 (wake lock) — the manager reported success for a lock that was never taken
 
-**Found.** `acquire_platform` (`crates/pn-next/src/wake_lock/mod.rs:224-247`) logged `"Android: Would
+**Found.** `acquire_platform` in `crates/pn-next/src/wake_lock/mod.rs:224-247` logged `"Android: Will
 acquire … wake lock"` on Android and `"Non-Android: Simulated acquire …"` elsewhere, then returned `Ok(())`.
 `acquire()` therefore set `held = true` and `podnext wakelock acquire <name> <type>` printed
 `Wake lock acquired for '<name>'` - for a lock nothing had taken.
 
-**The facility exists, so this was fixable rather than merely disclosable.** Measured 2026-11-08:
-`termux-wake-lock` exists at `$PREFIX/bin/termux-wake-lock`, and with the full path to the observer,
+**The facility exists. Thus this was fixable, not merely disclosable.** Measured 2026-11-08:
+`termux-wake-lock` exists at `$PREFIX/bin/termux-wake-lock`. With the full path to the observer,
 `/system/bin/dumpsys power` then lists
 `PARTIAL_WAKE_LOCK 'termux:service-wakelock' ACQ=-2s86ms (uid=10396 pid=23284 pkg=com.termux)`, which
 `termux-wake-unlock` removes. A trap on the way: `dumpsys` is **not on PATH** for a Termux shell
-(`rc=127 No such file or directory`), so an earlier "0 matching lines" was a tool that could not run, not
+`rc=127 No such file or directory`. So an earlier "0 matching lines" was a tool that failed to run, not
 evidence of absence.
 
-**Change (2026-11-08).** `crates/pn-next/src/wake_lock/mod.rs`
+**Change, 2026-11-08.** `crates/pn-next/src/wake_lock/mod.rs`
 - `:224-262` - `acquire_platform` runs `termux-wake-lock` and returns an error when the facility is
-  missing or the command exits non-zero; `Full` and `DozeExemption` are refused by name because the
-  facility provides a **partial** lock only, rather than being silently downgraded.
+  absent or the command exits non-zero. `Full` and `DozeExemption` are refused by name because the
+  facility provides a **partial** lock only. The engine does not downgrade it silently.
 - `:264-286` - `release_platform` runs `termux-wake-unlock` with the same failure discipline.
 - `:190-202` - `release` now asks the platform even when the in-process map has no record for the name.
   The lock is **app-level and outlives the process**, so a fresh `podnext wakelock release` always had an
   empty map: the old path did nothing and the CLI printed `Wake lock released for 'x'` anyway.
 - `:407-428` - a test that an unsupported lock type is refused **and not recorded as held**.
 
-**Verification, on the device.** `cargo test -p pn-next wake_lock` -> `4 passed; 0 failed` (heavy label
-`wl2`, 80 s). End to end with the real binary, counting the platform's own lock through
+**Verification, on the device.** `cargo test -p pn-next wake_lock` -> `4 passed; 0 failed`, heavy label
+`wl2`, 80 s. This ran end to end with the real binary and counted the platform's own lock through
 `/system/bin/dumpsys power`:
 
 | step | count of `PARTIAL_WAKE_LOCK … termux:service-wakelock` |
@@ -319,49 +319,49 @@ evidence of absence.
 | `podnext wakelock release e1` | 0 |
 
 Two of my own measurements were wrong before this and are recorded because they cost a round each: the
-CLI takes the lock type **positionally** (`wakelock acquire <NAME> <LOCK_TYPE>`), so `acquire demo` and
-`--type full` were rejected by clap and exercised nothing; and the first release check used a `release
+CLI takes the lock type **positionally**. The form is `wakelock acquire <NAME> <LOCK_TYPE>`, so `acquire demo` and
+`--type full` were rejected by clap and exercised nothing. The first release check used a `release
 <name> <type>` form that does not exist, so the release path went untested while the lock stayed.
 
 **Limitation stated rather than hidden.** The app-level lock is process-agnostic: there is no unit test
 that can assert "the platform lock is gone" without a device, so the release arm is proved by the table
-above and by nothing else. Both directions were also observed to be genuinely observable (the count went
-0 -> 1 -> 0 with the observer, not inferred from the CLI's own message).
+above and by no other evidence. Both directions were also observed as genuinely observable, and the count went
+0 -> 1 -> 0 with the observer. The value was not inferred from the CLI's own message.
 
 ---
 
 ## ASEC2-ARCH-006 / 007 / 009 (guardrails) — the engine claimed enforcement it does not perform
 
-**Found.** In `check_all` (`crates/pn-gateway/src/guardrails.rs:57-81`) only `Deny` returns an error. The
+**Found.** In `check_all` at `crates/pn-gateway/src/guardrails.rs:57-81` only `Deny` returns an error. The
 `Throttle` arm logged `"Throttling due to guardrail: <rule>"` under a `// Apply throttling` comment while
-applying nothing, and `Quarantine` logged `"Quarantining due to guardrail"` likewise. `check_condition`
-(`:89-95`) returned `Ok(false)` unconditionally, which reads as "the condition does not hold" - a claim
+it applied nothing, and `Quarantine` logged `"Quarantining due to guardrail"` likewise. `check_condition`
+at `:89-95` returned `Ok(false)` unconditionally. This reads as "the condition does not hold", a claim
 about a condition it never evaluated.
 
 **Two facts larger than the messages, measured while fixing them.**
 - `GuardrailManager` is **never constructed outside its own tests**: a grep for `GuardrailManager` and
   `guardrails` across `crates/podnext/src` and `crates/pn-next/src` returns nothing, so no CLI path reaches
-  this engine (the live policy path is the separate `pn-next` policy engine, used by `podnext policy eval`).
+  this engine. The live policy path is the separate `pn-next` policy engine, used by `podnext policy eval`.
 - Every metric the evaluators read is a **mock**: `get_container_count() -> Ok(0)`,
   `get_memory_usage_percent() -> Ok(0.0)`, `get_cpu_usage_percent() -> Ok(0.0)`,
-  `get_disk_usage_percent() -> Ok(0.0)`, `check_privileged_containers() -> Ok(false)` (`:415-433`). Even if
-  it were reachable, it could not judge anything real.
+  `get_disk_usage_percent() -> Ok(0.0)`, `check_privileged_containers() -> Ok(false)`, see `:415-433`. Even if
+it were reachable, it can not judge anything real.
 
-**Change (2026-11-08).** `crates/pn-gateway/src/guardrails.rs`
+**Change, 2026-11-08.** `crates/pn-gateway/src/guardrails.rs`
 - `:57-89` - the `Throttle` and `Quarantine` arms now say the action was *requested and NOT applied by this
-  engine* and carry the rule's own message; `Warn` and `Alert` name the rule and the message.
+  engine* and carry the rule's own message. `Warn` and `Alert` name the rule and the message.
 - `:96-112` - `check_condition` refuses by name: no condition language is implemented here, and a silent
   `false` is a claim the engine never made. Nothing in the tree called it, so this costs no caller.
-- `:437-503` - a test module (the file had none): a triggered `Deny` must stop the check while
+- `:437-503` - a test module that the file did not have: a triggered `Deny` must stop the check while
   `Throttle`/`Quarantine`/`Alert`/`Warn`/`Allow` must not fail it, and `check_condition` must refuse. The
   rule condition is `container_count >= 0`, which the evaluator really triggers - a condition that never
-  fires would make every arm look correct.
+fires makes every arm look correct.
 
-**Verification.** `cargo test -p pn-gateway guardrails` -> `2 passed; 0 failed` (heavy label `guard`, 31 s,
-peak 1015 MB). `cargo fmt --all -- --check` clean.
+**Verification.** `cargo test -p pn-gateway guardrails` -> `2 passed; 0 failed`, heavy label
+`guard`, 31 s, peak 1015 MB. `cargo fmt --all -- --check` clean.
 
-**Not fixed, and named as such.** Reachability (nothing constructs the manager) and the mock inputs are
-product decisions - wiring an engine that cannot measure anything into the CLI would be worse than leaving
+**Not fixed, and named as such.** Reachability, in that nothing constructs the manager, and the mock inputs are
+product decisions. Wiring an engine that cannot measure anything into the CLI is worse than leaving
 it unreachable - so they are recorded in the honesty register instead of patched around. What is fixed is
 that the engine no longer *claims* what it does not do.
 
@@ -369,13 +369,13 @@ that the engine no longer *claims* what it does not do.
 
 ## ASEC2-ARCH-008 (policy) — a decision that nothing applies, printed as if it were an action
 
-**Found.** `PolicyAction` (`crates/pn-next/src/security.rs:132,138`, re-exported at `pn-next/src/lib.rs:87`)
+**Found.** `PolicyAction`, at `crates/pn-next/src/security.rs:132,138` and re-exported at `pn-next/src/lib.rs:87`,
 has **no consumer outside `policy_engine`**: nothing matches on it, so a rule can be evaluated and its action
 never enforced. `podnext policy eval` printed the decided action on a line labelled `action :`, which reads
-as "the action that was taken". Measured 2026-11-08 by searching for consumers across the tree: only the
+as "the action that was taken". Measured 2026-11-08 with a search for consumers across the tree: only the
 definition and the re-export appear.
 
-**Change (2026-11-08).**
+**Change, 2026-11-08.**
 - `crates/pn-next/src/policy_engine/mod.rs:52-58` - the doc comment on `PolicyAction` now states that the
   engine decides and nothing applies, names the finding, and says that wiring an enforcement point is a
   product decision rather than a rename.
@@ -384,7 +384,7 @@ definition and the re-export appear.
 
 **Verification, and its limit.** The owning targets were run **before** committing, because this change
 edits CLI output: `cargo test -p podnext --test stdout_discipline` -> `4 passed; 0 failed` and
-`cargo test -p podnext --test cli_reference_contract` -> `6 passed; 0 failed`; `cargo fmt --all -- --check`
+`cargo test -p podnext --test cli_reference_contract` -> `6 passed; 0 failed`. `cargo fmt --all -- --check`
 clean. The new line itself was **not** observed end to end: `podnext policy eval demo` against a fixture
 store answers `Error: Service not found: demo`, because the command needs a service record and seeding one
 means reproducing the supervisor's persisted `ServiceConfig` shape. So the line's presence rests on the
@@ -395,15 +395,15 @@ contract targets above, not on a captured run - stated here rather than implied 
 ## ORCH (watchdog) — the README documented a command that does not load
 
 **Found.** `README.md:246` showed `podnext watchdog policy web-server restart -m 3 -w 60`. Measured
-2026-11-08 against the built binary: `watchdog policy` is **not a subcommand** (`error: unrecognized
-subcommand 'policy'`, with clap suggesting `set-policy`/`setpolicy`), `-m`/`-w` are not flags at all, and
-`-w` is already the global `--pwd`, so the short form could not be added later without a collision. The
-stage spec carries the same form (`workbench/asec/SPEC_STAGE3.txt:128,305`), which is where the README
+2026-11-08 against the built binary: `watchdog policy` is **not a subcommand**. `error: unrecognized
+subcommand 'policy'`, and clap suggests `set-policy`/`setpolicy`. Neither `-m` nor `-w` is a flag, and
+`-w` is already the global `--pwd`, so the short form can not be added later without a collision. The
+stage spec carries the same form at `workbench/asec/SPEC_STAGE3.txt:128,305`, which is where the README
 inherited it. The implemented surface is
 `podnext watchdog setpolicy <NAME> <POLICY> <MAX_RESTARTS> <WINDOW_SECS>` with the policy vocabulary
 `never, on-failure, always, unless-stopped, on-failure-or-crash`.
 
-**Change (2026-11-08).** `README.md:245-246` now shows the form that loads:
+**Change, 2026-11-08.** `README.md:245-246` now shows the form that loads:
 
 ```bash
 # Configure automatic restart policy: up to 3 restarts within a 60 second window
@@ -413,122 +413,122 @@ podnext watchdog setpolicy web-server on-failure 3 60
 **Verification, and one correction of my own first attempt.** The fixed line was run:
 `rc=0`, `Watchdog policy set for 'web-server': OnFailure (max restarts: 3, window: 60s)`. The negative
 control is the old form: `rc=2` with `unrecognized subcommand 'policy'`. My first edit kept the spec's
-policy word `restart`, and the measurement rejected it (`error: invalid value 'restart' for '<POLICY>'`) -
-so the documented form is now the one the binary accepts, checked by running it rather than by reading the
-help. The rest of that README block was load-tested too (`watchdog status`, `gitops sync`, `gitops drift`,
-`wakelock acquire web-server partial`, `boot enable web-server`): all reach their own logic, none are
+policy word `restart`, and the measurement rejected it. The error was `error: invalid value 'restart' for '<POLICY>'`.
+So the documented form is now the one the binary accepts. A run checked this, not the help text.
+The rest of that README block was load-tested too: `watchdog status`, `gitops sync`, `gitops drift`,
+`wakelock acquire web-server partial`, `boot enable web-server`. All reach their own logic, and none are
 rejected by the parser.
 
 ---
 
 ## SUPPLY-07 (signature) — a disabled verifier reported `verified: true`
 
-**Found.** `verify_image` (`crates/proot-distro-core/src/signature.rs:132`) returned
+**Found.** `verify_image` at `crates/proot-distro-core/src/signature.rs:132` returned
 `VerificationResult { verified: true, ... }` whenever `signature.enabled` was false - and
-`SignatureConfig::default()` sets `enabled: false` (`:33`). So the struct a caller receives asserted a
+`SignatureConfig::default()` sets `enabled: false` at `:33`. So the struct a caller receives asserted a
 verification that never ran, with only a warning string as a hint. Measured 2026-11-08: nothing in the
-install path reads `SignatureConfig`/`SignatureVerifier` at all (grep in `podnext/` and `pn-*`: only the
-`lib.rs:95-96` re-exports), and the sole readers of `.verified` are this module's own tests.
+install path reads `SignatureConfig`/`SignatureVerifier` at all. A grep in `podnext/` and `pn-*` finds only the
+`lib.rs:95-96` re-exports, and the sole readers of `.verified` are this module's own tests.
 
-**Change (2026-11-08).** The early return now hands back `verified: false`, and the warning names the
+**Change, 2026-11-08.** The early return now hands back `verified: false`, and the warning names the
 remedy: `Signature verification disabled: not verified (set signatures.enabled to verify)`. Nothing else
-changed: verification itself is still off by default, because turning it on is a product decision (it
-needs trusted keys, and a wrong default would refuse installs).
+changed: verification itself is still off by default, because turning it on is a product decision. It needs
+trusted keys, and a wrong default will refuse installs.
 
 **Verification.** Owner target `cargo test -p proot-distro-core --lib` -> `105 passed; 0 failed`,
-including `signature::tests::test_simple_verification` (the enabled path, so the flip cannot pass silently)
-and `test_signature_config_default`; `cargo fmt --all -- --check` clean. The safety argument for flipping
+and it includes `signature::tests::test_simple_verification`, the enabled path, so the flip cannot pass silently.
+It also includes `test_signature_config_default`. `cargo fmt --all -- --check` is clean. The safety argument for flipping
 the value is the caller measurement above: `image.rs:54` writes `self.verify_image(&image)?;` - it keeps the
 error and discards the flag.
 
 **A reading mistake of my own, recorded.** The first owner-target run printed
 `0 passed ... filtered out`, and I briefly took that as "the module's tests ran and matched nothing". It
 was the opposite: `tail -1` shows only the **last** test target's summary, and the lib target's line had
-scrolled past. The corrected run (`--lib`, all summary lines read) shows 105 passing. The lesson matches
+scrolled past. The corrected run used `--lib` and read all summary lines. It shows 105 passing. The lesson matches
 one already in this repo's memory - read every `test result` line, never a single one.
 
 ---
 
 ## SUPPLY-10 / issue #74 (release integrity) - half one: the release publishes checksums
 
-**Found (measured 2026-11-08).** The installer downloads at **four** sites and verifies none of them:
-`install.sh:84` (`curl -fsSL -o "$TEMP_DEB" "$DEB_URL"`) then `:87` (`dpkg -i "$TEMP_DEB"`), the binary
-fallback at `:100-102` (`curl` -> `chmod +x` -> `mv`), the `podnext-daemon`/`pn-gateway` loop right after
+**Found, measured 2026-11-08.** The installer downloads at **four** sites and verifies none of them:
+`install.sh:84` runs `curl -fsSL -o "$TEMP_DEB" "$DEB_URL"`, then `:87` runs `dpkg -i "$TEMP_DEB"`, the binary
+fallback at `:100-102`: `curl` -> `chmod +x` -> `mv`, the `podnext-daemon`/`pn-gateway` loop right after
 it, and `install-short.sh:21-37`. Behind that, the release itself published **no checksums**: `v0.2.0`'s
 assets are `install-short.sh`, `install.sh`, `podnext-aarch64-linux-android`,
-`podnext-x86_64-linux-android` and nothing else (no `.sha256`, and no `.deb` either - so the `dpkg` path
-targets an asset the release never ships), and `git grep sha256 .github/workflows/` was empty.
+`podnext-x86_64-linux-android` and nothing else. There is no `.sha256` and no `.deb` either, so the `dpkg` path
+targets an asset the release never ships. The check `git grep sha256 .github/workflows/` was empty.
 
-**Change (2026-11-08), half one only.** `Combine artifacts` in `.github/workflows/release.yml` now writes
+**Change, 2026-11-08, half one only.** `Combine artifacts` in `.github/workflows/release.yml` now writes
 `<asset>.sha256` for each of the four shipped assets from the artefact that is actually shipped, refuses
-when one is missing (`ERROR: release-artifacts/<f> is missing; refusing to publish a partial asset set`),
+when one asset is absent: `ERROR: release-artifacts/<f> is missing; refusing to publish a partial asset set`,
 prints the checksums, and refuses when it did not write exactly four. The release step's `files:` list
 gained the four `.sha256` paths, so they are uploaded beside the assets.
 
 **Deliberately not done in the same change.** The installer half - a verify-or-refuse helper called at all
-four download sites - is not started, because a partial installer edit would leave the other paths
+four download sites - is not started, because a partial installer edit will leave the other paths
 unverified while looking fixed. It is the next block, with its shape recorded: refuse on a mismatched
-checksum with no escape hatch; refuse when no checksum is published unless `PDN_ALLOW_UNVERIFIED=1` is set
-explicitly (and print that it is installing unverified); verify locally by stubbing **only** `curl` in
-`PATH`, never by blanking `PATH`, which would also remove `sha256sum` and make every case look the same.
+checksum with no escape hatch. Refuse when no checksum is published unless `PDN_ALLOW_UNVERIFIED=1` is set
+explicitly, and print that it installs unverified. To verify locally, stub **only** `curl` in
+`PATH`, and never blank `PATH`, because that also removes `sha256sum` and makes every case look the same.
 
 ---
 
 ## SUPPLY-10 / issue #74 - half two: the installers verify their downloads
 
-*(Seam note: the paragraph beginning "**Verification.** The workflow's own `run:` block" further down
-closes the **half one** entry above, not this one. This section was inserted before it by a later edit; the
-order of the file is misleading here and this note marks it rather than leaving a reader to guess.)*
+*Seam note: the paragraph that begins "**Verification.** The workflow's own `run:` block" further down
+closes the **half one** entry above, not this one. This section was inserted before it by a later edit. The
+order of the file misleads a reader here, and this note marks it rather than leaving a reader to guess.*
 
-**Change (2026-11-08).** Both installers now carry a `verify_download` helper and call it at every download
-site before anything is installed or executed: `install.sh` at the `.deb` download, the `podnext` binary
-and the `podnext-daemon`/`pn-gateway` loop; `install-short.sh` at the `.deb` and the binary loop. A
-mismatch always refuses with no override; a missing checksum refuses unless `PDN_ALLOW_UNVERIFIED=1` is
-set, in which case it prints that it is installing unverified. `sha256sum` joins the dependency check in
+**Change, 2026-11-08.** Both installers now carry a `verify_download` helper and call it at every download
+site before it installs or runs anything: `install.sh` at the `.deb` download, the `podnext` binary
+and the `podnext-daemon`/`pn-gateway` loop. `install-short.sh` covers the `.deb` and the binary loop. A
+mismatch always refuses with no override. A missing checksum refuses unless `PDN_ALLOW_UNVERIFIED=1` is
+set, and then it prints that it installs unverified. `sha256sum` joins the dependency check in
 `install.sh` so a host without it fails early and by name. Two other defects found while reading the same
-files: `install-short.sh` hardcoded `/tmp` for the `.deb` (`:28`), which does not exist for a Termux app
+files: `install-short.sh` hardcoded `/tmp` for the `.deb` at `:28`. That path does not exist for a Termux app
 uid, and both scripts left the `.sha256` file behind on the refusal paths.
 
-**Verification: a fixture harness, one stub.** `curl` is the only stubbed binary; `HOME` and `TMPDIR`
+**Verification: a fixture harness, one stub.** `curl` is the only stubbed binary. `HOME` and `TMPDIR`
 point inside the fixture, so no real install target is touched. Eight cases: positive, tampered checksum
 with no override, missing checksum with no override, and missing checksum with `PDN_ALLOW_UNVERIFIED=1`,
 for each installer. Measured: positive `rc=0` with `Checksum verified: ...` then `Installing via dpkg...`
-and `Installation complete!`; tampered `rc=1` with `hecksum mismatch for ...` and **dpkg never called**;
-missing `rc=1` with `no checksum published for ...: refusing to install an unverified download`; override
-`rc=0` with `installing UNVERIFIED` (and `dpkg` called, which is the point of the override). Both scripts
+and `Installation complete!`. Tampered `rc=1` with `hecksum mismatch for ...` and **dpkg never called**.
+A missing checksum gives `rc=1` with `no checksum published for ...: refusing to install an unverified download`. Override
+`rc=0` with `installing UNVERIFIED`, and `dpkg` is called, which is the point of the override. Both scripts
 pass `bash -n`.
 
 **Five harness bugs of my own, because a control that fails for the wrong reason proves nothing.** Each
-looked like "the change is broken": a stub with `#!/bin/bash`, which does not exist on this Android host
-(bash is at `$PREFIX/bin/bash`); a stub that wrote to `"$out"` when `install.sh` calls `curl` **without**
-`-o` and reads the pipe; `shift` before reading `$1` for the script path; `-` as the "no env vars"
-sentinel, which made `env` try to execute a command named `-`; and grep patterns that missed the message
-they were looking for (`hecksum` vs `Checksum`, `no checksum` vs `No checksum`), so `rc` alone carried the
+looked like "the change is broken": a stub with `#!/bin/bash`, which does not exist on this Android host.
+The host bash is at `$PREFIX/bin/bash`. A stub wrote to `"$out"` when `install.sh` calls `curl` **without**
+`-o` and reads the pipe. A `shift` came before a read of `$1` for the script path. A `-` served as the "no env vars"
+sentinel, which made `env` try to execute a command named `-`. Also, grep patterns missed the message
+they were after: `hecksum` vs `Checksum`, `no checksum` vs `No checksum`. So `rc` alone carried the
 verdict. The harness lives at `$PREFIX/tmp/instfix/harness2.sh` and is scratch, not a repo artifact.
 
 
 **Verification.** The workflow's own `run:` block was extracted from the YAML and executed with `bash` in a
 fixture holding four fake assets: `rc=0` and all four `sha256sum -c` report `OK`. Negative control, and it
-had to be corrected once: deleting only the combined copy proved nothing (`rc=0`) because the step re-copies
+had to be corrected once: deleting only the combined copy proved nothing at `rc=0`, because the step re-copies
 from the per-target directories - removing `install.sh` from **both** sources gives `rc=1` with the refusal
 message, and restoring it returns `rc=0` with four `OK`s. A detail stated rather than hidden: when it
-refuses, the two checksums written before the missing asset are left on disk; harmless because the step
-exits non-zero and nothing is published, but a reader should not have to infer that.
+refuses, the two checksums written before the missing asset stay on disk. This is harmless because the step
+exits non-zero and nothing is published, but a reader does not have to infer that.
 
 ---
 
 ## TC-PARITY-01 / issue #76 - re-measured, and narrower than it was written
 
 **What was claimed.** That `install` does not write the `env`/`working_dir` that
-`apply_image_runtime_config` reads (`native/meta.rs:99-110`), with the OCI configuration being dropped.
+`apply_image_runtime_config` reads at `native/meta.rs:99-110`, with the OCI configuration dropped.
 
-**What measurement shows (2026-11-08).**
-- `build` **does** write them: `commands/build.rs:342-344` emits `"cmd"`, `"env"` (as an object) and
+**What measurement shows, 2026-11-08.**
+- `build` **does** write them: `commands/build.rs:342-344` emits `"cmd"`, `"env"`, as an object, and
   `"working_dir"` into the container's `metadata.json`. So the reader's branches are **not** dead code, and
-  a claim I briefly wrote in this session ("nothing in the tree writes the `env` key") was **wrong**.
-- `install` does **not**: the OCI/registry path calls `save_container_metadata` (`native/image.rs:555`),
-  whose six keys are `name`, `image`, `tag`, `rootfs`, `created_at`, `status` (`:960-983`) - no `env`, no
-  working dir. That half of #76 stands.
+a claim I briefly wrote in this session, "nothing in the tree writes the `env` key", was **wrong**.
+- `install` does **not**: the OCI/registry path calls `save_container_metadata` at `native/image.rs:555`,
+  whose six keys are `name`, `image`, `tag`, `rootfs`, `created_at`, `status`, found at `:960-983`, with no `env` and no working directory.
+  That half of #76 stands.
 - The owner test target agrees with that split: `cargo test -p podnext --test image_config_env` ->
   **6 passed, 0 failed**, including `the_image_config_is_persisted_by_a_build` and
   `a_login_delivers_the_images_env_to_the_guest` - both about **build**.
@@ -536,12 +536,12 @@ exits non-zero and nothing is published, but a reader should not have to infer t
 **Why the wrong claim almost shipped, and the rule it re-confirms.** The empty result came from
 `git grep -n '"env"\|"working_dir"\|"cmd"'`: `git grep` does not treat `\|` as alternation the way GNU grep
 does, so the pattern was searched literally and matched nothing. This is the **second** time in one day
-(the other was `git grep -n 'dpkg -i\|dpkg --install'` returning nothing while `install.sh:87` contains that
-text). Use `git grep -nE 'a|b'` or separate invocations, and treat an empty result as a question about the
+The other was `git grep -n 'dpkg -i\|dpkg --install'`, which returned nothing while `install.sh:87` contains that
+text. Use `git grep -nE 'a|b'` or separate invocations, and treat an empty result as a question about the
 lookup before it becomes a finding about the code.
 
-**Next measurement, not a guess.** Whether the `install` path even fetches the image configuration (a
-registry pull may only fetch a layer plus a manifest), which decides whether propagating `env`/`working_dir`
+**Next measurement, not a guess.** Whether the `install` path even fetches the image configuration. A
+registry pull can fetch only a layer plus a manifest, and this decides whether propagating `env`/`working_dir`
 into the metadata is a small wiring change or a feature. That question is what the remaining half of #76
 now rests on.
 
@@ -550,25 +550,25 @@ now rests on.
 ## p4 step 1 - the engine reads the syscall number (*771b817*)
 
 **Found.** `Tracee::read_syscall` and `read_retval` returned `0` for every stop, so the 155 handler
-patterns in `syscall.rs` could only ever be selected by `0`, and no `PTRACE_GETREGSET` call existed
-anywhere in the tree (the `PTRACE_CONT`/`PTRACE_SYSCALL`/`PTRACE_GETREGSET` search of the assessment was
-true of those three symbols; `ptrace` itself is used, see `NATIVE_ENGINE_STATE.md`).
+patterns in `syscall.rs` can only ever be selected by `0`, and no `PTRACE_GETREGSET` call existed
+anywhere in the tree. The `PTRACE_CONT`/`PTRACE_SYSCALL`/`PTRACE_GETREGSET` search of the assessment was
+true of those three symbols. The `ptrace` symbol itself is used, see `NATIVE_ENGINE_STATE.md`.
 
-**Change (2026-11-08), files touched.**
+**Change, 2026-11-08, files touched.**
 - `crates/proot-core/src/tracee.rs:110-190` - `read_registers()` reads the register file through
-  `PTRACE_GETREGSET` with `NT_PRSTATUS`; `read_syscall`/`read_retval` use it; `observe_syscall()` is public
+  `PTRACE_GETREGSET` with `NT_PRSTATUS`. The functions `read_syscall`/`read_retval` use it. `observe_syscall()` is public
   so a test can stop a child at a known syscall. Four measured platform details are recorded in the code
-  because each one cost a compile cycle: nix 0.27 has no aarch64 `ptrace::getregs`; libc does not export
-  `NT_PRSTATUS` for this target (so it is named where it is used, with its ABI source); Android's
-  `libc::ptrace` takes `request: c_int` and is variadic; and `Registers` is the aarch64 layout, so on
+because each one cost a compile cycle: nix 0.27 has no aarch64 `ptrace::getregs`. libc does not export
+  `NT_PRSTATUS` for this target, so it is named where it is used, with its ABI source. Android's
+  `libc::ptrace` takes `request: c_int` and is variadic. `Registers` is the aarch64 layout, so on
   x86_64 it is left at its default rather than filled with values that mean something else.
-- `crates/proot-core/tests/native_syscall_read.rs` (new) - stops a real child at `getpid` and asserts the
+- `crates/proot-core/tests/native_syscall_read.rs` is new. It stops a real child at `getpid` and asserts the
   number the engine reports is `SYS_getpid`, not merely non-zero.
 
 **Verification, both directions on the same assertion.**
 - Real read: `cargo test -p proot-core --test native_syscall_read` -> `1 passed`, 
   `the_engine_reports_the_syscall_the_tracee_made ... ok`.
-- Read stubbed (API intact): `FAILED`, `left: None right: Some(172)` - naming `SYS_getpid`, so the
+- Read stubbed, with the API intact: `FAILED`, `left: None right: Some(172)`, which names `SYS_getpid`, so the
   assertion fails for the right reason.
 - A first attempt at the control was **invalid** and is recorded as such: reverting all of `tracee.rs`
   produced `error[E0599]: no method named observe_syscall found`, which proved the API had gone, not that
@@ -583,35 +583,35 @@ Steps 2-3 of the p4 plan are untouched.
 ## Incident: master went CI-red at 2999c9e, and the cause was p4 step 1 (fixed in 163a242)
 
 **What happened.** Pushing the p4 step 1 change turned five checks red on `2999c9e`: `Rust Host Build`,
-`Relocated HOME and prefix`, `PRoot Distro Integration Test` (all in run 42449343351), `Run Benchmarks`
-(run 42449343311) and `Issue ledger` (run 42449343320). The local gate for the same tree was **green**
-(`p4-gate1`, exit 0, 371 s) and `cargo fmt --all -- --check` was clean, which is exactly the gap the
+`Relocated HOME and prefix`, `PRoot Distro Integration Test`, all in run 42449343351, `Run Benchmarks`
+in run 42449343311, and `Issue ledger` in run 42449343320. The local gate for the same tree was **green**
+`p4-gate1`, exit 0, 371 s, and `cargo fmt --all -- --check` was clean, which is exactly the gap the
 verification lesson names: a local gate says nothing about the targets and environments it does not run.
 
 **Cause, quoted from CI's own log.** `Run Benchmarks`, step "Verify benchmark targets exist and compile":
 `error[E0308]: mismatched types --> crates/proot-core/src/tracee.rs:149:17`, on
 `nix::libc::PTRACE_GETREGSET as nix::libc::c_int`. Android's libc declares `ptrace` variadic with
-`request: c_int`; the Linux x86_64 runner's libc takes `request: c_uint` and is not variadic. One line
+`request: c_int`. The Linux x86_64 runner's libc takes `request: c_uint` and is not variadic. One line
 compiled on the device and broke every runner job - the other three build-failing checks build the same
-crate. `Issue ledger` failed for the same reason and shows it as per-predicate lines: `#25 the benchmark
-targets compile (the false-green defect)` FAIL, `#18 the sparse-copy unit test`, `#16 the deep-recursion
+`Issue ledger` failed for the same reason and shows it as per-predicate lines: `#25 the benchmark`
+`targets compile (the false-green defect)` FAIL, `#18 the sparse-copy unit test`, `#16 the deep-recursion
 test`, `#31 the abnormal-restart test`, `#41 both regression tests`, `#60 the guard is unit tested` - every
 predicate that runs tests - and `#42 every documented command and option exists in the real CLI`, which
 builds the binary. A workspace that does not compile fails all of them.
 
 **Diagnostic notes worth keeping.** The check-run annotations were empty apart from "Process completed with
-exit code 101/1"; `gh run view <id> --log-failed` answered "run ... is still in progress; logs will be
-available when it is complete", and the two-stage fetch (read the `Location` from
-`gh api -i .../actions/jobs/<id>/logs`, then `curl` it with no auth header) returned no Location at all,
+exit code 101/1". `gh run view <id> --log-failed` answered `run ... is still in progress; logs will be`
+`available when it is complete`, and the two-stage fetch read the `Location` from
+`gh api -i .../actions/jobs/<id>/logs`, then it ran `curl` on it with no auth header and returned no Location at all,
 because an unfinished job has no log blob. The ledger's own failure text is a `grep FAIL` over its step
 output, not the check summary.
 
-**Fix (2026-11-08, 163a242).** `as _` instead of a concrete integer type, so the parameter's own type
+**Fix 2026-11-08 163a242.** `as _` instead of a concrete integer type, so the parameter's
 decides, with a comment recording the asymmetry and the run that measured it.
 
 **Verification status.** Local: `cargo fmt --all -- --check` clean and
 `cargo test -p proot-core --test native_syscall_read` -> 1 passed. CI: 13 checks for `163a242`, all
-pending except one, **zero failures** at the time of writing - so the fix is **not confirmed** yet, and
+remain pending except one, **zero failures** at the time of writing, so the fix is **not confirmed** yet, and
 this entry will be wrong if those checks do not go green. The previous run for `2999c9e` is now complete
 and its log matches what is quoted above.
 
@@ -633,252 +633,252 @@ session that a green local result hid a red reality.
 
 ## p4 step 3a: the engine owns its tracee, and the execve translation is blocked by a measurement
 
-**Finding (2026-11-08 14:58-15:20 WIB, master 19df16b).** "Run containers with podnext's own binary"
-cannot be reached by wiring: `ProotEngine::run()` (`crates/proot-core/src/lib.rs:173-184`) installs
+**Finding 2026-11-08 14:58-15:20 WIB, master 19df16b.** "Run containers with podnext's own binary"
+cannot be reached by a change to the wiring: `ProotEngine::run()` at `crates/proot-core/src/lib.rs:173-184` installs
 the seccomp filter and enters `run_loop` without ever spawning a child, so it can never see a tracee,
-while `ProotEngine::start()` (`:187-193`) spawns the EXTERNAL `proot` binary with six argv features
-(`--kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=.`). The first increment of
+while `ProotEngine::start()` at `:187-193` spawns the EXTERNAL `proot` binary with six argv features
+`--kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=.`. The first increment of
 that subsystem was therefore built as a new module rather than as a change to the existing engine.
 
-**Action.** New module `crates/proot-core/src/native_run.rs` (560 lines) registered at
-`crates/proot-core/src/lib.rs:24` (`pub mod native_run;`), with a new test target
-`crates/proot-core/tests/native_exec_translation.rs` (327 lines). The module forks a child with
+**Action.** New module `crates/proot-core/src/native_run.rs`, 560 lines, registered at
+`crates/proot-core/src/lib.rs:24`, as `pub mod native_run;`, with a new test target
+`crates/proot-core/tests/native_exec_translation.rs`, 327 lines. The module forks a child with
 `PTRACE_TRACEME`, traces syscall stops with `PTRACE_SYSCALL`, and reports what it did NOT handle as a
-named refusal carrying a reason; `strict` mode stops the run at the first such syscall instead of
-implying parity. Which binary the kernel executed is read from `/proc/<pid>/exe` at the
+named refusal carrying a reason. In `strict` mode the run stops at the first such syscall and never implies
+parity. Which binary the kernel executed is read from `/proc/<pid>/exe` at the
 `PTRACE_EVENT_EXEC` stop rather than inferred from an exit code. The guest path string lives in a
 page mapped `MAP_SHARED` before the fork, and the CHILD publishes its own pointer to it in a header
 inside that page, because measurement showed the engine's address for that page is not the child's.
 
-**Measurements this increment produced (device, 2026-11-08).**
+**Measurements this increment produced on the device, 2026-11-08.**
 - `cargo test -p proot-core --test native_exec_translation` -> `1 passed; 0 failed; 1 ignored`.
-- The proven run reports: `entries=1172` syscalls traced, `refusals=1172` (each with a name or a
-  number plus a reason), `child_view=Some(ChildView { path_ptr: 524454457344, path_len: 9 })`, and
+- The proven run reports: `entries=1172` syscalls traced, `refusals=1172`, each with a name or a
+  number plus a reason, `child_view=Some(ChildView { path_ptr: 524454457344, path_len: 9 })`, and
   `executed=Some("/data/data/com.termux/files/usr/bin/coreutils")` - a HOST path, which is exactly
   the false positive the test file exists to catch.
-- `cargo test -p proot-core --lib` -> `13 passed; 0 failed`; `cargo fmt --all -- --check` clean;
+- `cargo test -p proot-core --lib` -> `13 passed; 0 failed`. `cargo fmt --all -- --check` clean.
   `python3 scripts/check_non_goals.py` -> "no non-goal was crossed".
 
 **Blocker, kept runnable rather than described.** `the_engine_translates_execve_into_the_given_rootfs`
 is `#[ignore]`d with the measurement in its reason: the engine's first entry stop is `48`
-(`faccessat`), and the child's own `getpid` sync marker appears later, at position 9, carrying the
-child's pid (21375 for the run whose fixture directory was `p4-3a-run-21373`). So the trace begins
+which is `faccessat`, and the child's own `getpid` sync marker appears later, at position 9, carrying the
+child's pid, 21375 for the run whose fixture directory was `p4-3a-run-21373`. So the trace begins
 AFTER an `execve` the engine never saw an entry stop for, and the path the engine prepared is not the
-path being executed: arm A therefore runs the host's `/bin/true` (Termux maps `/bin` to
-`$PREFIX/bin`, hence the `coreutils` path) and exits 0. The first `execve` the engine does observe, at
+path being executed: arm A therefore runs the host's `/bin/true`, because Termux maps `/bin` to
+`$PREFIX/bin`, hence the `coreutils` path, and exits 0. The first `execve` the engine does observe, at
 position 7 of that run, carries a path pointer that is neither the child's published pointer nor
-page-aligned. Un-ignoring that test is the acceptance criterion for the fix; it must not be deleted or
+page-aligned. Un-ignoring that test is the acceptance criterion for the fix. It must not be deleted or
 weakened.
 
 **Rule this increment adds.** An engine that owns a tracee must verify WHERE ITS TRACE BEGAN before it
 trusts any syscall it observed: a sync marker emitted by the child immediately before the syscall of
 interest must be the first entry stop, asserted as a gate. Without that assertion the engine can
-believe it intercepted an `execve` while the kernel was running a host binary, and the resulting report
+believe it intercepted an `execve` while the kernel ran a host binary, and the resulting report
 - refusal counts, "executed" evidence, strict failures - reads as a working capability.
 
 ## p4 step 3b: the trace now begins before `execve`, and the guest path is actually translated
 
-**Finding (2026-11-08, device; measured by a delegated builder at 17:01-17:07 WIB - heavy logs
+**Finding 2026-11-08, device. A delegated builder measured it at 17:01-17:07 WIB. Heavy logs
 `20261108T100116Z-native-sabotage.log`, `20261108T100520Z-native-final-nocap.log`,
-`20261108T100720Z-native-final2.log` - and re-verified by the parent in its own run).** Step 3a's
+`20261108T100720Z-native-final2.log`. The parent re-verified the result in its own run.** Step 3a's
 translation never happened for TWO independent reasons, each measured, not inferred:
 
 1. **`PTRACE_TRACEME`'s initial stop is delivered AT the child's `execve`**, not before it. The trace
    therefore began on the STARTUP of an already-exec'd program (first entry stops `48 faccessat`,
    `56 openat`, `63 read`), and the child's own markers plus the `execve` whose path had to be
-   rewritten were never observed at all. Fix: the child's FIRST syscall is a blocking `read(pipe_r)`;
-   the engine `PTRACE_SEIZE`s it (its options in force from that first stop), `PTRACE_INTERRUPT`s it,
+   rewritten were never observed at all. Fix: the child's FIRST syscall is a blocking `read(pipe_r)`.
+   the engine `PTRACE_SEIZE`s it, with its options in force from that first stop, `PTRACE_INTERRUPT`s it,
    consumes the `PTRACE_EVENT_STOP` group-stop, and only then releases the child with one byte. No
    `SIGSTOP`, no fork race. `PTRACE_SEIZE`/`PTRACE_INTERRUPT` are NOT declared by Android's libc and
    nix 0.27's wrappers are `#[cfg(target_os = "linux")]`, so both go through `libc::ptrace` with
    locally named request numbers 0x4206/0x4207, cast `as _`.
 2. **`LD_PRELOAD=libtermux-exec-ld-preload.so` intercepts `libc::execve`**, so the child's exec never
-   surfaced as a syscall stop (the engine saw no `SYS_execve` entry at all, and arm A ran the host
-   binary and exited 0). A/B proof with the same bionic `libc::execve`: with the preload in force
-   there is no `execve` stop; with `env -u LD_PRELOAD` the entry stop appears and the fixture runs.
+   surfaced as a syscall stop, because the engine saw no `SYS_execve` entry at all and arm A ran the host
+   binary and exited 0. A/B proof with the same bionic `libc::execve`: with the preload in force
+   there is no `execve` stop. With `env -u LD_PRELOAD` the entry stop appears and the fixture runs.
    Fix: the child issues the exec as a raw `syscall(SYS_execve, ...)`, which bypasses the interposer.
-   The marker became raw too (`syscall(SYS_getpid)`) because bionic caches `libc::getpid`.
+   The marker became raw too, as `syscall(SYS_getpid)`, because bionic caches `libc::getpid`.
    Also dropped: the invalid `syscall(-1)` marker added in step 3a - it raises `SIGSYS`, and the
-   resulting signal-delivery stop poisons the following trace; and `at_entry` is reset to `false`
+   the resulting signal-delivery stop poisons the following trace. Also `at_entry` is reset to `false`
    after `PTRACE_EVENT_EXEC`, because `PTRACE_GET_SYSCALL_INFO` showed the next stop is the execve's
    syscall-EXIT.
 
-**Finding that the fixture itself was vacuous (reported as a scope deviation, and it matters).**
+**Finding that the fixture itself was vacuous, reported as a scope deviation, and it matters.**
 Acceptance required arm A to exit 1 and arm B to exit 0, which was unachievable with the original
 fixture on this device: Termux's `$PREFIX/bin/true` and `false` are symlinks to ONE `coreutils`
-multicall that dispatches on `argv[0]` (measured: `exec -a /bin/true <copy-of-false>` exits 0), so
+multicall that dispatches on `argv[0]`, measured: `exec -a /bin/true <copy-of-false>` exits 0, so
 both arms were the SAME binary and the comparison proved nothing. The fixture now compiles
 `int main(void) { return N; }` with `$CC`/`cc` when the two host applets resolve to one file, so the
-arms genuinely differ; a failed compile PANICS rather than skipping, and each test gets its own
+arms genuinely differ. A failed compile PANICS rather than skipping, and each test gets its own
 fixture directory because the two tests run concurrently in one process and their cleanup raced.
 
-**Verification (the parent's own run, not the builder's report).**
+**Verification: the parent's own run, not the builder's report.**
 `cargo test -p proot-core --test native_exec_translation` -> `2 passed; 0 failed; 0 ignored`,
-exit 0, 10 s, peak 185 MB. Raw lines: `[arm-a] exit=1
-translations=[Translation { guest: "/bin/true", host: "<fixture>/rootfs-a/bin/true",
-syscall: "SYS_execve" }] executed=Some("<fixture>/rootfs-a/bin/true")`; `[arm-b] exit=0` with
-`host=<fixture>/rootfs-b/bin/true`; `[control-c] translated path does not exist: /bin/true ->
-<fixture>/rootfs-c/bin/true (this engine does not fall back to the host filesystem)`;
-`[control-d] exit=127 translations=[] executed=None`; the recorded prefix shows the child's markers
+exit 0, 10 s, peak 185 MB. Raw lines: `[arm-a] exit=1`
+`translations=[Translation { guest: "/bin/true", host: "<fixture>/rootfs-a/bin/true",`
+`syscall: "SYS_execve" }] executed=Some("<fixture>/rootfs-a/bin/true")`. `[arm-b] exit=0` with
+`host=<fixture>/rootfs-b/bin/true`. `[control-c] translated path does not exist: /bin/true ->`
+`<fixture>/rootfs-c/bin/true (this engine does not fall back to the host filesystem)`.
+`[control-d] exit=127 translations=[] executed=None`. The recorded prefix shows the child's markers
 then `execve` with `arg0 == the child's published path_ptr`. Assertions went 21 -> 25 and `#[ignore]`
-2 -> 0, so nothing was weakened. The negative control (the rewrite made a no-op) went RED with
+2 -> 0, so nothing was weakened. The negative control made the rewrite a no-op and went RED with
 `arm A ran a copy of false, so a correct run exits 1 ... left: 0 right: 1`, restored -> green.
-`cargo test -p proot-core --lib` -> 13 passed; `cargo fmt --all -- --check` clean;
+`cargo test -p proot-core --lib` -> 13 passed. `cargo fmt --all -- --check` clean.
 `python3 scripts/check_non_goals.py` -> no non-goal crossed.
 
 **Rule this adds.** A tracer's first stop is not necessarily its first event: with `PTRACE_TRACEME`
 the initial stop is delivered AT `execve`, so a trace can begin on the far side of the very syscall
-you meant to rewrite and still look healthy (refusal counts, an `executed` path, strict failures).
+you meant to rewrite and still look healthy: refusal counts, an `executed` path, strict failures.
 Assert WHERE the trace began. And on Termux, an `LD_PRELOAD` interposer can hide a syscall from
 ptrace entirely - issue raw syscalls when the trace must see them.
 
-**Files changed.** `crates/proot-core/src/native_run.rs` (module docs 11-47; `TRACE_OPTIONS` and the
-SEIZE/INTERRUPT constants 97-114; `run_native` pipe+fork 288-306; `child_main` 310-392; `parent_loop`
-406-478, 495-501, 569-573; `read_child_view` 598-616) and
-`crates/proot-core/tests/native_exec_translation.rs` (docs 11-40; fixture helpers 58-168;
-`#[ignore]` removed at 246; sync gate 280-328). Every change carries a dated
+**Files changed.** `crates/proot-core/src/native_run.rs`, module docs 11-47, `TRACE_OPTIONS` and the
+SEIZE/INTERRUPT constants 97-114, `run_native` pipe+fork 288-306, `child_main` 310-392, `parent_loop`
+406-478, 495-501, 569-573, `read_child_view` 598-616, and
+`crates/proot-core/tests/native_exec_translation.rs`, docs 11-40, fixture helpers 58-168,
+`#[ignore]` removed at 246, sync gate 280-328. Every change carries a dated
 `2026-11-08, p4 step 3b` comment in the source.
 
 ## p1b: does `podnext kill` still claim a session it did not signal? (re-measured, ASEC3-PROC2-01)
 
-**Finding that prompted this (recorded 2026-11-08 earlier in the ASEC campaign).** With a session
+**Finding that prompted this: recorded 2026-11-08 earlier in the ASEC campaign.** With a session
 record whose pid was dead while a live holder kept the record, `podnext kill <container>` printed
 `Container '<n>' killed.`, returned 0, removed the session record - and no signal had been sent. The
-first attempted fix (`session_still_active`, commit 6a9cd2a) was WITHDRAWN in bb22ad0 because CI
+first attempted fix in `session_still_active`, commit 6a9cd2a, was WITHDRAWN in bb22ad0 because CI
 proved it fired on a test helper that holds the record itself
-(`a_guest_ignoring_term_is_escalated_term_quit_kill`, image_config_env.rs:497), and the remedy was
+`a_guest_ignoring_term_is_escalated_term_quit_kill`, image_config_env.rs:497, and the remedy was
 reopened: it must distinguish the guest from any other descriptor holder, not refuse because
 "someone holds it".
 
 **What the tree already says.** `crates/proot-distro-core/src/session.rs:24-29` documents the
-contract: liveness is decided by the inherited descriptor (`active_sessions()`, C8), while
+contract: liveness is decided by the inherited descriptor `active_sessions()`, C8, while
 `(pid, start_time)` only ADDRESS a session - "and let a signal be refused when the pid has since been
-recycled (B13, runc's `hasInit()`)". `signal_target()` (`session.rs:113-115`) is that refusal:
+recycled, B13, runc's `hasInit()`". `signal_target()`, `session.rs:113-115`, is that refusal:
 `process_is_alive(record.pid, record.start_time).then_some(record.pid)`.
 
-**Action.** Instead of writing a fourth guard, the property was MEASURED. New harness
-`scripts/kill_honesty_probe.py` (199 lines) commits the reproduction: it seeds a fixture store
+**Action.** Rather than write a fourth guard, the property was MEASURED. New harness
+`scripts/kill_honesty_probe.py`, 199 lines, commits the reproduction: it seeds a fixture store
 through `scripts/pdn_fixture_guard.py`, proves the binary acts on that fixture before it is allowed to
-act at all (`assert_binary_honours_store`), then runs five arms over the same container - pid dead or
-live, crossed with the record unheld / held `LOCK_SH` / held `LOCK_EX` (the arm that used to lie is
-dead+EX) - and a positive control that must report a real signal. It refuses (exit 2) when the
+act at all, `assert_binary_honours_store`, then runs five arms over the same container, pid dead or
+live, crossed with the record unheld / held `LOCK_SH` / held `LOCK_EX`, and the arm that used to lie is
+dead+EX. A positive control must report a real signal. It refuses with exit 2 when
 positive control is silent, because silence elsewhere then proves nothing.
 
-**Measured result at 328e464 (device, 2026-11-08 18:2x WIB).** Verdict line:
-`claims not backed by a live pid at claim time: 0`; `positive-control arms that reported a real
+**Measured result at 328e464, device, 2026-11-08 18:2x WIB.** Verdict line:
+`claims not backed by a live pid at claim time: 0`. `positive-control arms that reported a real
 signal: 1`. In detail: dead+none and dead+EX both print
-`Skipping session PID 26347 (probe-kill): its pid no longer names the process that registered it, so
-nothing can be signalled safely there.` with `Container 'probe-kill' is not running.` and NO kill
-claim - so the marked recipe is now refused by name; dead+SH and live+SH are silent with no claim;
+`Skipping session PID 26347 (probe-kill): its pid no longer names the process that registered it, so`
+`nothing can be signalled safely there.` with `Container 'probe-kill' is not running.` and NO kill
+claim, so the marked recipe is now refused by name. dead+SH and live+SH are silent with no claim.
 live+EX reports `Sent SIGTERM to session PID 26337 (probe-kill)` with that pid alive at claim time.
 The operator's store was untouched: 10 containers / 0 sessions before and after.
 
-**Ledger.** A new line `ASEC3-PROC2-01-V` (status VALIDATED, validates=ASEC3-PROC2-01) records the
-re-measurement; the earlier `-W` CORRECTED line stands as the record of the withdrawal.
+**Ledger.** A new line `ASEC3-PROC2-01-V`, with status VALIDATED and validates=ASEC3-PROC2-01, records the
+re-measurement. The earlier `-W` CORRECTED line stands as the record of the withdrawal.
 
 **Rule this adds.** A withdrawn fix is not evidence that the defect is open, and a defect that was
 real can stop being reachable when the surrounding mechanism changes: re-measure the ORIGINAL recipe
-before writing a second guard. And a silence-based probe needs a positive control in the same run -
+before it writes a second guard. And a silence-based probe needs a positive control in the same run,
 without an arm that must report, "no claim was printed" is indistinguishable from "the reporter never
 ran".
 ## p4c slice 1+2: the native engine follows forks and honours bind mounts (measured 2026-11-08)
 
-**Findings this closes (from the engine's own declaration of its gaps, native_run.rs lines 49-64 before
-this change).** (a) `TRACE_OPTIONS` carried only `TRACESYSGOOD | TRACEEXEC`, so a grandchild produced by
+**Findings this closes, from the engine's own declaration of its gaps, native_run.rs lines 49-64 before
+this change.** (a) `TRACE_OPTIONS` carried only `TRACESYSGOOD | TRACEEXEC`, so a grandchild produced by
 `fork()`/`clone()` was never traced and its `execve` was never translated: any workload that runs a
-shell (which forks for every command) silently escaped translation. (b) `pub fn resolve(rootfs, guest,
+shell, which forks for every command, silently escaped translation. (b) `pub fn resolve(rootfs, guest,
 binds)` honoured a bind list that NO caller ever filled, so bind mounts were inert - the CLI's
 `--bind` had no effect on the native path. Both gaps were declared in prose, which is why neither was
-hidden; but a declared gap is still a gap.
+hidden, but a declared gap is still a gap.
 
 **Action taken.** Slice 1: `TRACE_OPTIONS` now unions `PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK |
-PTRACE_O_TRACECLONE` (native_run.rs:114-119) and `parent_loop` was rebuilt as a per-tracee slot table
-driven by `waitpid(-1, __WALL | __WNOTHREAD)` (native_run.rs:410-748): it reads the new pid from
+PTRACE_O_TRACECLONE`, at native_run.rs:114-119, and `parent_loop` was rebuilt as a per-tracee slot table
+driven by `waitpid(-1, __WALL | __WNOTHREAD)`, at native_run.rs:410-748: it reads the new pid from
 `PTRACE_GETEVENTMSG` on the fork event, consumes that tracee's birth stop, resumes it with
 `PTRACE_SYSCALL`, tracks entry/exit and the exec event per tracee, and returns only when every slot
-is gone. Slice 2: `RunPlan` carries a bind list (native_run.rs:145-146) and `resolve`
-(native_run.rs:1068-1084) now selects the LONGEST matching prefix instead of the first in list order,
+is gone. Slice 2: `RunPlan` carries a bind list at native_run.rs:145-146, and `resolve`
+at native_run.rs:1068-1084 now selects the LONGEST matching prefix instead of the first in list order,
 with the rootfs fallback unchanged. Translation for a tracee that is not the original child goes
-through `translate_execve_remote` (native_run.rs:823-1065: `PTRACE_GETREGSET`/`SETREGSET`, `PEEKDATA`
+through `translate_execve_remote` at native_run.rs:823-1065: `PTRACE_GETREGSET`/`SETREGSET`, `PEEKDATA`
 to read the guest path, `POKEDATA` to write the translated path into a stack scratch at `sp-0x200`,
-and arg0 redirect), because the shared-page trick only works for the child the engine forked itself.
+and arg0 redirect, because the shared-page trick only works for the child the engine forked itself.
 
-**Files.** `crates/proot-core/src/native_run.rs` (+598/-115), `crates/proot-core/tests/
-native_exec_translation.rs` (+188, zero deletions). The module's own doc comment (lines 49-64) was
+**Files.** `crates/proot-core/src/native_run.rs`, +598/-115, `crates/proot-core/tests/
+native_exec_translation.rs`, +188, zero deletions. The module's own doc comment, lines 49-64, was
 rewritten from "binds and forks are not done" to what now works, so the prose cannot drift from the code.
 
 **Verification - the parent re-ran it, it is not a child self-report.**
 `cargo test -p proot-core --test native_exec_translation -- --nocapture` ->
-`test result: ok. 4 passed; 0 failed; 0 ignored` (exit 0, 96 s, 83 MB peak), with the engine's own report
-lines: `[fork] exit=1 translations=[{guest:"/bin/forker"}, {guest:"/bin/child", host:"<fixture>/
-rootfs-fork/bin/child"}] executed=Some("<fixture>/rootfs-fork/bin/child")` and
-`[bind] exit=7 translations=[{guest:"/bin/forker", host:"<fixture>/rootfs-bind/bin/forker"},
-{guest:"/opt/tool", host:"<fixture>/bind-target/tool"}] executed=Some("<fixture>/bind-target/tool")`.
+`test result: ok. 4 passed; 0 failed; 0 ignored`, exit 0, 96 s, 83 MB peak, with the engine's own report
+lines: `[fork] exit=1 translations=[{guest:"/bin/forker"}, {guest:"/bin/child", host:"<fixture>/`
+`rootfs-fork/bin/child"}] executed=Some("<fixture>/rootfs-fork/bin/child")` and
+`[bind] exit=7 translations=[{guest:"/bin/forker", host:"<fixture>/rootfs-bind/bin/forker"},`
+`{guest:"/opt/tool", host:"<fixture>/bind-target/tool"}] executed=Some("<fixture>/bind-target/tool")`.
 `cargo test -p proot-core --lib` -> `13 passed; 0 failed`. `cargo fmt -p proot-core -- --check` clean.
-Assertions 26 -> 32, `#[ignore]` 0 (was 2 before p4-3b).
+Assertions 26 -> 32, `#[ignore]` 0, was 2 before p4-3b.
 
-**Negative controls (child, pasted in its transcript, and required by the brief).** With bind
+**Negative controls, pasted by the child in its transcript and required by the brief.** With bind
 resolution sabotaged the bind test fails on the assertion
 `the bind must supply the guest path, but the engine refused the run: translated path does not exist:
-/opt/tool -> <fixture>/rootfs-bind/opt/tool`; with the fork options removed the fork test fails on
-`the forked child exec'd the rootfs /bin/child (exit 1) ...; 90 means the child's execve was never
-translated and failed`. Both are assertions about behaviour, not compile errors; both restored green.
+/opt/tool -> <fixture>/rootfs-bind/opt/tool`. With the fork options removed the fork test fails on
+`the forked child exec'd the rootfs /bin/child (exit 1) ...; 90 means the child's execve was never`
+`translated and failed`. Both are assertions about behaviour, not compile errors. Both restored green.
 
-**Two real defects the implementer hit and fixed (recorded because they will bite the next tracer).**
-`waitpid(-1)` cross-reaped children of OTHER tests running concurrently in the same process (`ESRCH`);
+**Two real defects the implementer hit and fixed, recorded because they will bite the next tracer.**
+`waitpid(-1)` cross-reaped children of OTHER tests running concurrently in the same process, with `ESRCH`.
 `__WALL | __WNOTHREAD` confines it to the calling thread's children. And a tracee killed while
 ptrace-stopped leaves a zombie that the next `waitpid(-1)` returns, so `Exited`/`Signaled` for unknown
 pids must be ignored - a blocking post-loop `waitpid(child)` deadlocks instead, because the forker
 waits on a child ptrace will not let die.
 
-**Limits stated, not hidden.** The stack scratch at `sp-0x200` fits `PATH_CAPACITY+1`; a tracee whose
+**Limits stated, not hidden.** The stack scratch at `sp-0x200` fits `PATH_CAPACITY+1`. A tracee whose
 SP is within 0x200 of the bottom of its stack mapping makes `POKEDATA` fail and the run ERRORS rather
-than corrupting memory (not exercised by the fixtures). A fork-descendant's `at_entry` starts as
-`false` because the kernel reports the clone-exit first; this affects only the `entries`/refusal labels,
+than corrupting memory, not exercised by the fixtures. A fork-descendant's `at_entry` starts as
+`false` because the kernel reports the clone-exit first. This affects only the `entries`/refusal labels,
 because entry-versus-exit for translation is decided by whether the guest path is readable
-(`peek_cstr` succeeding), so a wrong guess cannot cause a missed translation. `resolve`'s bind match is
-still plain `starts_with` (no path-component boundary), preserving the pre-existing semantics - only
-first-match became longest-match. Production callers still do NOT use this engine; it remains
-experimental until parity is measured on the same load.## p5 slice-1: the daemon's socket IPC bounded and named (ASEC2-API-005/006/007/008, measured 2026-11-08)
+and `peek_cstr` succeeds, so a wrong guess cannot cause a missed translation. `resolve`'s bind match is
+still plain `starts_with`, with no path-component boundary, preserving the pre-existing semantics: only
+first-match became longest-match. Production callers still do NOT use this engine. It remains
+experimental until parity is measured on the same load.## p5 slice-1: the daemon's socket IPC bounded and named, ASEC2-API-005/006/007/008, measured 2026-11-08
 
 **Findings.** Four recorded items on one mechanism - the line-oriented JSON control protocol the CLI and
 the dashboard both speak over a unix socket. Measured at the audit commit: the socket inherited the
-ambient umask (`mode 0o777` under `umask 0000`) because `run()` called `UnixListener::bind` with no
-`set_permissions`; startup unlinked ANY existing socket path unconditionally, so a second daemon silently
-stole a live daemon's socket; `read_line` on an uncapped `BufReader` accepted a 10,485,784-byte frame and
-answered it; and there was no cap on concurrent connections (128/128 served) and no read deadline (an
-unterminated frame pinned a handler until the peer chose to finish).
+the socket inherited the ambient umask, `mode 0o777` under `umask 0000`, because `run()` called `UnixListener::bind` with no
+`set_permissions`. Startup unlinked ANY existing socket path unconditionally, so a second daemon silently
+stole a live daemon's socket. `read_line` on an uncapped `BufReader` accepted a 10,485,784-byte frame and
+answered it. There was no cap on concurrent connections, 128/128 served, and no read deadline, an
+unterminated frame pinned a handler until the peer chose to finish.
 
-**Action.** One mechanism, four fixes in `crates/podnext/src/daemon.rs` (+389/-12), with the numbers named
-as constants rather than scattered literals (lines 30-52): `MAX_FRAME_BYTES = 64 * 1024`,
+**Action.** One mechanism, four fixes in `crates/podnext/src/daemon.rs`, +389/-12, with the numbers named
+as constants rather than scattered literals, lines 30-52: `MAX_FRAME_BYTES = 64 * 1024`,
 `READ_DEADLINE = 2 s`, `MAX_CONCURRENT_CONNECTIONS = 64`, `SOCKET_MODE = 0o600`,
 `LIVE_PROBE_TIMEOUT = 500 ms`, plus stable refusal tokens `FRAME_TOO_LARGE`, `READ_DEADLINE_EXCEEDED`,
 `SERVER_AT_CAPACITY` so tests assert the token, not a sentence. -005: `perms.set_mode(0o600)` +
-`set_permissions` immediately after bind (line 330), imitating what `daemon_runtime` already did. -006:
-before binding, an existing path is probed by connect + ping (`daemon_is_live`, lines 412-438); a live
-answer refuses startup by name (line 264, quoting the socket and how it decided), a genuinely stale path
-is reclaimed. -007: each frame is read through `(&mut reader).take(MAX_FRAME_BYTES)` (lines 440-489) and
+`set_permissions` immediately after bind, line 330, imitating what `daemon_runtime` already did. -006:
+before it binds, an existing path is probed with connect + ping, `daemon_is_live`, lines 412-438. A live
+answer refuses startup by name, line 264, quoting the socket and how it decided, and a genuinely stale path
+is reclaimed. -007: each frame is read through `(&mut reader).take(MAX_FRAME_BYTES)`, lines 440-489, and
 an over-cap frame is refused by name and the connection closed, because an over-cap frame cannot be
-resynchronised. -008: `Arc<Semaphore>(64)` with `try_acquire_owned` (lines 341-395) refuses the 65th
-connection by name instead of queueing it, and every read is wrapped in `timeout(READ_DEADLINE)`.
+resynchronised. -008: `Arc<Semaphore>(64)` with `try_acquire_owned`, lines 341-395, refuses the 65th
+connection by name rather than queue it, and every read is wrapped in `timeout(READ_DEADLINE)`.
 
 **Verification - the probe's own artifacts, read by the parent, BEFORE vs AFTER.**
 `workbench/asec/evidence/asec2-api/probe_results.{BEFORE,AFTER}-fix.json`:
-`socket_stat.mode` `0o777` -> `0o600` (both runs under `umask 0000`, so the mode is explicit);
+`socket_stat.mode` `0o777` -> `0o600`. Both runs use `umask 0000`, so the mode is explicit.
 `bigline_10MiB.resp` `{"type":"pong"}` -> `{"type":"error","message":"frame too large: exceeds the
 65536-byte frame limit"}`; `bigline_10MiB_garbage` now named as a frame refusal instead of a JSON syntax
-error, so the two are distinguishable; `second_daemon_on_live_socket.state` `still_running_no_refusal` ->
+error, so the two are distinguishable. `second_daemon_on_live_socket.state` `still_running_no_refusal` ->
 `exited` while `live_daemon_after_second.resp` `<connect failed: [Errno 2]>` -> `{"type":"pong"}`, i.e.
-both halves of -006; `stale_socket_daemon.bound true` with `ping_resp pong` (stale path still reclaimed);
+both halves of -006. `stale_socket_daemon.bound true` with `ping_resp pong`, stale path still reclaimed.
 `conn_cap_boundary.over_cap_resp` `{"type":"pong"}` -> `{"type":"error","message":"server at capacity: 64
-concurrent connections in use"}`; `read_deadline.waited_s` `8.0` -> `2.0`;
+concurrent connections in use"}`. `read_deadline.waited_s` `8.0` -> `2.0`.
 `partial_no_newline.early_recv` `<TIMEOUT>` -> `{"type":"error","message":"read deadline: no complete
 frame within 2s"}`. No regression in `ping`, `list`, `start_fixture_svc`, `load_fixture_svc`, `malformed`.
 
-**Parent's own runs on the integrated tree (not the child's numbers).**
+**Parent's own runs on the integrated tree, not the child's numbers.**
 `cargo test -p podnext --bin podnext-daemon -- --test-threads=2` -> `test result: ok. 8 passed; 0 failed`
-(2 pre-existing + 6 contract tests at daemon.rs:811-947); `cargo test -p podnext --bin podnext --
---test-threads=2` -> `52 passed; 0 failed`; `cargo fmt --all -- --check` clean. Negative control (child,
+2 pre-existing + 6 contract tests at daemon.rs:811-947. `cargo test -p podnext --bin podnext --`
+`--test-threads=2` -> `52 passed; 0 failed`. `cargo fmt --all -- --check` clean. Negative control (child,
 required by the brief): all four sabotaged at once produced five assertion failures that name the
 behaviour - `socket mode must be the explicit 0600, got 700`, `a second daemon neither refused nor exited:
 it started`, `oversized frame must be refused by name, got pong`, `the connection over the cap must be
@@ -886,75 +886,75 @@ refused by name, got pong`, `daemon did not close an idle connection within the 
 green. Assertions about behaviour, not compile errors.
 
 **Behaviour change stated plainly.** `READ_DEADLINE` is a PER-READ deadline, so a client that writes its
-frame more than 2 s after connecting is now closed (`partial_completed` went from `pong` to
-`<closed: Broken pipe>` in the probe). That is the intended consequence of bounding a hostile peer; the
+frame more than 2 s after the connection is now closed. `partial_completed` went from `pong` to
+`<closed: Broken pipe>` in the probe. That is the intended consequence of bounding a hostile peer. The
 CLI opens one connection per command and writes immediately, and the dashboard is local, so neither is
-affected - but a slow third-party client would be. The per-connection cap means a legitimate burst above
+affected - but a slow third-party client can be. The per-connection cap means a legitimate burst above
 64 simultaneous connections is refused rather than queued.
 
-**Limits.** `SOCKET_MODE` restricts the socket itself; the parent directory stays umask-derived (the
-finding names the socket). `flood_128_concurrent` still reports 128/128 because those connections are
+**Limits.** `SOCKET_MODE` restricts the socket itself. The parent directory stays umask-derived.
+The finding names the socket. `flood_128_concurrent` still reports 128/128 because those connections are
 short-lived and permits free faster than the accept loop saturates - the cap is proven deterministically
-by the new boundary arm (64 held silent connections, the 65th refused by name) instead.
+by the new boundary arm. That arm held 64 silent connections and refused the 65th by name.
 
 **Process note.** Both this change and the concurrent native-engine change were developed in the SAME
-working tree rather than separate worktrees (the briefs did not require isolation). They stayed
+tree, not in separate worktrees. The briefs did not require isolation. They stayed
 file-disjoint so nothing was lost, but that is a real protocol deviation: two children in one tree can
-observe each other's half-applied state, and the parent should have required `git worktree add` per
-child as the delegation protocol says.## p5 slice-2: a Dockerfile's WORKDIR is confined to the image rootfs (ASEc-001, ASEC1-A07-001, -C1)
+observe each other's half-applied state, and the parent must require `git worktree add` per
+child as the delegation protocol says. ## p5 slice-2: a Dockerfile's WORKDIR is confined to the image rootfs, ASEc-001, ASEC1-A07-001, -C1
 
-**Findings.** `podnext build local` applied a Dockerfile's `WORKDIR` without confining it to the image
+**Findings.** `podnext build local` applied a Dockerfile's `WORKDIR` and did not confine it to the image
 rootfs. Measured at the audit commit: `FROM scratch` + `WORKDIR ../../etc` exited 0 and created
-`<store>/containers/etc`, a sibling of the image directory (`ASEC1-A07-001`), and the parent's own run
-created a directory outside both the rootfs and the store (`ASEc-001`). A 1000x chained `../..` form
+`<store>/containers/etc`, a sibling of the image directory `ASEC1-A07-001`, and the parent's own run
+created a directory outside both the rootfs and the store, `ASEc-001`. A 1000x chained `../..` form
 escaped the fixture entirely, leaving `<fixture>/etc`, `<fixture>/.podnext/etc` and
 `<fixture>/.podnext/containers/etc` behind. `ASEC1-A07-001-C1` corrected the landing path for the
 ABSOLUTE form.
 
-**Where the write actually happens (this mattered).** `build.rs:276` only RECORDS the value
-(`c.config.working_dir = Some(wd.clone())`). The writer is the `create_dir_all(rootfs.join(abs))` in the
+**Where the write actually happens, and this mattered.** `build.rs:276` only RECORDS the value
+`c.config.working_dir = Some(wd.clone())`. The writer is the `create_dir_all(rootfs.join(abs))` in the
 same instruction arm. The guard therefore had to sit before that call, not around the record - and the
 re-measurement confirmed both landing paths, reconciling the two ledger rows rather than picking one:
-the RELATIVE form `../../etc` lands at `<store>/containers/etc` (the original row), while the ABSOLUTE
+the RELATIVE form `../../etc` lands at `<store>/containers/etc`, the original row, while the ABSOLUTE
 form `/a/../../b` lands at `<store>/containers/t1/b`, one level above rootfs inside the container
-directory (the correction `-C1`). Both are now asserted in the same test file.
+directory, the correction `-C1`. Both are now asserted in the same test file.
 
 **Action.** `crates/podnext/src/commands/build.rs` +12 at 252-263: a `..` path component is refused
 before any filesystem write, with the message `WORKDIR '<dir>' escapes the image root: '..' is not
 allowed in a WORKDIR path`. The decision was REFUSE, not normalise, for two reasons: `copy_into_rootfs`
-(`build.rs:369`, refusal at `:387`) already enforces exactly this rule and message shape, so a reader
-learns one rule instead of two; and refusing needs no model of Docker's normalisation to be safe. New
-test target `crates/podnext/tests/build_workdir_escape.rs` (245 lines, 13 assertions, 4 tests) drives the
+in `build.rs:369` and refuses at `:387`. That call already enforces exactly this rule and message shape, so a reader
+learns one rule instead of two. Refusing also needs no model of Docker's normalisation to be safe. New
+test target `crates/podnext/tests/build_workdir_escape.rs`, 245 lines, 13 assertions, 4 tests, drives the
 real CLI: the escape is refused, the 1000x chained form cannot leave the store, and two positive controls
 assert the landing path and the recorded `working_dir` for `/srv/app` and for the relative-chained
 `/app` then `src` -> `/app/src`.
 
 **Verification - the parent re-ran it on the worktree tree, it is not a child self-report.**
 `cargo test -p podnext --bin podnext` and the two test targets were run by the parent with a PRIVATE
-`CARGO_TARGET_DIR` inside the worktree (`wt-workdir/target`), because a shared target directory can serve
+`CARGO_TARGET_DIR` inside the worktree, `wt-workdir/target`, because a shared target directory can serve
 a sibling worktree's artefact. The child's own pasted evidence: BEFORE (pre-fix binary, the ledger's
-recipe) `build exit status: 0` with `ESCAPED: <fixture>/home/.podnext/containers/etc`; AFTER `build exit
+recipe) `build exit status: 0` with `ESCAPED: <fixture>/home/.podnext/containers/etc`. AFTER `build exit
 status: 1` plus `Error: WORKDIR '../../etc' escapes the image root: '..' is not allowed in a WORKDIR
 path`, and the three candidate landing paths outside the rootfs all `absent`. Positive controls in the
-same run: `/srv/app` -> `<rootfs>/srv/app` with `"working_dir": "/srv/app"`; `/app` then `src` ->
-`<rootfs>/app/src` with `"working_dir": "/app/src"`. Negative control (guard made a no-op): two tests
+same run: `/srv/app` -> `<rootfs>/srv/app` with `"working_dir": "/srv/app"`. `/app` then `src` ->
+`<rootfs>/app/src` with `"working_dir": "/app/src"`. Negative control, the guard made a no-op: two tests
 FAILED on the landing-path assertion (`a WORKDIR with '..' escaped the image root; build exit=Some(0)`,
-`/.../home/.podnext/containers/etc exists=true`), then restored and green - an assertion about the
-landing path, not a compile error.
+`/.../home/.podnext/containers/etc exists=true`), then restored and green - an assertion about
+the landing path, not a compile error.
 
-**Gates.** `cargo test -p podnext --bin podnext` -> 52 passed; `--test build_workdir_escape` -> 4 passed;
-`--test build_copy_escape` -> 2 passed (COPY/ADD behaviour unchanged); `cargo fmt --all -- --check`
-clean. All work ran through the memory guard (peak 1546 MB, exit 0).
+**Gates.** `cargo test -p podnext --bin podnext` -> 52 passed. `--test build_workdir_escape` -> 4 passed.
+`--test build_copy_escape` -> 2 passed. COPY/ADD behaviour is unchanged. `cargo fmt --all -- --check`
+clean. All work ran through the memory guard, peak 1546 MB, exit 0.
 
 **Isolation.** The child worked on its own branch in its own worktree (`git worktree add` +
-`dept/workdir`, commit 76e6e30, never pushed); the parent verified `git status` of the main checkout is
+`dept/workdir`, commit 76e6e30, never pushed). The parent verified `git status` of the main checkout is
 clean and that the diff touches only the two files above. This is the delegation protocol applied
 properly, after the previous wave's two children shared one tree.
 
 **Environment note, recorded because it cost the child time.** A sibling probe in another session
 exported `HOME` for a fixture and that export leaked into the SHARED terminal environment, so the
-child's `~` briefly resolved to a fixture directory. The child re-pinned `HOME` and used absolute paths;
-nothing was derived from the hijacked value and `~/.podnext` was never touched. The rule now in
+child's `~` briefly resolved to a fixture directory. The child re-pinned `HOME` and used absolute paths.
+No data came from the hijacked value and `~/.podnext` was never touched. The rule now in
 `hermes-harness`: pass fixture variables per command, never `export` them.
 ## p6 slice-1: a refused archive member is now named and counted, and the extractor's defences are under test (A04-01..04, ASEC1-A07-007)
 
@@ -966,79 +966,79 @@ event the operator cannot see, and it makes "archive contained nothing" indistin
 contained three members we refused". The other three rows were already correct: a planted-symlink write
 was refused by name, `strip` matched the reference for absolute and doubled-slash names, and a whiteout
 over a symlink removed the link while its target survived. `ASEC1-A07-007` covered malformed archives
-(truncated tar, gzip-not-a-tar, truncated deflate), which fail with a named error.
+such as truncated tar, gzip-not-a-tar and truncated deflate, which fail with a named error.
 
 **Action.** `crates/proot-distro-core/src/untar.rs:58-102` adds `Refusal { path, reason }` (its `Display`
 renders `refusing entry \`<name>\`: <reason>`) and `ExtractReport { refused }` with `refused()`,
 `refusal_count()` and `is_clean()`. `extract`, `extract_with_strip`, `extract_entries` and
-`extract_entries_stripped` now return `Result<ExtractReport>` (lines 113, 125, 131, 136); both refusal
-sites call `report.refuse(...)` before continuing (lines 167, 183) and the success path returns
-`Ok(report)` (line 258). Call sites whose signature changed were updated as a consequence:
+`extract_entries_stripped` now return `Result<ExtractReport>`, at lines 113, 125, 131, 136. Both refusal
+sites call `report.refuse(...)` before they continue at lines 167 and 183, and the success path returns
+`Ok(report)` at line 258. Call sites whose signature changed were updated as a consequence:
 `archive.rs:127,266`, `compress.rs:171,176,181,186`, and `pn-next/src/backup_restore/mod.rs:1027`
-(`.map(|_| ())`). Tests in the same file now cover traversal-by-name-and-count (814), a clean archive
-reporting zero refusals as the positive control (859), strip 0 vs 1 for absolute and doubled-slash
-members (888), truncated tar (925), gzip-that-is-not-a-tar (955), truncated deflate (987), declared
-4 GiB (1028), the planted-symlink refusal asserted through the report (643), and the whiteout over a
-symlink retained (591). Assertions in `untar.rs`: 24 -> 56.
+`.map(|_| ())`. Tests in the same file now cover traversal-by-name-and-count at line 814, a clean archive
+that reports zero refusals as the positive control at line 859, strip 0 vs 1 for absolute and doubled-slash
+members at line 888, truncated tar at 925, gzip-that-is-not-a-tar at 955, truncated deflate at 987, declared
+4 GiB at line 1028, the planted-symlink refusal asserted through the report at line 643, and the whiteout over a
+symlink retained at line 591. Assertions in `untar.rs`: 24 -> 56.
 
-**Verification - the parent re-ran the suite on the worktree tree.** `cargo test -p proot-distro-core
---lib` -> `112 passed; 0 failed`; `--test deep_fs_recursion` -> `3 passed; 0 failed`; `cargo check -p
+**Verification - the parent re-ran the suite on the worktree tree.** `cargo test -p proot-distro-core`
+`--lib` -> `112 passed; 0 failed`. `--test deep_fs_recursion` -> `3 passed; 0 failed`. `cargo check -p`
 pn-next` exit 0; `cargo fmt --all -- --check` clean. The child's own BEFORE/AFTER on the audit's own
-fixtures: BEFORE `result=Ok` with the escaping members silently skipped; AFTER `result=Ok
+fixtures: BEFORE `result=Ok` with the escaping members silently skipped. AFTER `result=Ok
 refusal_count=3` with three named refusals (`refusing entry \`../escape-target\`: resolved path ...
-escapes destination ...`) and `escape-target/escape2 exists=false`; the planted-symlink arm reports
-`refusal_count=1` with its named reason. Negative control (the `refuse` method sabotaged to a no-op):
+escapes destination ...`) and `escape-target/escape2 exists=false`. The planted-symlink arm reports
+`refusal_count=1` with its named reason. Negative control, the `refuse` method sabotaged to a no-op:
 the traversal test FAILS on `refusals: []` with `left: 0, right: 3` - an assertion about the missing
 record, not a compile error - then restored green.
 
 **Limits, stated rather than implied.** (a) "No partial tree" is NOT guaranteed at the extractor level:
-`extract` writes incrementally, so a tar cut mid-entry leaves a short file; the full guarantee lives in
+`extract` writes incrementally, so a tar cut mid-entry leaves a short file. The full guarantee lives in
 the install path's staging directory, which is a different component. The new tests assert extraction
 fails loudly and that the cut entry did not fully materialise, plus an empty destination for the
 gzip-not-a-tar case - which is what the extractor can actually promise. (b) `archive.rs:200` is
 `Vec::with_capacity(size as usize)` for a member named `index.json`, so a hostile 4 GiB-declared
-`index.json` WOULD allocate; that is outside this row family (the measured case used a different member
-name) and was noted rather than widened into this diff. (c) `pn-next/src/backup_restore/mod.rs:1027`
-discards the report with `.map(|_| ())`; the refusals still happen (so the security property holds) but
-the restore path cannot see them - a follow-up should surface `!is_clean()` there.
+`index.json` can allocate. That is outside this row family, the measured case used a different member
+name and was noted rather than widened into this diff. (c) `pn-next/src/backup_restore/mod.rs:1027`
+discards the report with `.map(|_| ())`. The refusals still happen, so the security property holds, but
+the restore path cannot see them - a follow-up must surface `!is_clean()` there.
 
-**Isolation.** Own worktree and branch (`dept/untar` @ 8ff1a3c), never pushed, main checkout untouched by
-the child; the parent verified the branch, the commit, the four files and the test names before
-integrating.
+**Isolation.** Own worktree and branch, `dept/untar` @ 8ff1a3c, never pushed, main checkout untouched by
+the child. The parent verified the branch, the commit, the four files and the test names before
+integration.
 ## p7 step 1: the engine translates the dynamic loader's path syscalls, so a real guest starts (2026-11-08)
 
-**Finding.** The in-tree engine could only prove STATIC fixtures. Every real guest is dynamically linked,
+**Finding.** The in-tree engine was able to prove only STATIC fixtures. Every real guest is dynamically linked,
 and after `execve` the ELF interpreter runs inside the guest and opens the shared libraries by ABSOLUTE
-path (`/system/bin/linker64`, `<prefix>/lib/libc.so`, and whatever DT_RUNPATH names) through
+path, `/system/bin/linker64`, `<prefix>/lib/libc.so`, and whatever DT_RUNPATH names, through
 `openat`/`newfstatat`/`readlinkat`/`faccessat`. The engine translated only `execve`, so those opens went
 to the HOST filesystem: either the guest failed to link, or - worse - it silently ran against the host's
 libraries and appeared to work. The module's own doc named this gap: "argument translation for any syscall
 other than `execve`".
 
-**Action.** `crates/proot-core/src/native_run.rs` (+351/-52) adds a path-syscall dispatcher and entry-time
-translation. `path_syscall` (lines 262-310) maps a syscall number to its name and path-argument index:
+**Action.** `crates/proot-core/src/native_run.rs`, +351/-52, adds a path-syscall dispatcher and entry-time
+translation. `path_syscall` at lines 262-310 maps a syscall number to its name and path-argument index:
 `openat`, `openat2`, `newfstatat`, `statx`, `readlinkat`, `faccessat`, `faccessat2`, `execve` on every
 target, plus the legacy `open`, `stat`, `lstat`, `readlink`, `access` where the target declares them
-(x86_64 only; arm64 has no legacy table). `SYS_NEWFSTATAT` is declared locally (245-253) because libc
+x86_64 only, arm64 has no legacy table. `SYS_NEWFSTATAT` is declared locally at 245-253 because libc
 omits it for android/aarch64 - found by compile error, not by grep. The parent loop's entry branch
-(761-845) calls `translate_path_remote` (1190-1250: PEEKDATA the path, `resolve`, write the translated
-path into a stack scratch, SETREGSET) after `write_path_and_redirect_arg` was folded in as the shared
-helper (1132-1185). A path-taking syscall with no translator is a NAMED refusal
-(`unhandled_path_syscall`, 313-331), and `syscall_name` consults both tables so names cannot drift from
-the dispatcher (338-349). Relative paths (`dirfd`/cwd) are refused by name because neither is modelled.
+at 761-845 calls `translate_path_remote`. At 1190-1250 that routine PEEKDATA the path, calls `resolve`, and writes the translated
+path into a stack scratch, then SETREGSET. That is after `write_path_and_redirect_arg` was folded in as the shared
+helper at 1132-1185. A path-taking syscall with no translator is a NAMED refusal
+`unhandled_path_syscall` at 313-331, and `syscall_name` consults both tables so names cannot drift from
+the dispatcher at 338-349. Relative paths such as `dirfd` and cwd are refused by name because neither is modelled.
 
 **Two real defects found while doing it.** `resolve` re-translated a path that was already on the host
 side (the loader `stat`s `/proc/self/exe`, which produced `<rootfs><rootfs>/...`, a path existing
 nowhere), and it matched bind prefixes as raw strings, so a bind on `/sys` swallowed
 `/system/lib64/libnetd_client.so` into `/sys/tem/lib64/...`. Both are fixed: an already-translated
-short-circuit, and component-wise prefix matching (`Path::starts_with`).
+short-circuit, and component-wise prefix matching with `Path::starts_with`.
 
 **Verification - the parent re-ran the suites on the merged tree.** New test
-`crates/proot-core/tests/native_dynamic_guest.rs` (404 lines, 18 assertions) builds a dynamic guest whose
-`printf` depends on a library that exists ONLY inside the rootfs (a literal `return 7` would be vacuous on
-this device, because the host's `/system/lib64/libc.so` satisfies an untranslated loader - the child said
-so rather than shipping a test that cannot fail). Committed tree: `[dyn] exit=7 stops=669 entries=335
-executed=Some(".../rootfs/bin/hello")`, `guest stdout="hello from guest"`, translated names
+`crates/proot-core/tests/native_dynamic_guest.rs`, 404 lines and 18 assertions, builds a dynamic guest whose
+`printf` depends on a library that exists ONLY inside the rootfs. A literal `return 7` is vacuous on
+this device, because the host's `/system/lib64/libc.so` satisfies an untranslated loader. The child said
+so rather than shipping a test that cannot fail. Committed tree: `[dyn] exit=7 stops=669 entries=335`
+`executed=Some(".../rootfs/bin/hello")`, `guest stdout="hello from guest"`, translated names
 `["SYS_execve","SYS_faccessat","SYS_newfstatat","SYS_openat","SYS_readlinkat"]`, and the loader's
 rootfs-only RUNPATH `/p7loader/lib` resolved through `SYS_openat`. Pre-change engine on the SAME test:
 `CANNOT LINK EXECUTABLE "/bin/hello": library "libpdnflag.so" not found: needed by main executable`, with
@@ -1051,32 +1051,32 @@ identity_table 4, native_dispatch 2, native_syscall_read 1, seccomp_filter 1, se
 
 **Limits, stated rather than implied.** (a) PT_INTERP cannot be translated: the kernel opens the
 interpreter before the tracee executes an instruction, so the guest's interpreter must exist at its
-absolute host path (`/system/bin/linker64` on Android). Only the loader the interpreter then runs is
+absolute host path, `/system/bin/linker64` on Android. Only the loader the interpreter then runs is
 traced - which is what this change covers, and it is the honest boundary of a ptrace-based engine.
 (b) `dirfd`/cwd-relative paths are refused, not translated. (c) The x86_64-only arms are cfg-gated and
-compile-checked on this aarch64 device only; CI is the authority for them.
+compile-checked on this aarch64 device only. CI is the authority for them.
 
 ## p6 slice-2: a test target no longer resolves the operator's real store (ASEC4-HARNESS-001)
 
-**Finding (mine, recorded after the WORKDIR verification).** `crates/podnext/tests/automation_contract.rs`
+**Finding, mine, recorded after the WORKDIR verification.** `crates/podnext/tests/automation_contract.rs`
 spawned the real `podnext` binary with no `PN_TEST_ROOT`/`HOME` redirection while running `remove`,
 `kill`, `volume create` and `volume rm` - so it resolved `~/.podnext`, the operator's live store. Six of
-its neighbouring test files already redirect the store; this one did not, and CI cannot catch it because
+its neighbouring test files already redirect the store. This one did not, and CI cannot catch it because
 runners have no `~/.podnext` to damage.
 
-**Action.** `crates/podnext/tests/automation_contract.rs` (+235/-37): a per-test `Fixture` under
-`$PREFIX/tmp` with a `temp_base()` that never falls back to bare `/tmp`; `command_in()` sets `HOME`,
-`PN_TEST_ROOT`, `TERMUX__HOME` and `TMPDIR` and clears the XDG variables; and a PRE-FLIGHT GUARD
-(`assert_binary_honours_store`, lines 142-177) that points `HOME` at a separate DECOY store and requires a
+**Action.** `crates/podnext/tests/automation_contract.rs`, +235/-37: a per-test `Fixture` under
+`$PREFIX/tmp` with a `temp_base()` that never falls back to bare `/tmp`. `command_in()` sets `HOME`,
+`PN_TEST_ROOT`, `TERMUX__HOME` and `TMPDIR` and clears the XDG variables. A PRE-FLIGHT GUARD
+`assert_binary_honours_store` at lines 142-177 that points `HOME` at a separate DECOY store and requires a
 read-only `list` to return the fixture's sentinel - so a binary that ignored `PN_TEST_ROOT` lists the decoy
 and the suite refuses before any mutating arm runs. All six tests call the guard first, and
 `test_yes_flag_on_volume_rm` additionally asserts the volume mountpoint appears under the fixture store
 after `create` and is gone after `rm`.
 
-**Verification.** Parent's runs on the merged tree are part of the same wave; the child's pasted evidence:
+**Verification.** Parent's runs on the merged tree are part of the same wave. The child's pasted evidence:
 `cargo test -p podnext --test automation_contract` -> `ok. 6 passed; 0 failed`, with the guard printing
-`fixture guard OK: PN_TEST_ROOT=.../pdn-auto-volrm-NY1cbc/home listed exactly ["pdn-guard-sentinel"];
-decoy HOME=.../decoy was not consulted` and the volume landing in the fixture store. The real store is
+`fixture guard OK: PN_TEST_ROOT=.../pdn-auto-volrm-NY1cbc/home listed exactly ["pdn-guard-sentinel"];`
+`decoy HOME=.../decoy was not consulted` and the volume landing in the fixture store. The real store is
 byte-identical across the run: `1794090579 ... entries=8` BEFORE and AFTER. Negative control (drop
 `PN_TEST_ROOT` from the child env): the guard FAILS naming what it saw -
 `It listed ["pdn-decoy-9666"], i.e. it resolved HOME=.../decoy instead. A binary that ignores
@@ -1086,9 +1086,9 @@ PN_TEST_ROOT acts on the real ~/.podnext, so this suite refuses.` - then restore
 `crates/proot-distro-core/tests/single_writer_races.rs` as unguarded. It was read in full and does not
 touch the store: every root is an explicit `tempfile::tempdir()` (`BlobStore::at`, `scan_store`,
 `staging_units`) and the session registry is redirected via `RUNTIME_DIR` (`session.rs:35-42` returns
-`RUNTIME_DIR/sessions` before `resolve_home`). Adding a guard there would have been decoration, so none
-was added and the file is untouched (`git diff` = 0 lines). The finding stands for
-`automation_contract.rs` only; the correction is written into the ledger rather than silently dropped.
+`RUNTIME_DIR/sessions` before `resolve_home`). Adding a guard there was decoration, so none
+was added and the file is untouched, `git diff` = 0 lines. The finding stands for
+`automation_contract.rs` only. The correction is written into the ledger rather than silently dropped.
 
 ## The operator's acceptance criterion, as a runnable gate
 
@@ -1098,43 +1098,43 @@ dynamic guest in the fixture rootfs (Termux has no static toolchain - `cc -stati
 `cannot open crtbegin_static.o`), copies the interpreter and every NEEDED library to the same absolute
 path inside the rootfs, and notes bionic's file-less `libdl.so` as "implied" rather than dropping it
 silently. Measured on this tree: `rc=1`, `Error: No such file or directory (os error 2)`, and the script
-names proot as the cause; without `PN_TEST_ROOT` it REFUSES with rc=2. When p7 is done this must flip to
-PASS, and the diff of this script is what proves it.## p7 step 6: the in-tree engine is reachable from the CLI, and the operator's criterion flips to PARTIAL (2026-11-08/09)
+names proot as the cause. Without `PN_TEST_ROOT` it REFUSES with rc=2. When p7 is done this must flip to
+PASS, and the diff of this script is what proves it. ## p7 step 6: the in-tree engine is reachable from the CLI, and the operator's criterion flips to PARTIAL, 2026-11-08/09
 
-**Finding.** The engine could run a dynamic guest (commit f215756) but had no production caller: every
-container still ran by spawning the host `proot` binary (`proot-core/src/lib.rs:195`, `:337`,
+**Finding.** The engine was able to run a dynamic guest, commit f215756, but had no production caller: every
+container still ran when it spawned the host `proot` binary (`proot-core/src/lib.rs:195`, `:337`,
 `podnext/src/native/image.rs:131`). The operator's requirement (workbench/asec/REPORT.md section 10,
-BUG-PROOT-01; workbench/WORKLIST.md section Z) was therefore unreachable no matter how good the engine
+BUG-PROOT-01. workbench/WORKLIST.md section Z) was therefore unreachable no matter how good the engine
 became - the wiring was the missing half.
 
 **Action.** `--engine <proot|native>` as a GLOBAL clap argument with `default_value = "proot"`
-(`crates/podnext/src/cli.rs:236-244`, `EngineChoice` in `cli/common.rs:27-39`), threaded through
+`crates/podnext/src/cli.rs:236-244` and `EngineChoice` in `cli/common.rs:27-39`, threaded through
 `main.rs:194-196` and `dispatch.rs` into `cmd_login`/`cmd_run` (`commands/container.rs:261,294,314,
 371-382`). `native/session.rs:208,225-234,308-413` adds `run_container_native`, the predicate
-`uses_native_engine` (a named function so the routing cannot drift) and `native_verdict`, which turns the
+`uses_native_engine`, a named function so the routing cannot drift, and `native_verdict`, which turns the
 engine's report into an operator-facing error:
-`the native engine did not translate N path syscall(s): SYS_chdir (50) [takes a path but this engine has
-no translation for it; the kernel resolves it on the HOST filesystem]. ... The engine does NOT fall back
-to proot; run under --engine proot for full path coverage.` A refusal is NEVER a silent fallback to
+`the native engine did not translate N path syscall(s): SYS_chdir (50) [takes a path but this engine has`
+`no translation for it; the kernel resolves it on the HOST filesystem]. ... The engine does NOT fall back`
+`to proot; run under --engine proot for full path coverage.` A refusal is NEVER a silent fallback to
 proot. `--engine native` with `--detach` is refused by name (the detached supervisor runs through
 `ProotDistroCore::login`). `proot-core/src/native_run.rs:329-338` gains `is_untranslated_path_refusal` so
 "path refusal" has one definition. 8 files, +276/-6.
 
 **RunPlan fields: filled and NOT filled, named rather than invented.** Filled: `rootfs` from
 `container.rootfs_path`, `binds` from `container.config.bind_mounts` (mapped to the engine's
-`(guest_prefix = target, host_path = source)` form), `argv` from the command (defaulting to `/bin/sh`).
+`(guest_prefix = target, host_path = source)` form), `argv` from the command, defaulting to `/bin/sh`.
 NOT filled, because `RunPlan` has no such fields and the engine hands the guest an EMPTY `envp` on
 purpose: environment and cwd. Also not modelled on the native path: bind `readonly`, hostname, uid/gid,
-kernel release, and the Android/synthetic bind set the proot path renders (`/dev`, `/proc`, `/sys`). All
+kernel release, and the Android/synthetic bind set the proot path renders: `/dev`, `/proc` and `/sys`. All
 of it is stated in the doc comment on `run_native_engine`, not left to be discovered.
 
 **Verification - the parent's own acceptance harness, not the child's report.**
 `scripts/own_engine_acceptance.py` now runs two arms with `PATH=/nonexistent-bin` and
 `PROOT_BIN=/nonexistent/proot`:
   * `[default] exit=1 ran=False` with `Error: No such file or directory (os error 2)` - the default still
-    needs proot, which is today's truth and the thing the operator is asking to change;
+    needs proot. That is today's truth and the thing the operator asks to change.
   * `[engine-native] exit=0 ran=True` printing `guest-ran-inside-the-rootfs` - a dynamically linked guest
-    (6112 bytes, DT_RUNPATH `/p7loader/lib`, libraries present only inside the rootfs) RAN with no proot
+    at 6112 bytes, DT_RUNPATH `/p7loader/lib`, libraries present only inside the rootfs. It RAN with no proot
     binary available to the process. This is the first measured proof that the in-tree engine can carry
     a real container.
 The harness prints PARTIAL rather than PASS and names its blockers, because the default path is still
@@ -1146,9 +1146,9 @@ Child's own evidence agrees: `--engine proot` and no-flag argv are identical (al
 `` `--engine native` must route to the native runner, not the proot path `` when sabotage makes native
 fall through, and `cargo test -p podnext --bin podnext` is 56 passed.
 
-**Harness defect found and fixed while measuring (recorded because it cost two runs).** The fixture first
+**Harness defect found and fixed while measuring, recorded because it cost two runs.** The fixture first
 copied Android's `/system/lib64` libraries next to a Termux-linked binary, and the guest failed to link
-(`CANNOT LINK EXECUTABLE "/bin/sh"`). The working recipe - the same one the engine's own test uses - is
+`CANNOT LINK EXECUTABLE "/bin/sh"`. The working recipe - the same one the engine's own test uses - is
 to link the guest with a DT_RUNPATH inside the rootfs and place every NEEDED library in THAT directory,
 so the guest's loader resolves them through the engine's path translation. The interpreter keeps its
 absolute host path. A `linkerconfig` warning remains (`failed to find generated linker configuration from
@@ -1167,83 +1167,83 @@ whose mtime is newer than the change - or built into a private target directory.
 **Finding.** `scripts/check_warnings.py` counted cargo's per-target warning summaries and compared them
 with `scripts/warning_baseline.json`, keyed on host triple plus tool versions. Its live defect: a
 PARTIAL measurement passed. A warm run that re-checked one crate of seven reported `208 -> 0` and exit 0
-("lower than the baseline"), because a target missing from the measurement read as zero. The docstring,
+"lower than the baseline", because a target missing from the measurement read as zero. The docstring,
 the audit finding and a CI comment all justified the ratchet with a premise that does NOT reproduce here:
 that a warm `cargo check` re-emits nothing. Cargo replays cached diagnostics - the scoped probe
 re-checked zero crates yet still emitted four summaries, and two consecutive warm runs both measured 261.
 That premise is withdrawn in the docstring with the measurement that refutes it.
 
-**Action.** `scripts/check_warnings.py` (+72/-14): a pure `unseen_targets(measured, base, complete)` and a
+**Action.** `scripts/check_warnings.py` +72/-14: a pure `unseen_targets(measured, base, complete)` and a
 `compare(measured, base, complete, source)` that REFUSES an empty or partial measurement with exit 2
-("cannot measure") instead of reading it as zero, unchanged growth/equality logic, a `record` guard so a
+"cannot measure" rather than read it as zero, unchanged growth/equality logic, a `record` guard so a
 warm run cannot freeze a too-low ceiling, `mode` optional so a bare invocation defaults to `compare` (it
 used to die in argparse with rc 2), and a build-free `self-check` that proves red-on-growth,
 quiet-on-equality, red-on-empty, red-on-partial. ANSI handling and the toolchain key were already
 correct and are untouched.
 
-**Verification (child's pasted runs; parent integrates and re-runs the gate).** Pre-fix partial 1-of-7
-without `--cold` returned rc 0; now rc 2 naming the six unseen targets. Empty log -> rc 2
+**Verification, child's pasted runs, parent integrates and re-runs the gate.** Pre-fix partial 1-of-7
+without `--cold` returned rc 0. Now rc 2 names the six unseen targets. Empty log -> rc 2
 `.../empty.log holds no cargo summary lines`. Growth 208 -> 209 -> rc 1
 `WARNINGS GREW: pn-next (lib): 208 -> 209`. Full+equal -> rc 0. Bare invocation -> rc 0 printing
 `measured: 261 warnings (ceiling 266 on this toolchain, cold=False)` plus the per-target deltas.
 `record` on a partial measurement -> rc 2 and the baseline file untouched.
 
 **Not demonstrated, stated as such.** The real `--cold` compare path and the `record --cold` write path
-were not run (budget); the exact CI sequencing (build-then-warm-check) is not reachable on-device
+were not run for budget reasons. The exact CI sequencing, build-then-warm-check, is not reachable on-device
 cheaply. The stale comment in `.github/workflows/issue-ledger.yml:122-125` still asserts the withdrawn
-warm-zero premise and was left untouched, flagged here instead.## p7 step 6 follow-up: the help fixture, a global option, and a predicate pinned to commentary (2026-11-09)
+warm-zero premise and was left untouched, flagged here instead.## p7 step 6 follow-up: the help fixture, a global option, and a predicate pinned to commentary, 2026-11-09
 
 **Finding 1 - a global option reflows every screen.** Adding `--engine` with `global = true` and a
-three-line doc comment (which clap turns into `long_help`) made clap switch to next-line layout on
+three-line doc comment, which clap turns into `long_help`, made clap switch to next-line layout on
 **every** screen the option reaches: `research/cli-help-baseline.txt` went 4733 -> 10168 lines for an
-eight-line option. The gate caught it (`dump differs from research/cli-help-baseline.txt`). The fix is
+eight-line option. The gate caught it: `dump differs from research/cli-help-baseline.txt`. The fix is
 not to re-pin a 5,435-line diff nobody can review: the detail moved into a plain `//` comment and the
 doc line became single-line, so the option renders compactly again. Re-pinned with the gate's own
-generator, after rebuilding: +223 lines, 123 hunks, and filtering the `--engine` lines out of the diff
+generator, after a rebuild: +223 lines, 123 hunks, and filtering the `--engine` lines out of the diff
 leaves **zero** changes - the whole diff is the one flag appearing on every screen, which is what
 `global` means.
 
 **Finding 2 - a ledger predicate pinned the self-check's wording, not its behaviour.** `#69`'s predicate
-ran `check_warnings.py self-check` and looked for `fires on growth`. The self-check passed (rc 0) but now
+ran `check_warnings.py self-check` and looked for `fires on growth`. The self-check passed with rc 0 but now
 says `red on growth` and additionally refuses a partial measurement, so the predicate failed on prose
 while the property it stands for had got *stronger*. The needle moved with the sentence and a second
-predicate asserts the partial refusal ("refuses BOTH an empty and a partial"). A predicate pinned to
+predicate asserts the partial refusal, "refuses BOTH an empty and a partial". A predicate pinned to
 commentary is a record of a past decision, not a law.
 
 **Measured state after both fixes.** Gate GREEN, `136 PASS, 0 FAIL, 0 SKIPPED (of 136)`, exit 0, 1073 s,
 run in a clean shell. CI on `656f8ea`: 15 runs, 15 success, 0 failures. Commits `0508656` (acceptance
 harness: `[engine-native] exit=0 ran=True` with no proot on PATH and `PROOT_BIN` missing, default arm
-still failing by design) and `656f8ea` (this follow-up).
+still failing by design) and `656f8ea`, this follow-up.
 
 **Fixture leak, recorded rather than fixed here.** `crates/proot-core/tests/native_dynamic_guest.rs`
 cleans its root at line 177 *before* the test and never after, so each run of `cargo test -p proot-core`
 leaves `$PREFIX/tmp/p7-loader-<pid>-dyn/` behind (six were present when this was measured, each with
-`rootfs/p7loader/lib/{libc.so,libdl.so,libpdnflag.so}` and `rootfs/bin/hello`). Harmless but unbounded;
-the teardown belongs with the test that owns it.## p7 step 7: the two engines compared on the same load (2026-11-09 02:34 WIB)
+`rootfs/p7loader/lib/{libc.so,libdl.so,libpdnflag.so}` and `rootfs/bin/hello`). Harmless but unbounded, and
+the teardown belongs with the test that owns it.## p7 step 7: the two engines compared on the same load, 2026-11-09 02:34 WIB
 
-**Finding.** After step 6 the CLI could reach both engines, but nobody had measured whether they AGREE.
-Flipping the default to `native` on the strength of one passing command would have been a claim about
+**Finding.** After step 6 the CLI can reach both engines, but nobody had measured whether they AGREE.
+To flip the default to `native` on the strength of one passing command is a claim about
 one guest on one rootfs with three of its observables never looked at.
 
-**Action.** `scripts/engine_differential.py` (new, ~250 lines): one fixture rootfs, one guest, the SAME
+**Action.** `scripts/engine_differential.py`, new, ~250 lines: one fixture rootfs, one guest, the SAME
 argv and the SAME bind for both arms, three runs each. The guest reports what the two engines are most
 likely to disagree about - `cwd`, a probe environment variable, `/proc/self/exe`, `uid`/`euid` - writes
 a file inside the rootfs, prints its argv, and exits 7. Four observables are compared (exit, stdout,
 the file effect, per-field values) and wall time is recorded. It uses the shared fixture guard
-(`scripts/pdn_fixture_guard.py`), so it refuses without `PN_TEST_ROOT` instead of touching the operator's
-store (measured: `~/.podnext` unchanged at 10 containers / 0 sessions).
+`scripts/pdn_fixture_guard.py`, so it refuses without `PN_TEST_ROOT` and does not touch the operator's
+store, measured as `~/.podnext` unchanged at 10 containers / 0 sessions.
 
 **Two fixture defects found while measuring, both real:**
 
 1. The proot arm failed with `proot error: '/bin/sh' not found (root = <fixture>)` - the proot path
    resolves its command through a shell inside the rootfs, and the seeded rootfs is empty by design.
-   Fixed by binding the host `$PREFIX/bin` at `/bin` for BOTH arms (symmetric), with the guest at
+   The fix binds the host `$PREFIX/bin` at `/bin` for BOTH arms, which is symmetric, with the guest at
    `/opt/hello` so neither arm can accidentally run a host binary.
-2. The first guest build was refused (`REFUSING ... rc=2`) for a missing `<stdlib.h>` and for `%%s` left
+2. The first guest build was refused, `REFUSING ... rc=2`, for a missing `<stdlib.h>` and for `%%s` left
    over from the Python raw string. Fail-closed rather than a silent skip, which is the behaviour the
    guard is supposed to have.
 
-**Measured result (exit 1 - NOT EQUAL, and that is the finding):**
+**Measured result: exit 1, NOT EQUAL, and that is the finding:**
 
 | observable | proot (default) | native | verdict |
 |---|---|---|---|
@@ -1257,28 +1257,28 @@ store (measured: `~/.podnext` unchanged at 10 containers / 0 sessions).
 | wall time (median of 3) | 0.186 s | 0.087-0.124 s | native faster by ~1.5-2.1x |
 
 **Three named gaps, which is what step 8 is blocked on:** the working directory is not set on the
-native path (`RunPlan` has no cwd field, so the guest inherits the HOST cwd), the guest sees the host
-uid because no `--change-id=0:0:0` mapping exists on that path, and `/proc` is not mounted so anything
-reading `/proc/self` sees nothing. Each is fixable in the engine or the plan, and each must be fixed or
+native path. `RunPlan` has no cwd field, so the guest inherits the HOST cwd. The guest sees the host
+uid because no `--change-id=0:0:0` mapping exists on that path, and `/proc` is not mounted, so
+no read of `/proc/self` returns a value. Each is fixable in the engine or the plan, and each must be fixed or
 explicitly modelled before the default moves.
 
 **Not measured, and said so in the script's own output** rather than in a summary: the remaining
-synthesised mounts (`/dev`, `/sys`, the Android bind set - only `/proc` was probed), hostname and
+synthesised mounts, `/dev`, `/sys` and the Android bind set. Only `/proc` was probed. Hostname and
 kernel-release overrides, bind readonly semantics, namespaces and clone flags, and signal/ptrace
 behaviour inside the guest. The list was corrected during the work: it first still named cwd, envp and
 uid as uncompared AFTER the guest started reporting them, which understates evidence the harness itself
-produces.## p7 fixture leak: corrected mechanism, then fixed with a Drop guard (2026-11-09 03:05 WIB)
+produces.## p7 fixture leak: corrected mechanism, then fixed with a Drop guard, 2026-11-09 03:05 WIB
 
 **Correction of the record, not a quiet rewrite.** The section "p7 step 6 follow-up" above says
 `crates/proot-core/tests/native_dynamic_guest.rs` "cleans its root at line 177 *before* the test and never
 after". The first half is right and the second half is WRONG: a `remove_dir_all` also sat at the END of
-the test (line 403, now removed). Six fixture trees under `$PREFIX/tmp/p7-loader-*-dyn` were genuinely
+the test at line 403, now removed. Six fixture trees under `$PREFIX/tmp/p7-loader-*-dyn` were genuinely
 present, so the observation stood - the explanation attached to it did not.
 
 **The real defect, and it was reproduced on purpose.** The trailing call runs only when the test
 PASSES. A panicking assertion unwinds straight past it, which is exactly the situation in which a
-fixture tree should be cleaned up and is not. Three runs of the same test target, with the tree counted
-from disk after each (`ls -d $PREFIX/tmp/p7-loader-* | wc -l`):
+fixture tree needs cleanup and is not. Three runs of the same test target, with the tree counted
+from disk after each, `ls -d $PREFIX/tmp/p7-loader-* | wc -l`:
 
 | state | result | surviving trees |
 |---|---|---|
@@ -1288,14 +1288,14 @@ from disk after each (`ls -d $PREFIX/tmp/p7-loader-* | wc -l`):
 
 The middle row is the point: the guard does not suppress the failure, it only makes teardown
 unconditional. Fix: a `FixtureGuard(PathBuf)` whose `Drop` removes the root, constructed immediately
-after `fixture_root("dyn")`; the pre-clean at the top of the test is kept, because it is what makes a
+after `fixture_root("dyn")`. The pre-clean at the top of the test is kept, because it is what makes a
 re-run start from a clean tree. The manual call at the end is deleted with a comment saying who owns
 teardown now - a manual cleanup beside a guard reads as if both are needed.
 
 **Why the leak mattered at all:** dashboard tests and every `cargo test -p proot-core` run used the same
 `$PREFIX/tmp` root, so an unbounded leak is a slow disk-eating defect on a device with 11 GB of RAM and a
-shared filesystem, and a stale `p7-loader-*` tree is indistinguishable from a live fixture to anyone
-debugging by hand.## p7 step 7 addendum: the gap inventory completed, and a correction to the cwd claim (2026-11-09 03:20 WIB)
+shared filesystem, and a stale `p7-loader-*` tree is indistinguishable from a live fixture for anyone
+to debug by hand.## p7 step 7 addendum: the gap inventory completed, and a correction to the cwd claim, 2026-11-09 03:20 WIB
 
 The differential guest now also reports `/dev/null` writability and `/sys` readability, so the three
 per-syscall gaps are no longer the whole inventory. Same harness, same invocation, before any fix:
@@ -1313,26 +1313,26 @@ per-syscall gaps are no longer the whole inventory. Same harness, same invocatio
 Verdict line: `DIFFERENTIAL: NOT EQUAL - stdout, cwd, devnull, euid, proc, sysfs, uid differ.`
 
 **Correction.** The step-7 entry above says the native guest "inherits the host working directory
-(`/data/data/com.termux/files/home/workspace/PDN`)". That value was measured, but the generalisation is
+`/data/data/com.termux/files/home/workspace/PDN`". That value was measured, but the generalisation is
 wrong: on this run the same field read `/data/.../engdiff7-32520/.podnext/containers/engine-differential/
 rootfs`. The native guest therefore inherits **whatever cwd the podnext process happens to have at fork
 time**, which is neither `/` nor stable - a stronger and more useful statement than naming the directory I
-happened to observe. The gap is the same; the sentence describing it was too narrow.
+happened to observe. The gap is the same. The sentence describing it was too narrow.
 
 **Where the proot path's `/proc`, `/dev` and `/sys` come from - read, not assumed.** Not from podnext:
-`sysdata::bindings` (`crates/proot-distro-core/src/sysdata.rs:527-604`) only MASKs parts of `/proc`
-(`/proc/net`, `/proc/mounts`, `/proc/1`, every numeric `/proc/<pid>`) and returns an empty vector when its
-staging directory is absent, and `guestdirs::bindings`
-(`crates/proot-distro-core/src/guestdirs.rs:57-70`) binds only `/dev/shm` and `/tmp`. Those binds are added
+`sysdata::bindings`, `crates/proot-distro-core/src/sysdata.rs:527-604`, only MASKs parts of `/proc`
+`/proc/net`, `/proc/mounts`, `/proc/1`, every numeric `/proc/<pid>` and returns an empty vector when its staging
+directory is absent, and `guestdirs::bindings`
+`crates/proot-distro-core/src/guestdirs.rs:57-70` binds only `/dev/shm` and `/tmp`. Those binds are added
 to the proot engine's argv in `runtime.rs:141-149`, and the native path never runs that code: it builds
 `RunPlan` from `container.config.bind_mounts` alone. So the guest-visible `/proc`, `/dev` and `/sys` on the
 proot arm come from **proot's own default setup**, which means native parity has to be produced
-deliberately (bind them, or emulate them) rather than inherited from the container record.
+deliberately, either bind them or emulate them, rather than inherit them from the container record.
 
-This is now five causes behind six differing fields: cwd (no chdir), devnull, proc, sysfs (no synthetic
-mounts), and uid/euid (no id mapping). Env is the one field that already agrees.## p7 step 8, gap 1 of 3: the starting directory, and the over-refusal it exposed (2026-11-09 03:30 WIB)
+This is now five causes behind six differing fields: cwd has no chdir, devnull, proc, sysfs has no synthetic
+mounts, and uid/euid has no id mapping. Env is the one field that already agrees.## p7 step 8, gap 1 of 3: the starting directory, and the over-refusal it exposed, 2026-11-09 03:30 WIB
 
-**Delegated to `deleg_901d9bfc`** (worktree `wt-p7cwd`, branch `dept/p7-cwd`, base `36ff688`), verified by
+**Delegated to `deleg_901d9bfc`**, worktree `wt-p7cwd`, branch `dept/p7-cwd`, base `36ff688`, verified by
 the parent from the tree rather than from the report: `b43afbe`, 4 files, +287/-13, `pub cwd: Option<String>`
 at `native_run.rs:185`, `resolve_cwd` at `:1417`, `session.rs:364` sets
 `cwd: Some(working_dir.unwrap_or("/"))`, test `the_engine_chdirs_the_guest_into_the_plans_cwd` at
@@ -1340,9 +1340,9 @@ at `native_run.rs:185`, `resolve_cwd` at `:1417`, `session.rs:364` sets
 `native_dynamic_guest.rs`, which the parent's `FixtureGuard` commit had meanwhile touched).
 
 Design points the parent checked in the code, because they are the risk: `cwd_host` is resolved ONCE in
-`run_native` before the fork, so a refusal is an `Err` from `run_native` rather than a child exit code; the
+`run_native` before the fork, so a refusal is an `Err` from `run_native` rather than a child exit code. The
 child issues a RAW `SYS_chdir` (a preloaded library can interpose `libc::chdir`, the same trap `execve`
-hit) and `_exit(126)` if it fails; the parent loop exempts the engine's own pre-exec `chdir` only for
+hit) and `_exit(126)` if it fails. The parent loop exempts the engine's own pre-exec `chdir` only for
 `pid == child && !slots[idx].execve_handled`, so a guest `chdir` after the exec is still the unhandled
 path syscall it always was. Non-absolute or `..`-containing cwd is a NAMED refusal.
 
@@ -1363,7 +1363,7 @@ CLI harness without the operator's store). Rebuild `target/debug/podnext` in 137
 `cwd` became an INFORMATIONAL field, with the reason in the harness: proot virtualises `getcwd()` so its
 guest sees `/`, while the native engine translates guest paths to host paths and does not virtualise the
 answer. The comparable property is the EFFECT of the starting directory, which `relmarker` measures by
-writing a RELATIVE path and checking where it lands - and it lands in the container on both engines. That
+a RELATIVE path and checks where it lands - and it lands in the container on both engines. That
 is the parity claim for this increment, stated as the effect rather than as a string.
 
 **NEW FINDING, produced by that very measurement: the engine now refuses runs that were correct.** With the
@@ -1376,18 +1376,18 @@ Error: the native engine did not translate 1 path syscall(s): SYS_openat (56) [i
 translated (unreadable, empty or relative); the HOST path is not used as a fallback]. ... The engine does
 NOT fall back to proot; run under `--engine proot` for full path coverage.
 ```
-while `rootfs/relative-marker.txt` (18 bytes) is present - the write SUCCEEDED. All three manual runs
+while `rootfs/relative-marker.txt`, 18 bytes, is present - the write SUCCEEDED. All three manual runs
 exited 1, so it is deterministic, not a flake. Before this commit the same refusal was CORRECT: with the
 cwd left at the host's directory, a relative path really did resolve on the host. The rule "refuse rather
-than silently fall back" is right; its scope is now one step too wide, and the fix is either to translate
-`AT_FDCWD`-relative paths against the known translated cwd (the engine knows it now) or to name them as a
+than silently fall back" is right. Its scope is now one step too wide, and the fix is either to translate
+`AT_FDCWD`-relative paths against the known translated cwd, which the engine knows now, or to name them as a
 distinct, safe class instead of as an untranslated fallback. That is the next increment, and it was found
 only because the differential compares EFFECTS rather than strings.
 
 **Stale prose, clarified rather than left alone:** `native_dynamic_guest.rs:411-413` and
 `podnext/src/native.rs:311-314` describe `SYS_chdir` as "a path-taking syscall with no translator". Still
-true of a GUEST `chdir`; the clause added says the engine's own pre-exec `chdir` is exempt because it is
-handed an already-translated host path.## p7 relative paths: the over-refusal fixed, and two findings it exposed (2026-11-09 04:20 WIB)
+true of a GUEST `chdir`. The clause added says the engine's own pre-exec `chdir` is exempt because it is
+handed an already-translated host path.## p7 relative paths: the over-refusal fixed, and two findings it exposed, 2026-11-09 04:20 WIB
 
 **Fix: a relative guest path is now translated when the engine knows the guest's starting directory.**
 `native_run.rs`: `path_syscall` returns a `PathSyscall { name, arg_index, dirfd_arg }` instead of a
@@ -1396,41 +1396,41 @@ truth, not a second list that can drift. `translate_path_remote` joins a relativ
 `RunPlan::cwd` and goes through the same `resolve`, but ONLY when (a) the syscall resolves the name
 against the cwd - `arg0 == AT_FDCWD` for the `*at` family, or no dirfd at all for legacy
 `open`/`stat`/`access` - and (b) the name carries no `.`/`..` component. Both conditions earn their place:
-for any other fd the kernel resolves the name against THAT directory, so joining it onto the cwd would
+for any other fd the kernel resolves the name against THAT directory, so joining it onto the cwd can
 silently open a different file, and collapsing `.`/`..` is the lexical work the cwd guard already does.
 
 **Measured on the harness that found the defect** (`scripts/engine_differential.py`, same fixture, same
 argv, 3 runs per arm): before, the native arm exited **1** with
 `the native engine did not translate 1 path syscall(s): SYS_openat (56)` while `rootfs/relative-marker.txt`
-was present; after, `exit: same (7 = 7)`, `relmarker: same`, `marker: same`, and **zero** occurrences of
+was present. After that, `exit: same (7 = 7)`, `relmarker: same`, `marker: same`, and **zero** occurrences of
 "did not translate". Remaining differences are the two untouched gaps: `devnull`/`proc`/`sysfs` and
 `uid`/`euid`.
 
 **Regression test**, `a_relative_path_is_translated_against_the_plans_cwd` (in
 `crates/proot-core/tests/native_exec_translation.rs`), three arms on one guest: relative name with
 `cwd: Some("/probe")` -> lands in the bound HOST directory and the report names the cwd-joined guest path
-`/probe/relative-report` with no `SYS_openat` refusal; `cwd: None` -> the same open is still refused
-(negative control, without which "stopped refusing everywhere" would pass); a `..` name -> refused. Proven
+`/probe/relative-report` with no `SYS_openat` refusal. `cwd: None` -> the same open is still refused
+a negative control, without which "stopped refusing everywhere" passes. A `..` name -> refused. Proven
 able to fail: with the fix stashed the test fails on
 `the report must name the cwd-JOINED guest path, not the bare relative one`. Whole target: **6 passed**.
 
 **Finding A - `strict` mode cannot reach a user syscall at all.** The first attempt at the `..` arm used
 `strict = true` and the run died with `exit = -1` and a report holding only `SYS_read (63)`: the engine's
 own bootstrap read on the release pipe is itself a pass-through refusal, so strict stops on the engine.
-That matches the documented limitation ("the only mode a dynamically linked guest survives"), but it means
+That matches the documented limitation, "the only mode a dynamically linked guest survives", but it means
 strict is unusable as a test arm for anything the engine bootstraps through.
 
 **Finding B - the engine passes ONLY `argv[0]` to the guest, silently.** `native_run.rs:604-609` publishes
 `argv[0]` into the page, sets `argv_slots[1] = null`, and the comment beside it talks only about argv[0]
-being the program's own name; nothing says the rest are dropped. Measured while testing: a guest invoked
+as being the program's own name. Nothing says the rest are dropped. Measured while testing: a guest invoked
 with `argv[1] = "../escaped-report"` observed `argc == 1` and silently fell back to its compiled-in default
-(it printed `[guest] name=relative-report cwd=...`), so the `..` name never reached the engine at all.
+it printed `[guest] name=relative-report cwd=...`, so the `..` name never reached the engine at all.
 The consequence for the operator goal is direct: `podnext --engine native run c -- /bin/sh -c 'cmd'` runs
-`/bin/sh` with NO arguments and no error. Recorded as the next increment (`p7-argv`); the test above works
-around it by compiling the name in, and says so in a comment rather than hiding it.## p7 argv: the engine published only argv[0], and the guest never said so (2026-11-09 05:05 WIB)
+`/bin/sh` with NO arguments and no error. Recorded as the next increment, `p7-argv`. The test above works
+around it, compiles the name in, and says so in a comment rather than hides it.## p7 argv: the engine published only argv[0], and the guest never said so, 2026-11-09 05:05 WIB
 
 **Finding.** `native_run.rs` published `argv[0]` into the shared page and then terminated the pointer array
-(`*argv_slots.add(1) = std::ptr::null()`), with a comment that spoke only about argv[0] being the program's
+`*argv_slots.add(1) = std::ptr::null()`, with a comment that spoke only about argv[0] being the program's
 own name. Nothing documented that every LATER argument was dropped, and nothing reported it: the guest saw
 `argc == 1`, used its own defaults, and exited 0. Reproduced while writing a test for the `..` guard: a probe
 invoked with `argv[1] = "../escaped-report"` printed `[guest] name=relative-report` - its compiled-in default
@@ -1441,50 +1441,50 @@ invoked with `argv[1] = "../escaped-report"` printed `[guest] name=relative-repo
 `[1536 .. 1600)`), so no layout change was needed, only a fifth documented region:
 `[1600 .. 4096)` holds the strings for `argv[1..]`, NUL-separated. New constants derive their values from
 the page rather than restating them (`ARGV_EXTRA_OFFSET = 1600`, `ARGV_EXTRA_CAPACITY = PAGE_BYTES -
-ARGV_EXTRA_OFFSET - 1`, `ARGV_SLOTS = (HEADER_OFFSET - ARGV_OFFSET) / size_of::<*const c_char>()` = 64).
+`ARGV_EXTRA_OFFSET - 1`, `ARGV_SLOTS = (HEADER_OFFSET - ARGV_OFFSET) / size_of::<*const c_char()>` = 64).
 Both limits are checked in `run_native` BEFORE the fork, so exceeding them is an `Err` naming the limit
-("argv of 81 entries needs 82 slots ...", "argv strings after argv[0] total 3001 bytes and do not fit ...")
+"argv of 81 entries needs 82 slots ...", "argv strings after argv[0] total 3001 bytes and do not fit ..."
 instead of a child that exits 126 for a reason the caller cannot read. The child then copies each entry and
 writes the terminating null into the slot after the last.
 
 **Measured, three ways.**
 
-1. Regression test `the_guest_receives_every_argument` (7th test in `native_exec_translation.rs`): the guest
+1. Regression test `the_guest_receives_every_argument`, the 7th test in `native_exec_translation.rs`: the guest
    reports `argc` and every entry into a bound HOST directory, invoked as
    `["/bin/argv", "one", "two words", "--flag=value"]`, and the report must equal
    `argc=4|argv[0]=/bin/argv|argv[1]=one|argv[2]=two words|argv[3]=--flag=value` - a space and an `=` are in
-   the fixture because a naive re-split would mangle them. Two refusal arms cover the limits. Proven able to
+   the fixture because a naive re-split mangles them. Two refusal arms cover the limits. Proven able to
    fail: with the fix stashed the report is `argc=1|argv[0]=/bin/argv` and the assertion fires. Target:
    7 passed.
 2. `scripts/engine_differential.py` now passes `alpha` and `beta gamma` to BOTH engines and the guest prints
-   `argc`, so this class is compared on every future run. Before rebuilding the CLI binary it read
-   `argc: DIFFERS proot='3' native='1'`; after `cargo build -p podnext --bin podnext` (mtime 05:02:26) it
+   `argc`, so this class is compared on every future run. Before it rebuilt the CLI binary it read
+   `argc: DIFFERS proot='3' native='1'`. After `cargo build -p podnext --bin podnext` with mtime 05:02:26, it
    reads `argc: same proot='3' native='3'` with identical `argv[0..2]` lines in both stdouts, including
    `argv[2]=beta gamma`.
 3. The first differential run in (2) is itself evidence of the stale-binary trap: the source was fixed, the
-   binary was not, and the harness measured base behaviour. Rebuild before believing a CLI-level difference.
+   binary was not, and the harness measured base behaviour. Rebuild before you believe a CLI-level difference.
 
 **Still different, and measured every run:** `devnull`, `proc`, `sysfs` (gap 2: the proot arm gets them from
-proot's own defaults, not from podnext) and `uid`/`euid` (gap 3), plus `cwd` as an informational field.## p7 gap 2: /dev and /proc now match; /sys is measured but NOT explained (2026-11-09 05:55 WIB)
+proot's own defaults, not from podnext) and `uid`/`euid`, gap 3, plus `cwd` as an informational field.## p7 gap 2: /dev and /proc now match, /sys is measured but NOT explained, 2026-11-09 05:55 WIB
 
 **Correction of my own record, first.** The step-7 addendum above says the guest's `/proc`, `/dev` and `/sys` under the
 proot arm "come from proot's own default setup" and that "podnext never runs that code". The first half is
 WRONG: podnext hands proot `--bind=/dev`, `--bind=/proc` and `--bind=/sys` itself
-(`crates/proot-core/src/lib.rs:244-246`, and again at `:386-388`), and only then appends the sysdata masks and
-the guest runtime directories (`runtime.rs:141-149`). The native path builds its plan from the container
-record alone, which is why it was missing all of it - the conclusion stood, the attribution did not.
+`crates/proot-core/src/lib.rs:244-246`, and again at `:386-388`, and only then appends the sysdata masks and
+the guest runtime directories `runtime.rs:141-149`. The native path builds its plan from the container
+record alone, which is why it missed all of it - the conclusion stood, the attribution did not.
 
-**Action.** `run_native_engine` (`crates/podnext/src/native/session.rs`) now reproduces that set: identity binds
-for `/dev`, `/proc`, `/sys`; then `sysdata::bindings(container_dir)` and `guestdirs::bindings(container_dir)`
+**Action.** `run_native_engine` in `crates/podnext/src/native/session.rs` now reproduces that set: identity binds
+for `/dev`, `/proc`, `/sys`. Then `sysdata::bindings(container_dir)` and `guestdirs::bindings(container_dir)`
 parsed from `host:guest` (a trailing `!` is a proot-only "do not dereference" flag, stripped and the bind
 kept), with `container_dir = container.rootfs_path.parent()` - the same expression the proot path uses.
-Ordering is safe by construction: `resolve` picks the LONGEST matching prefix and, on a tie, the first entry,
+The ordering is safe by construction: `resolve` picks the LONGEST matching prefix and, on a tie, the first entry,
 so a sysdata mask like `{stub}:/proc/net` always beats the identity `/proc` bind regardless of position.
 
 The widening is stated in the code rather than inherited: binding the host `/proc` lets a native guest read
 the process table of its own uid, exactly as the proot path already does.
 
-**Measured (`scripts/engine_differential.py`, same fixture, 3 runs per arm, new CLI binary built 05:48:44):**
+**Measured with `scripts/engine_differential.py`, same fixture, 3 runs per arm, new CLI binary built 05:48:44:**
 
 | field | before | after |
 |---|---|---|
@@ -1495,8 +1495,8 @@ the process table of its own uid, exactly as the proot path already does.
 | `uid`/`euid` | `0/0` vs `10396/10396` | still differs |
 
 **`/sys` is open, and NOT explained.** Two facts measured, one hypothesis unwritten: (a) the host `/sys` is not
-readable by this uid (`test -r /sys` fails, `ls /sys` exits 2), so `absent` on the native side is consistent
-with the host; (b) inside the PROOT arm the same probe returns `readable-rc=0`, i.e. `access("/sys", R_OK)`
+readable by this uid, `test -r /sys` fails, `ls /sys` exits 2, so `absent` on the native side is consistent
+with the host. Then (b) inside the PROOT arm the same probe returns `readable-rc=0`, i.e. `access("/sys", R_OK)`
 succeeds there. Mode bits on `/sys` are 0555, so `access` answering 0 is plausible while a real `readdir` is
 denied - which is exactly why `sysdata` exists (it masks `/sys` with an empty directory when the host one
 cannot be read, and its staging directory does not exist in this fixture). What is NOT established is why the
@@ -1505,8 +1505,8 @@ down: a compiled guest that calls `stat("/sys")` and `open("/sys", O_RDONLY|O_DI
 errno values, run under each engine - the sh-based probe used here is invalid for the native arm because
 `/bin` is a bind to the host and the guest shell cannot resolve `libc.so`.
 
-Claim discipline for this increment: two of the three fields flipped and are quoted; the third is reported as
-open with the facts that are known, not folded into a parity claim.## p7 gap 2 closed as a decision: what /sys really is, and one gap left (2026-11-09 06:20 WIB)
+Claim discipline for this increment: two of the three fields flipped and are quoted. The third is reported as
+open with the facts that are known, not folded into a parity claim.## p7 gap 2 closed as a decision: what /sys really is, and one gap left, 2026-11-09 06:20 WIB
 
 **The experiment that settled it.** The differential guest now reports `stat("/sys")` and
 `open("/sys", O_RDONLY|O_DIRECTORY)` alongside `access`, so the question "denied by mode bits, denied on
@@ -1520,17 +1520,17 @@ open, or not there at all" is answered instead of argued. Measured on both engin
 | glob `/sys/*` INSIDE the guest (shell builtins only) | **no entries** (`syscount=1 first=/sys/*`) | n/a |
 | glob `/proc/self/*` inside the guest | 48 entries | n/a |
 
-Read together: the identity bind is present on both engines (stat agrees), the host `/sys` is not readable by
-this uid (host `test -r /sys` fails, `ls /sys` exits 2, host glob matches nothing), and the PROOT guest can
+Read together: the identity bind is present on both engines, stat agrees, the host `/sys` is not readable by
+this uid, host `test -r /sys` fails, `ls /sys` exits 2, host glob matches nothing, and the PROOT guest can
 `open` a directory whose contents it then cannot list at all. proot is therefore **emulating** an open that
 the host denies. The native engine answers with the host's own answer - `EACCES` - which is the truthful
 result for a translating engine.
 
-**Decision.** Faking a successful `open` to make that line green would make the engine lie to buy a metric.
+**Decision.** Faking a successful `open` to make that line green will make the engine lie to buy a metric.
 Instead `scripts/engine_differential.py` now has an `INFORMATIONAL` set with the reason written beside each
-entry in the source: `cwd` (proot virtualises `getcwd`; the EFFECT is compared through `relmarker`),
-`sysfs`/`sysopen` (proot emulates; the native engine reports the host truth). stdout is compared with those
-lines removed (`stdout*`), so the comparison still covers everything the verdict claims, and a difference in
+entry in the source: `cwd`, proot virtualises `getcwd` and the EFFECT is compared through `relmarker`,
+`sysfs`/`sysopen`, proot emulates and the native engine reports the host truth. stdout is compared with those
+lines removed, `stdout*`, so the comparison still covers everything the verdict claims, and a difference in
 any OTHER field still fails the run. This is a decision recorded in code, not a quieter test.
 
 **State after gap 2, measured:** `exit`, `marker`, `relmarker`, `argc`, `argv[0..2]`, `envp`, `proc`,
@@ -1541,40 +1541,40 @@ of lines - `uid=0`/`euid=0` under proot against `uid=10396`/`euid=10396` under n
 So the parity inventory is down to ONE real gap (identity mapping: proot fakes `uid`/`gid` 0 via
 `--change-id=0:0:0`, the native engine passes the host ids through), plus the documented engine-model
 differences above, plus the items still never measured: hostname, kernel release, bind readonly semantics,
-namespaces/clone flags, and signal/ptrace behaviour inside the guest.## p7 gap 3 closed: the native engine now performs the identity mapping it was already claiming (2026-11-09 06:20 WIB)
+namespaces/clone flags, and signal/ptrace behaviour inside the guest.## p7 gap 3 closed: the native engine now performs the identity mapping it was already claiming, 2026-11-09 06:20 WIB
 
-**Finding (a false claim, not only a parity gap).** `podnext` tells the operator, for BOTH engines,
-"the guest runs as root (uid 0): PRoot maps every guest id to the single host uid via
+**Finding: a false claim, not only a parity gap.** `podnext` tells the operator, for BOTH engines,
+"the guest runs as root, uid 0: PRoot maps every guest id to the single host uid via
 `--change-id=0:0:0`, so there is no privilege separation"
-(`crates/podnext/src/commands/container.rs:247-271`), and `proot-core`'s runtime really does hard-code
+`crates/podnext/src/commands/container.rs:247-271`, and `proot-core`'s runtime really does hard-code
 that flag for the proot argv. The native path printed the same sentence and passed the HOST ids straight
 through - measured `uid=0`/`euid=0` under proot against `uid=10396`/`euid=10396` under native. The
 engine's own documentation was therefore describing behaviour the engine did not have.
 
 **Action.** `crates/proot-core/src/native_run.rs`:
-- `id_reporting(number)` (`:1216`) names the four syscalls whose entire result is the caller's identity:
+- `id_reporting(number)` at `:1216` names the four syscalls whose entire result is the caller's identity:
   `getuid`, `geteuid`, `getgid`, `getegid`.
-- `override_id_result(pid)` (`:1226`) rewrites that result to 0, using `set_id_result` (`:1237` aarch64
+- `override_id_result(pid)` at `:1226` rewrites that result to 0, using `set_id_result` (`:1237` aarch64
   `x0`, `:1242` x86_64 `rax`, `:1247` no-op elsewhere) through the existing `get_regs`/`set_regs`.
-- the hook at `:907` runs on EXIT stops only (`!slots[idx].at_entry`), after the kernel produced the
+- the hook at `:907` runs on EXIT stops only, `!slots[idx].at_entry`, after the kernel produced the
   host value: no syscall is skipped and no privilege is granted - this changes a report, nothing else.
 - `PDN_NATIVE_NO_ID_MAP=1` disables it. That exists so the mechanism has an executed negative control.
 
 **Named gaps, so they are not mistaken for silence:** `getresuid`/`getresgid`/`getgroups` write through a
-pointer into guest memory and are NOT mapped; `st_uid`/`st_gid` inside `stat()` results are NOT rewritten
+pointer into guest memory and are NOT mapped. `st_uid`/`st_gid` inside `stat()` results are NOT rewritten
 either. Both are recorded here and in the code comment rather than left to be discovered.
 
 **Verification, all executed:**
-1. `scripts/engine_differential.py` default run (the guest now also prints `gid`/`egid`), 3 runs per arm:
+1. `scripts/engine_differential.py` default run, the guest now also prints `gid`/`egid`, 3 runs per arm:
    `rc=0`, verbatim verdict `DIFFERENTIAL: EQUAL on exit, stdout and file effects for this guest.` with
    `uid/euid/gid/egid` all reading `same proot='0' native='0'`.
 2. Negative control, same harness with `PDN_NATIVE_NO_ID_MAP=1`: `rc=1`, all four fields `DIFFERS
    proot='0' native='10396'` - the rewrite, not something else, is what changes the guest's answer.
 3. `cargo test -p proot-core --test native_exec_translation the_guest_sees_the_mapped_root_identity`
-   (`tests/native_exec_translation.rs:1086`): `1 passed`, `[idmap] exit=0`.
+   `tests/native_exec_translation.rs:1086`: `1 passed`, `[idmap] exit=0`.
 4. The same test with the mapping disabled: `test result: FAILED`, `exit_code=101`,
    `[idmap] exit=0 ids=uid=10396 euid=10396 gid=10396 egid=10396`, assertion quoting
-   `left: "uid=10396 ..." right: "uid=0 ..."`. A test that cannot go red proves nothing; this one does.
+   `left: "uid=10396 ..." right: "uid=0 ..."`. A test that cannot go red proves nothing. This one does.
 
 **Where this leaves the parity inventory.** Every field the differential harness measures is now EQUAL:
 `exit`, `stdout*`, `marker`, `relmarker`, `argc`, `argv`, `envp`, `proc`, `devnull`, `sysstat`, and the
@@ -1583,25 +1583,25 @@ virtualisation, `/sys` `open` emulation), and the never-measured items stay name
 release, readonly bind semantics, namespaces/clone, signals.
 
 **What must happen BEFORE the default flips.** The acceptance harness still reports the proot path as the
-default, and flipping today would be wrong for a reason unrelated to parity: the native guest's environment
-is EMPTY (`envp` is a declared gap in `native_run.rs`), so a real container would start without `PATH` or
+default, and flipping today is wrong for a reason unrelated to parity: the native guest's environment
+is EMPTY, `envp` is a declared gap in `native_run.rs`, so a real container starts without `PATH` or
 `HOME` even though the differential's toy guest - which reads no environment - cannot see the difference.
 The environment is therefore the next increment, and the differential harness will grow an `env` field so
-that claim is measured rather than assumed.## p7 envp: the native guest now has an environment (2026-11-09 07:10 WIB)
+that claim is measured rather than assumed.## p7 envp: the native guest now has an environment, 2026-11-09 07:10 WIB
 
 **Finding.** The native guest ran with an EMPTY environment: `child_main` passed a null-terminated array
-containing only `NULL`, and the module header named that as a deliberate, measured limitation (two stated
+that contained only `NULL`, and the module header named that as a deliberate, measured limitation (two stated
 reasons - `nix::libc::environ` is not declared for the Android target, and forwarding the engine's whole
-environment would be an isolation claim the engine had not measured). Both reasons were sound, and the
+environment is an isolation claim the engine had not measured). Both reasons were sound, and the
 consequence was still fatal for real use: a container started with no `PATH` and no `HOME` cannot run a
-shell or resolve a command, and the differential harness could not see it because its toy guest never read
-the environment. A gap that only a real workload would reveal had to be found by reading the code.
+shell or resolve a command, and the differential harness did not see it because its toy guest never read
+the environment. A gap that only a real workload reveals had to be found from reading the code.
 
 **Action.**
 - `crates/proot-core/src/native_run.rs`: `RunPlan::env: Vec<(String, String)>` (documented at the field, says
-  why it exists and why the engine does not forward `environ`); `guest_environment(configured)` (`:1238`
+  why it exists and why the engine does not forward `environ`). Then `guest_environment(configured)` (`:1238`
   region) builds an EXPLICIT list that mirrors the proot path's `env_clear()` + `cmd.env(...)` sequence
-  (`crates/proot-core/src/lib.rs:255-270`): `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+  in `crates/proot-core/src/lib.rs:255-270`: `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
   `HOME=/root`, `TERM` forwarded through the existing `crate::guest_term`, and `LANG`/`LC_ALL`/`COLORTERM`
   when the caller has them - plus every configured pair. The strings are built in the PARENT before the fork
   and turned into `CString`s in the child, so no page region was needed and no capacity refusal can occur.
@@ -1610,16 +1610,16 @@ the environment. A gap that only a real workload would reveal had to be found by
   source the proot path applies, so container-configured variables reach either engine.
 
 **Verification, all executed.**
-1. `scripts/engine_differential.py`, default run, `rc=0` (`DIFFERENTIAL: EQUAL ...`):
+1. `scripts/engine_differential.py`, default run, `rc=0`, `DIFFERENTIAL: EQUAL ...`:
    `pathenv: same proot='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
    native='...same...'` and `homeenv: same proot='/root' native='/root'`. Before this change the native arm
    had no environment at all, which is what the new guest probe is for.
 2. `cargo test -p proot-core --test native_exec_translation the_guest_receives_the_configured_environment`
-   (`tests/native_exec_translation.rs`): `1 passed`. It runs TWO arms in one test, so it carries its own
+   `tests/native_exec_translation.rs`: `1 passed`. It runs TWO arms in one test, so it carries its own
    control - with `env: [("PDN_TEST_ENV","from-the-plan")]` the guest reports `probe=from-the-plan` AND the
-   allow-list `PATH`; with `env: Vec::new()` it must report `probe=<unset>`, which is what proves the value
+   allow-list `PATH`. With `env: Vec::new()` it must report `probe=<unset>`, which is what proves the value
    travelled through the plan rather than leaking out of the engine's own process environment.
-3. First run of that test FAILED at fixture build (`getenv` undeclared, missing `<stdlib.h>`), which is
+3. First run of that test FAILED at fixture build, `getenv` undeclared, missing `<stdlib.h>`, which is
    recorded rather than quietly fixed: the failure was in the fixture, not the engine.
 
 **Still named, still not done:** the other five proot argv features (`--kill-on-exit`, `--link2symlink`,
@@ -1627,13 +1627,13 @@ the environment. A gap that only a real workload would reveal had to be found by
 and `st_uid`, and the `PT_INTERP` path the kernel resolves before the tracee runs.
 
 **What the flip now waits on.** With cwd, argv, binds, mounts and the environment all measured identical, the
-remaining unknown is not parity but ADEQUACY: whether the native engine can carry a REAL container - one with
+The remaining unknown is not parity but ADEQUACY: whether the native engine can carry a REAL container - one with
 a `PATH`-resolved shell, a hardlink-hostile Android filesystem, and the operator's own 10 containers - and not
 just the differential's single static guest. That is the next measurement, and the acceptance harness
-(`scripts/own_engine_acceptance.py`) is the instrument: today it still reports the proot path as the default.## p7 adequacy flipped, and one new divergence found by independent verification (2026-11-09 08:50 WIB)
+`scripts/own_engine_acceptance.py` is the instrument: today it still reports the proot path as the default.## p7 adequacy flipped, and one new divergence found by independent verification, 2026-11-09 08:50 WIB
 
 **The blocker this session measured is now closed, and closed the same way it was found.** Delegated as
-`deleg_ec23b03a` (child worktree `wt-interp`, branch `dept/interp`, commit `0ab0e45`, base `fec6aee`; verified by
+`deleg_ec23b03a` (child worktree `wt-interp`, branch `dept/interp`, commit `0ab0e45`, base `fec6aee`, verified by
 a second, independent child that built its OWN fixture, ran the base-commit control and forced the sabotage
 itself). Parent verified the artifact from the tree, fast-forwarded master to it (so the child's commit object
 is preserved), and re-measured end to end:
@@ -1646,21 +1646,21 @@ is preserved), and re-measured end to end:
 
 **What the change does.** `elf_interp()` parses `PT_INTERP` out of the ELF program headers directly (no
 `readelf`), and `guest_interpreter()` substitutes ONLY when all three conditions hold: the interpreter path is
-absolute, it does NOT exist on the host (so the kernel cannot open it itself), and it DOES exist in the rootfs
-(so the run is possible at all). In that case `child_main` publishes the interpreter as the execve path and
+absolute, it does NOT exist on the host, so the kernel cannot open it itself, and it DOES exist in the rootfs
+so the run is possible at all. In that case `child_main` publishes the interpreter as the execve path and
 builds the kernel argv in the `ld.so PROGRAM [ARGS...]` form, and the existing p7-1 translation then rewrites
 the loader's own library opens inside the rootfs - which is why this needed no new path machinery, only the
 substitution decision. When the interpreter is host-present (the previous fixtures, whose guest is
 `/system/bin/linker64`) the function returns `None` and nothing changes, which is exactly why those fixtures
 never exhibited the problem.
 
-**Ratchet check before integrating:** `scripts/non_goals.json` budgets only `crates/pn-next/src*`; this change
+**Ratchet check before integration:** `scripts/non_goals.json` budgets only `crates/pn-next/src*`. This change
 touches `crates/proot-core/src`, `crates/proot-core/tests` and `crates/podnext/src`, none of which is budgeted,
 so no ceiling needed re-recording.
 
 **Parent's integration evidence:** fast-forward to `0ab0e45`, `cargo fmt --all -- --check` clean,
 `git diff --check` clean, and the owner test target
-`cargo test -p proot-core --test native_exec_translation` -> `10 passed; 0 failed` (9 before; the new test is
+`cargo test -p proot-core --test native_exec_translation` -> `10 passed; 0 failed` (9 before, and the new test is
 the tenth).
 
 **NEW named divergence, confirmed by the parent's own measurement, not just reported.** The child's summary says
@@ -1673,27 +1673,27 @@ compiled probe that reads `/proc/<shell-pid>/cmdline` from inside the guest:
 | proot | `/bin/sh\|-c\|/probe/cmdline0 $$\|` |
 | native | `<rootfs-host-path>/lib/ld-linux-aarch64.so.1\|/bin/sh\|-c\|/probe/cmdline0 $$\|` |
 
-Cause, from the code: the child publishes the interpreter at `PATH_OFFSET` and points argv slot 0 at that same
-string, while the parent must rewrite `PATH_OFFSET` to the translated HOST path for the kernel to exec it - so
+Cause, from the code: the child publishes the interpreter at `PATH_OFFSET` and points argv slot 0 at that same string,
+while the parent must rewrite `PATH_OFFSET` to the translated HOST path for the kernel to exec it - so
 `argv[0]` is rewritten with it. A guest that inspects its own cmdline (busybox `ps`, init scripts, anything
-reading `/proc/self/cmdline`) therefore sees a host rootfs path where proot shows the guest path. The fix is to
-give argv[0] its own string holding the interpreter's GUEST path, charged against the argv-string region's
-existing both-limits-refused accounting. Recorded here as a named open gap; it is a parity divergence, not a
-blocker for running, and the two first measurements of it (mine, above) are the evidence.
+that read `/proc/self/cmdline`) therefore sees a host rootfs path where proot shows the guest path. The fix is to
+give argv[0] its own string holding the interpreter's GUEST path, charged against the argv-string region's existing
+both-limits-refused accounting. Recorded here as a named open gap. It is a parity divergence, not a
+blocker for running, and the two first measurements of it, mine above, are the evidence.
 
 Two probe failures on the way are recorded rather than dropped: `tr` and `read -d` are absent from this
-minimal Debian fixture (`FIRST=[]` on both arms, i.e. the probe was invalid, not the engine), and the first
+minimal Debian fixture, `FIRST=[]` on both arms, i.e. the probe was invalid, not the engine, and the first
 compiled probe died with `CANNOT LINK EXECUTABLE ... library "libdl.so" not found` because the fixture lacked
-`/system/lib64/libdl.so` - a FIXTURE defect, proven by copying the two host libraries in and re-running.## p7 argv0: the host-path leak is gone; the parity claim in MY OWN BRIEF was wrong (2026-11-09 09:40 WIB)
+`/system/lib64/libdl.so` - a FIXTURE defect, proven by the copying of the two host libraries and the re-run.## p7 argv0: the host-path leak is gone, and the parity claim in MY OWN BRIEF was wrong, 2026-11-09 09:40 WIB
 
-**What landed.** `5c4a998` (child worktree `wt-argv0`, branch `dept/argv0`, base `57d0927`; builder plus an
+**What landed.** `5c4a998` (child worktree `wt-argv0`, branch `dept/argv0`, base `57d0927`, builder plus an
 independent verifier that built its own binaries and fixture and applied the sabotage itself). Parent verified
 the diff from the tree, fast-forwarded master, and re-measured end to end.
 
-`crates/proot-core/src/native_run.rs` (+32/-8): under a substitution the interpreter's GUEST path is now
+`crates/proot-core/src/native_run.rs` +32/-8: under a substitution the interpreter's GUEST path is now
 published as its own string in `ARGV_EXTRA_OFFSET` and argv slot 0 points at it, while the execve path
-argument keeps pointing at `PATH_OFFSET` (which the parent must rewrite to the translated host path). The new
-string is CHARGED against `ARGV_EXTRA_CAPACITY` rather than exempted, so an over-long interpreter is refused by
+argument keeps pointing at `PATH_OFFSET` (which the parent must rewrite to the translated host path. The new string
+is CHARGED against `ARGV_EXTRA_CAPACITY` rather than exempted, so an over-long interpreter is refused by
 name before the fork like every other argument string.
 
 **Parent's own measurement on the real Debian fixture, both engines, same command:**
@@ -1705,34 +1705,34 @@ name before the fork like every other argument string.
 | proot (both) | `/bin/sh` |
 
 **Correction of my own framing, because the verifier refuted half of it.** The brief I dispatched asked for
-argv[0] to be "the guest path ... like proot shows". The first half is satisfied; the second is NOT, and the
+argv[0] to be "the guest path ... like proot shows". The first half is satisfied. The second is NOT, and the
 verifier said so plainly: proot's cmdline is `/bin/sh|-c|...` while the native one is
 `/lib/ld-linux-aarch64.so.1|/bin/sh|-c|...`. The native array is proot's array with the interpreter PREPENDED,
 because the kernel's argv for the `ld.so PROGRAM ARGS` invocation necessarily begins with the interpreter - so
 this is a structural consequence of the substitution mechanism, not a defect that a pointer fix can remove.
-The child's own commit message was accurate ("guest path, no host leak"); it was my brief's parity framing that
+The child's own commit message was accurate, "guest path, no host leak". It was my brief's parity framing that
 overstated, and the record is corrected here rather than left to read as if the arrays now match.
 
 The only known route to byte-identical argv is a different mechanism: patch `PT_INTERP` inside a COPY of the
 guest ELF to an absolute host-accessible path and exec that copy, so the kernel builds `[program, args...]`
-itself. That costs a writable copy of the binary (the container's own shm/tmp would serve) and is named here as
+itself. That costs a writable copy of the binary, the container's own shm/tmp can serve, and is named here as
 an option, deliberately not implemented.
 
 **Other evidence.** Owner test target `cargo test -p proot-core --test native_exec_translation` -> `11 passed`,
-`0 failed` (10 before; the new `the_kernel_argv0_is_the_guest_path_under_a_substitution` is the eleventh);
-`native_dynamic_guest` unchanged at 1 passed; the differential harness on the NON-substituted path returns
+`0 failed`, 10 before, the new `the_kernel_argv0_is_the_guest_path_under_a_substitution` is the eleventh.
+`native_dynamic_guest` unchanged at 1 passed. The differential harness on the NON-substituted path returns
 `DIFFERENTIAL: EQUAL ...` with rc=0, so no regression there. The verifier's own sabotage (reverting argv slot 0
 to the PATH_OFFSET pointer) produced the red with `left: "<rootfs>/.../pdn-interp-missing/ld.so|..."` against
 `right: "/pdn-interp-missing/ld.so|..."` and also reverted the end-to-end cmdline0 to a host path, which is what
 makes the fix load-bearing rather than cosmetic.
 
 **Hazard worth keeping:** the child measured, in its own words, that building the base worktree and the fixed
-worktree into the SAME `CARGO_TARGET_DIR` produced "one stale-interleave run showing base behaviour"; it cleared
+worktree into the SAME `CARGO_TARGET_DIR` produced "one stale-interleave run showing base behaviour". It cleared
 that with `cargo clean -p proot-core` and re-took every number from the clean rebuild. That is the third
 distinct way the shared target directory has now produced a false reading, and it is why every number in this
-entry comes from a run whose provenance is stated.## p7 descendants: a real container can now run the programs it spawns (2026-11-09 11:45 WIB)
+entry comes from a run whose provenance is stated.## p7 descendants: a real container can now run the programs it spawns, 2026-11-09 11:45 WIB
 
-**What landed.** `b7c5d49` (child worktree `wt-desc`, branch `dept/desc`, base `bd8f5f0`; builder plus an
+**What landed.** `b7c5d49` (child worktree `wt-desc`, branch `dept/desc`, base `bd8f5f0`. The builder plus an
 independent verifier that built both binaries in its own worktrees with its own per-build target directories
 and reproduced the negative control itself). Parent fast-forwarded master, so the child's commit object is
 preserved, and re-measured.
@@ -1742,16 +1742,16 @@ preserved, and re-measured.
 interpreter: the exec path becomes the interpreter's HOST path and the descendant's own argv becomes
 `[<interpreter GUEST path>, <original argv[0]>, <original argv[1]>, ...]`. The new pointer array and the two
 strings are written on the DESCENDANT's stack (`write_substitution_remote` via `peek_cstr`/`poke_bytes` + one
-`PTRACE_SETREGSET`); a layout that does not fit the scratch window is refused BY NAME rather than truncated.
-New helpers: `poke_bytes`, `read_ptr_array`, `stack_pointer` (per-arch).
+`PTRACE_SETREGSET`). A layout that does not fit the scratch window is refused BY NAME rather than truncated.
+New helpers: `poke_bytes`, `read_ptr_array`, and `stack_pointer`, defined for each architecture.
 
 **A SECOND semantic change rode along, and it is load-bearing - stated plainly.** `translate_path_remote` used to
 refuse any relative path containing `.` or `..`. The descendant's loader issues
 `newfstatat(AT_FDCWD, ".")`, so the run printed its output and still exited 1. The predicate is now
 `escapes = raw.split('/').any(|c| c == "..")` - only `..` is refused, because `.` is the identity and cannot
-escape. The verifier proved the coupling by sabotaging ONLY that relaxation: restoring the `.` refusal yields
+escape. The verifier proved the coupling with one sabotage of ONLY that relaxation: restoring the `.` refusal yields
 `Error: the native engine did not translate 1 path syscall(s): SYS_newfstatat (79) [relative]`, rc=1. So the
-descendant fix DEPENDS on it; it is a broader change than "descendant substitution" and is recorded here as such,
+descendant fix DEPENDS on it. It is a broader change than "descendant substitution", and is recorded here as such,
 with its own in-code comment naming the measurement.
 
 **Verified end to end on a real Debian fixture, both engines, same fixture and command** (parent's own run, with
@@ -1764,36 +1764,36 @@ the numbers below coming from a binary whose provenance was checked, see the err
 | with arguments `... echo A0=$0 A1=$1 one two` | `A0=/bin/sh A1=`, rc 0 | identical |
 
 Before the change the first case was `exit=127`, `/bin/sh: 1: /bin/dash: not found`. Owner test target
-`cargo test -p proot-core --test native_exec_translation` -> `12 passed` (11 before); `native_dynamic_guest`
-unchanged at 1 passed; the differential harness (which does NOT exercise descendants) still returns
+`cargo test -p proot-core --test native_exec_translation` -> `12 passed`, from 11 before, and `native_dynamic_guest`
+stayed unchanged at 1 passed. The differential harness, which does NOT exercise descendants, still returns
 `DIFFERENTIAL: EQUAL ...` with rc=0.
 
 **MY OWN MEASUREMENT WAS WRONG FIRST, and the way it was wrong is the lesson.** My first post-integration run
-reported the fix failing (`/bin/dash: not found`). The binary I tested had mtime `09:48:41` while the source was
+reported the fix failing with `/bin/dash: not found`. The binary I tested had mtime `09:48:41` while the source was
 `11:22:58`, and it contained **0** occurrences of the new symbol `write_substitution_remote` against **1** of the
 old `needs_normalising` - i.e. it was the previous build. Cause: my shell had picked up `CARGO_TARGET_DIR`
-pointing at a child's target dir, so every `cargo build` I ran wrote THERE and `repo/target/debug/podnext` never
-refreshed - and a `touch` + rebuild kept "succeeding" in 144 s without touching the canonical binary. The same
-leak had `PDNEXT_BIN` pointing at the VERIFIER's worktree binary, so the acceptance harness was testing a foreign
-build. Both were exported into my shell by commands run on behalf of the children. Corrected by unsetting both,
-rebuilding the canonical target dir (verified fresh: mtime `11:33:40`, 6 occurrences of the new symbol), and
+which pointed at a child's target dir, so every `cargo build` I ran wrote THERE and `repo/target/debug/podnext` never
+refreshed, and a `touch` plus a rebuild kept "succeeding" in 144 s but never touched the canonical binary. The same
+leak set `PDNEXT_BIN` to the VERIFIER's worktree binary, so the acceptance harness tested a foreign
+build. Commands run for the children exported both into my shell. The correction cleared both and
+rebuilt the canonical target dir. A fresh check gave mtime `11:33:40` and 6 occurrences of the new symbol, and
 re-measuring - the table above is from that corrected run. THIS IS THE FOURTH DISTINCT false reading caused by
 build-artifact location on this project, and the first where the parent's own environment was the culprit.
 
 **Harness prose corrected.** `scripts/own_engine_acceptance.py` told the operator that "PT_INTERP cannot be
 translated - a real distro rootfs whose interpreter is not present at its absolute HOST path will not start under
 the native engine". That became false at `0ab0e45` and doubly false at `b7c5d49`. The verdict still says
-PARTIAL (`[default] exit=1 ran=False`, `[engine-native] exit=0 ran=True`), and now names the only remaining
+PARTIAL with `[default] exit=1 ran=False` and `[engine-native] exit=0 ran=True`, and now names the only remaining
 blocker: the default path still selects proot. What is unproven is the DEFAULT path, not the capability.
 
-**Residual risks the verifier named and I am keeping on the record:**
-`DESCENDANT_SCRATCH_BYTES = 0x1000` is a chosen ceiling; neither the free stack nor the guard pages below `sp`
-were measured, so the refusal covers "does not fit", not "that window is unmapped or holds a live frame";
+**Residual risks the verifier named and I keep on the record:**
+`DESCENDANT_SCRATCH_BYTES = 0x1000` is a chosen ceiling. Neither the free stack nor the guard pages below `sp`
+were measured, so the refusal covers "does not fit", not "that window is unmapped or holds a live frame".
 `report.interpreter` records only the FIRST interpreter seen, so a run with two distinct missing interpreters
-under-reports; the x86_64 register arms are compiled but have never been executed (this device is aarch64); and
-the differential harness spawns no descendants, so it cannot detect a regression in this path.## p7 extern: a real Debian container runs ordinary shell workloads under the native engine (2026-11-09 17:10 WIB)
+under-reports. The x86_64 register arms are compiled but have never been executed, because this device is aarch64.
+The differential harness spawns no descendants, so it cannot detect a regression in this path.## p7 extern: a real Debian container runs ordinary shell workloads under the native engine 2026-11-09 17:10 WIB
 
-**What landed.** `baef0a3` (child worktree `wt-extern`, branch `dept/extern`, base `4bd1c20`; builder plus an
+**What landed.** `baef0a3` (child worktree `wt-extern`, branch `dept/extern`, base `4bd1c20`. The builder plus an
 independent verifier). Parent fast-forwarded master, proved the binary's provenance (fresh mtime `16:59:23`,
 3 occurrences of the new `guest_access` symbol), and re-ran the battery itself.
 
@@ -1807,17 +1807,17 @@ Three defects, three fixes, all in `crates/proot-core/src/native_run.rs`:
 2. **Every execve is translated, not only the first per tracee** - a second execve from the same process (dash's
    `exec` builtin) was previously skipped.
 3. **`faccessat2` is answered when the host refuses it.** This was the real blocker for a plain `ls /etc`, and it
-   had nothing to do with the loader: Android's seccomp filter traps `faccessat2` (SIGSYS, x8 = 439), the kernel
-   returns without writing x0, Debian's glibc has no `faccessat` fallback, and `dash`'s PATH lookup therefore
-   denies every command (measured: `[ -x /bin/ls ]` answered N where proot answers Y). The engine now resolves
+   had nothing to do with the loader: Android's seccomp filter traps `faccessat2` with SIGSYS and x8 = 439, and the kernel
+   returns without a write to x0, Debian's glibc has no `faccessat` fallback, and `dash`'s PATH lookup therefore
+   denies every command. In a measurement, `[ -x /bin/ls ]` answered N where proot answers Y. The engine now resolves
    the guest path itself and writes the answer into x0 only when the host never answered.
 
-**`--argv0` measured on three loaders rather than assumed** (my brief guessed musl would lack it, and the guess was
-wrong): glibc `ld-linux-aarch64.so.1 --help` lists `--argv0 STRING`; Alpine musl 1.2.4's option table contains
-`argv0`; this host's bionic `/system/bin/linker64` has no such token, so the fallback form applies there and the
+**`--argv0` measured on three loaders rather than assumed.** My brief guessed that musl lacked it, and the guess was
+wrong. glibc `ld-linux-aarch64.so.1 --help` lists `--argv0 STRING`, and Alpine musl 1.2.4's option table contains
+`argv0`. This host's bionic `/system/bin/linker64` has no such token, so the fallback form applies there and the
 program sees the guest program path as argv[0] - pinned by a test.
 
-**Parent's battery, real 173 MB Debian 13 rootfs (fixture copied read-only out of `deb-renamed` with tar),
+**Parent's battery, a real 173 MB Debian 13 rootfs, with the fixture copied read-only out of `deb-renamed` with tar.**
 native against proot, same fixture and command:**
 
 | command | native | proot |
@@ -1832,29 +1832,29 @@ native against proot, same fixture and command:**
 | `/usr/bin/apt-get --version` | `apt 3.0.3 (arm64)` | same |
 
 Owner test target `cargo test -p proot-core --test native_exec_translation` -> **14 passed** (12 before, two new
-tests, nothing removed or weakened); `native_dynamic_guest` unchanged at 1; differential harness
-`DIFFERENTIAL: EQUAL ...` rc=0; acceptance harness `[default] exit=1 ran=False`, `[engine-native] exit=0
+tests, nothing removed or weakened). `native_dynamic_guest` stayed unchanged at 1. The differential harness
+`DIFFERENTIAL: EQUAL ...` rc=0. The acceptance harness `[default] exit=1 ran=False`, `[engine-native] exit=0
 ran=True`, verdict PARTIAL with the default selection as the only remaining blocker.
 
 **The two children disagreed, and resolving it is part of the record.** The verifier reported that `dept/extern`
 never moved off base, that the change was left uncommitted, and that `ls /etc` still exited 127. The commit
-exists (`baef0a3`, worktree clean) and my measurement of it gives rc 0: the verifier's window closed about 37
-minutes before the builder committed (7119 s against 4888 s), so "no commit" was a timing artefact, and its
-`ls /etc` finding was true of the frozen snapshots it tested (which predate the `faccessat2` fix) and false of
-the final commit. Neither child lied; only the committed artifact could decide, which is why the parent measures
-it before accepting either summary.
+exists, with `baef0a3` and a clean worktree, and my measurement of it gives rc 0: the verifier's window closed about 37
+minutes before the builder committed, at 7119 s against 4888 s, so "no commit" was a timing artefact, and its
+`ls /etc` finding was true of the frozen snapshots it tested, which predate the `faccessat2` fix, and false of
+the final commit. Neither child lied. Only the committed artifact can decide, which is why the parent measures
+it before it accepts either summary.
 
 **Findings from the verifier that DO stand and are kept:** the `/proc/<pid>/cmdline` of a shell-spawned external
-shows the loader form (`/lib/ld-linux-aarch64.so.1|--argv0|cat|/bin/cat|`) where proot shows `cat|`; `ls -l`
-prints the host uid/gid (`10396`) and a stray mode suffix, the pre-existing `st_uid` gap; `ls /` still differs
-from proot (native = the rootfs exactly, proot also exposes Android host directories, mechanism unestablished);
-and `total 169` against proot's `total 173` in `/etc` is explained by proot's synthetic `/etc/mtab` plus those
+shows the loader form `/lib/ld-linux-aarch64.so.1|--argv0|cat|/bin/cat|` where proot shows `cat|`. Then `ls -l`
+prints the host uid/gid `10396` and a stray mode suffix, the pre-existing `st_uid` gap. And `ls /` still differs
+from proot: native shows the rootfs exactly, proot also exposes Android host directories, and the mechanism is unestablished.
+Also, `total 169` against proot's `total 173` in `/etc` is explained by proot's synthetic `/etc/mtab` plus those
 stat columns.
 
 **Named limits:** the glibc `--argv0` path is not exercised end-to-end with a bare name, because a bare name only
 arises through PATH search and `dash`'s `exec <name>` aborts the whole run when the execve target does not exist
-(pre-existing refusal policy, unchanged); `set_robust_list` and `rseq` are also seccomp-trapped and are tolerated
-rather than emulated.## p7 GOAL CLOSED: podnext's own engine is now the DEFAULT (2026-11-09 17:55 WIB)
+This is the pre-existing refusal policy and it is unchanged. `set_robust_list` and `rseq` are also seccomp-trapped and are tolerated
+rather than emulated.## p7 GOAL CLOSED: podnext's own engine is now the DEFAULT 2026-11-09 17:55 WIB
 
 **The operator's goal was "podnext runs containers with its own binary, not the proot binary". That is now the
 measured default.** `--engine` changed from `proot` to `native` in `crates/podnext/src/cli.rs:239-247` (the
@@ -1883,50 +1883,50 @@ That harness is the operator's own criterion: it runs the guest with `PATH=/none
 | `ls /usr/bin \| wc -l` | `257` | `257` |
 
 **Fixture re-recorded deliberately, not overwritten in silence.** The change moves the help text of a GLOBAL flag,
-so it appears on every one of the 123 help screens; `research/cli-help-baseline.txt` is a tracked fixture compared
-byte for byte by the gate, so it had to be re-recorded. Measured before recording: the dump still reports
-`123 help screens`, the file length is unchanged at 4956 lines (no layout shift), the diff is 143 hunks, and
+so it appears on every one of the 123 help screens. `research/cli-help-baseline.txt` is a tracked fixture compared
+byte for byte by the gate, so it had to be re-recorded. A measurement before the record: the dump still reports
+`123 help screens`, the file length is unchanged at 4956 lines with no layout shift, the diff is 143 hunks, and
 **zero** changed lines fail to mention engine/proot/native - i.e. the whole diff is the intended block, with no
 collateral edit hiding behind it.
 
 **What this does NOT claim.** The parity gaps are not all closed: `getuid`/`geteuid` are mapped to `0` (a
 deliberate, documented lie mirroring proot's `--change-id=0:0:0`), `st_uid` still shows the host uid in `ls -l`,
 proot's `/` listing exposes Android host directories that native does not, and the five remaining proot argv
-features (`--kill-on-exit`, `--link2symlink`, `--sysvipc`, `-L`, `--change-id`) are not implemented. Each is named
+features `--kill-on-exit`, `--link2symlink`, `--sysvipc`, `-L`, and `--change-id` are not implemented. Each is named
 in `p7-2`/`p7-flip` and none of them blocks the default, which is why the flip was made rather than deferred.
 
-**Provenance of the measurement:** binary `target/debug/podnext` mtime `17:48:26`, built by `heavy` (exit 0, 39 s)
-with `CARGO_TARGET_DIR`/`PDNEXT_BIN`/`TMPDIR`/`PROOT_BIN`/`LD_LIBRARY_PATH` all unset in the parent shell; the
+**Provenance of the measurement:** binary `target/debug/podnext` mtime `17:48:26`, built by `heavy` with exit 0 in 39 s
+with `CARGO_TARGET_DIR`/`PDNEXT_BIN`/`TMPDIR`/`PROOT_BIN`/`LD_LIBRARY_PATH` all unset in the parent shell. The
 `--help` of that same binary shows `Container engine: native (default) or proot`, so the flag default is read from
-the artifact rather than from the source that was edited.## p7 step 8, second half: proot is optional, and the no-execve claim is proven (2026-11-09 18:40 WIB)
+the artifact rather than from the source that was edited.## p7 step 8, second half: proot is optional, and the no-execve claim is proven 2026-11-09 18:40 WIB
 
 **What the operator hit.** Running `proot-distro login` produced `Error: container 'deb-renamed' is not
 installed.` and the impression that containers still need proot. Two separate causes, both measured:
 
 1. `command -v proot-distro` resolves to `/data/data/com.termux/files/usr/bin/proot-distro`, which is a **Python
-   script** (`#!/data/data/com.termux/files/usr/bin/python3.14`) - the REFERENCE implementation, a different
+   script** at `#!/data/data/com.termux/files/usr/bin/python3.14`, the REFERENCE implementation, a different
    program with its own container store. It never reads `~/.podnext`, so it answered about a store PDN does not
-   use. Nothing in this project changed that; the name collision did the damage.
-2. `podnext doctor` still reported the proot binary as a **`fail`** row whenever it was missing, which is true to
+   use. Nothing in this project changed that. The name collision did the damage.
+2. `podnext doctor` still reported the proot binary as a **`fail`** row whenever it was absent, which is true to
    the old default and false now. That is the row that told an operator a package was required.
 
 **Changes, all surgical, all with the requirement quoted in the source.**
 
-- `crates/podnext/src/doctor.rs` (`proot_binary_check`): both "missing"/"broken" arms changed from `Verdict::Fail`
+- `crates/podnext/src/doctor.rs`, function `proot_binary_check`: both "missing"/"broken" arms changed from `Verdict::Fail`
   to `Verdict::Warn`, with a comment naming the requirement verbatim - WORKLIST section Z step 8, "doctor reports
-  the proot binary as optional (not a `fail` row)" - and a detail that names the one consequence: only
+  the proot binary as optional, not a `fail` row" - and a detail that names the one consequence: only
   `--engine proot` is affected.
 - `crates/podnext/tests/doctor_contract.rs`: `a_failing_check_fails_the_command_and_names_itself` (which asserted
   the opposite) is replaced by `a_missing_proot_is_a_warning_not_a_failure`, asserting the row starts with `warn`,
   carries the path it came from, and that no `fail` row names proot.
 - `install.sh:89-106`: `pkg install -y proot` and `pkg install -y proot-distro` are no longer run behind the
-  operator's back. proot is installed only with `PDN_WITH_PROOT=1` (the legacy `--engine proot` path needs it),
+  operator's back. proot is installed only with `PDN_WITH_PROOT=1`, because the legacy `--engine proot` path needs it,
   and the reference `proot-distro` only with the same opt-in, with a comment explaining the store difference.
 - `scripts/own_engine_acceptance.py`: a THIRD arm, which supplies the proof the requirement demands in its own
-  words ("dibuktikan juga dengan melacak execve anak: tidak ada execve menuju path biner proot"). `PROOT_BIN`
+  words, "dibuktikan juga dengan melacak execve anak: tidak ada execve menuju path biner proot". `PROOT_BIN`
   points at a decoy that writes a marker if it is ever executed, so the marker's absence is the proof and its
-  presence is the counter-example. PASS now requires the default arm AND the decoy arm; a default that runs while
-  the decoy fires reports the counter-example instead of passing.
+  presence is the counter-example. PASS now requires the default arm AND the decoy arm. A default that runs while
+  the decoy fires reports the counter-example instead of a pass.
 
 **Measured, in this order.**
 
@@ -1946,7 +1946,7 @@ test a_missing_proot_is_a_warning_not_a_failure ... FAILED
 test result: FAILED. 3 passed; 1 failed
 ```
 
-- then the file was restored from a saved copy (verified identical) and the same target passed
+- then the file was restored from a saved copy that was verified identical, and the same target passed
 `4 passed; 0 failed`.
 
 Acceptance harness, canonical binary, no engine flag:
@@ -1960,11 +1960,11 @@ PASS: the DEFAULT path runs a container with no proot binary available to the pr
       and a decoy PROOT_BIN proves the proot binary is never executed either
 ```
 
-**Still open in step 8, and not claimed as done:** the demonstration was run on a fixture store, and the
-onboarding/documentation half of the same step (the four-part user documentation that this project requires for
-every feature) is not finished; neither is a release entry.## login: every unimplemented proot flag now refuses by name with a remedy (2026-11-09 19:05 WIB)
+**Still open in step 8, and not claimed as done:** the demonstration was run on a fixture store, and
+the onboarding and documentation half of the same step, the four-part user documentation that this project requires for
+every feature, is not finished. Neither is a release entry.## login: every unimplemented proot flag now refuses by name with a remedy 2026-11-09 19:05 WIB
 
-**Reported from real use.** `podnext login <container> --shared-home` (and friends) answered clap's
+**Reported from real use.** `podnext login <container> --shared-home`, and its friends, answered clap's
 `error: unexpected argument '--shared-home' found`, which reads as a typo and says nothing about what to do.
 Measured on the flags a proot-distro user reaches for:
 
@@ -1975,7 +1975,7 @@ Measured on the flags a proot-distro user reaches for:
 | `--shared-home`, `--shared-tmp`, `--shared-x11`, `--termux-home`, `--detach`, `--fix-low-ports`, `--no-link2symlink` | **exit 2, "unexpected argument"** | exit 1, named refusal with a command that works |
 
 **Change, in three files.** `crates/podnext/src/cli.rs` accepts these flags on `Commands::Login` with
-`hide = true`, so `--help` (and its 123-screen pinned fixture) is unchanged while the parser stops treating a
+`hide = true`, so `--help` and its 123-screen pinned fixture are unchanged while the parser stops treating a
 real flag as a typo. `crates/podnext/src/dispatch.rs` collects the ones that were actually passed into a
 `Vec<&'static str>`, and `crates/podnext/src/commands/container.rs` refuses the first one before any work
 happens, from a `REFUSED_LOGIN_FLAGS` table that pairs each flag with its reason and a remedy that was run on
@@ -1984,9 +1984,9 @@ this device (`-b $HOME:/root/host-home`, `-b $PREFIX/tmp:/hosttmp`, `podnext run
 
 **A duplicate was found and removed rather than left in place.** The first test run failed on
 `--no-kill-on-exit` because that flag, `--kill-on-exit` and `--no-sysvipc` are already GLOBAL options refused
-by name elsewhere (`cli.rs:196/:204/:145`, message in `main.rs:171-181`). Adding a second definition inside
-`login` would have meant two sources of truth for one flag, so all three were deleted from the new list, the
-dispatch vector and the refusal table; the test now covers only the five flags that were genuinely parse
+by name elsewhere at `cli.rs:196/:204/:145`, with the message in `main.rs:171-181`. Adding a second definition inside
+`login` meant two sources of truth for one flag, so all three were deleted from the new list, the
+dispatch vector and the refusal table. The test now covers only the five flags that were genuinely parse
 errors and says why the other three are excluded.
 
 **Evidence.**
@@ -1998,24 +1998,24 @@ Reach it explicitly: `podnext login <container> -b $HOME:/root/host-home`. Drop 
 `podnext login --help` for the flags that are supported
 ```
 
-The other six flags answer the same shape, each naming itself and its remedy; `podnext login <ctr> -w /etc --
-/bin/sh -c 'echo OK'` still prints `OK`, and `--shared-hom` (one character off) still exits 2 with
-`error: unexpected argument '--shared-hom' found`, so the change explains known flags without swallowing
+The other six flags answer the same shape, each naming itself and its remedy. `podnext login <ctr> -w /etc --
+/bin/sh -c 'echo OK'` still prints `OK`, and `--shared-hom`, one character off, still exits 2 with
+`error: unexpected argument '--shared-hom' found`, so the change explains known flags and still catches
 mistakes.
 
 `crates/podnext/tests/stub_refusals.rs` gains
 `login_refuses_the_unimplemented_proot_flags_by_name_with_a_remedy`, which asserts for each flag that the exit
-code is 1 (not 2), that the message names the flag and carries its remedy, and that the typo control still
+code is 1 and not 2, that the message names the flag and carries its remedy, and that the typo control still
 exits 2. Proven able to fail: with the refusal disabled by `.filter(|_| false)` the test went red at its own
-assertion, and the file was restored from a saved copy (verified identical) afterwards. 6 passed, 0 failed.
+assertion, and the file was restored from a saved copy that was verified identical afterwards. 6 passed, 0 failed.
 
 **Measurement trap hit and recorded.** The first CLI battery after the change showed the flags being IGNORED,
 not refused, because the binary under test was the one the SABOTAGE build had just produced - the same
 artifact-provenance class as the earlier `CARGO_TARGET_DIR` error. The binary was rebuilt from the restored
-source (mtime `18:53:26`, three occurrences of the new refusal string) and the battery re-run before any
-conclusion was drawn.## Parity: `-0` means `--root-id` now, and both inert flags say so by name (2026-11-09 20:05 WIB)
+source, with mtime `18:53:26` and three occurrences of the new refusal string, and the battery re-run before any
+conclusion was drawn.## Parity: `-0` means `--root-id` now, and both inert flags say so by name 2026-11-09 20:05 WIB
 
-**Found by measuring the reference instead of trusting PDN's own table.** The installed `proot --help` says:
+**Found by a measurement of the reference instead of trust in PDN's own table.** The installed `proot --help` says:
 
 ```
     --kill-on-exit       Kill all processes on command exit.
@@ -2030,26 +2030,26 @@ PDN's `docs/src/cli-reference.md:70` claimed `-0` was `--link2symlink`, and `cra
 defined it that way. So an operator reading the proot documentation asked for **root identity** and silently got
 **hardlink emulation**. Two further measurements:
 
-- `proot -0 /bin/sh -c 'id -u'` prints **0**; the same command without `-0` prints **10396**. The reference's `-0`
+- `proot -0 /bin/sh -c 'id -u'` prints **0**. The same command without `-0` prints **10396**. The reference's `-0`
   is about identity, confirmed on this device.
-- A decoy `PROOT_BIN` that records its arguments (`--engine proot`, since the default no longer touches it) shows
+- A decoy `PROOT_BIN` that records its arguments, run with `--engine proot` since the default no longer touches it, shows
   PDN generates **139 argv entries, byte-identical** with no flag, with `-0`, and with `--link2symlink`. PDN already
   passes `--kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0` unconditionally, so both flags were
-  accepted and then changed nothing - the exact class this project refuses elsewhere (#62/#63).
+  accepted and then changed nothing - the exact class this project refuses elsewhere, in #62 and #63.
 
 **Changes.**
 
-- `cli.rs`: `--link2symlink` loses `short = '0'`; a new `-0, --root-id` carries the reference's spelling and help.
-- `main.rs`: `-0` / `--root-id` refuse before any work, naming themselves and the measured reason ("the guest is
-  already mapped to root by `--change-id=0:0:0`, so the flag would be accepted and never enforced: the measured
-  proot argv is byte-identical with and without it"). A stale comment two blocks below, which still said the
-  engine default was `proot`, was corrected to `native` with its date.
+- `cli.rs`: `--link2symlink` loses `short = '0'`. A new `-0, --root-id` carries the reference's spelling and help.
+- `main.rs`: `-0` / `--root-id` refuse before any work, naming themselves and the measured reason:
+  the guest is already mapped to root by `--change-id=0:0:0`, so proot accepts the flag and never enforces it,
+  because the measured proot argv is byte-identical with and without it. A stale comment two blocks below, which
+  still said the engine default was `proot`, was corrected to `native` with its date.
 - The reference's `-l` for `--link2symlink` is deliberately NOT added: `daemon logs` already owns `-l` for
   `--lines`, and a global short makes clap panic for that one command - measured, `podnext daemon logs --help`
   exited 101 with "Short option names must be unique for each argument, but '-l' is in use by both 'lines' and
   'link2symlink'". The reason is written where the flag is defined.
-- `research/cli-help-baseline.txt` re-recorded after measuring the diff: **123 screens, 0 screens reporting
-  `<<exit 101>>`**, 4956 to 5119 lines (one `--root-id` entry per screen), 143 hunks, and **zero** diff lines
+- `research/cli-help-baseline.txt` re-recorded after a measurement of the diff: **123 screens, 0 screens reporting
+  `<<exit 101>>`**, 4956 to 5119 lines, with one `--root-id` entry per screen, 143 hunks, and **zero** diff lines
   outside the link2symlink/root-id/engine block.
 
 **Measured behaviour after the change.**
@@ -2062,17 +2062,17 @@ defined it that way. So an operator reading the proot documentation asked for **
 | `-l` | exit 2 | exit 2, deliberately: the short form collides with `daemon logs --lines` |
 
 `crates/podnext/tests/stub_refusals.rs` gains
-`root_id_refuses_by_name_because_the_guest_is_already_root`, which asserts exit 1 (not 2) for both spellings, the
+`root_id_refuses_by_name_because_the_guest_is_already_root`, which asserts exit 1 and not exit 2 for both spellings, the
 flag named in the message, the measured reason present, and that `daemon logs --help` still renders with exit 0 -
-the last line is the unit-speed version of the collision the help-dump gate caught. 7 passed, 0 failed; with the
-refusal disabled (`if false && cli.root_id`) the test went red on its own assertion, and the file was restored from
-a saved copy (verified identical).
+the last line is the unit-speed version of the collision the help-dump gate caught. 7 passed, 0 failed. With the
+refusal disabled at `if false && cli.root_id`, the test went red on its own assertion, and the file was restored from
+a saved copy, verified identical.
 
 **CI for the previous batch is green**: `7f25e43` reports 15 success and 0 non-success, which covers the flip, the
-optional-proot work, the user documentation, the login refusals and the release entry.## Four inert proot flags now refuse on container commands too (2026-11-09 20:35 WIB)
+optional-proot work, the user documentation, the login refusals and the release entry. ## Four inert proot flags now refuse on container commands too 2026-11-09 20:35 WIB
 
 **The finding.** The direct-execution path already refused `--link2symlink`, `--kill-on-exit`, `--sysvipc` and
-`--no-sysvipc` by name (`direct.rs:315-339`), but every container command accepted them in silence. Measured on
+`--no-sysvipc` by name in `direct.rs:315-339`, but every container command accepted them in silence. Measured on
 `podnext --engine proot run <container>` with a decoy `PROOT_BIN` that records its arguments:
 
 ```
@@ -2084,7 +2084,7 @@ nosysvipc       stabil  token=49  digest=f6f88b695474
 ```
 
 All five variants produce the same argv, because `proot-core` passes all four unconditionally
-(`lib.rs:201`, `:343`). So a caller who passed them was told nothing while nothing happened - the class
+at `lib.rs:201` and `:343`. So a caller who passed them was told nothing while nothing happened - the class
 issues #62 and #63 forbid.
 
 **A measurement error of mine, corrected here rather than left standing.** The first comparison used the raw
@@ -2095,9 +2095,9 @@ those tokens and runs each variant twice to prove the digest is stable, which is
 recorded because the wrong reading was one step away from becoming a claim in the log.
 
 **The change.** `main.rs` refuses the four flags when a subcommand is present, naming each flag, the reason, and
-the evidence ("the measured proot argv is identical with and without it"), so the container path and the direct
+the evidence "the measured proot argv is identical with and without it", so the container path and the direct
 path now say the same thing about the same flags. No help text changed: the dump is byte-identical to the pinned
-baseline (`123 help screens`, `cmp` reports IDENTIK).
+baseline, `123 help screens`, and `cmp` reports IDENTIK.
 
 **Measured after the change.**
 
@@ -2111,14 +2111,14 @@ baseline (`123 help screens`, `cmp` reports IDENTIK).
 
 `crates/podnext/tests/stub_refusals.rs` gains `container_commands_refuse_the_inert_proot_flags`, which asserts
 for each flag that the exit code is 1 and not 2, that the message names the flag and carries the measured reason.
-8 passed, 0 failed; with the refusal gated off (`if false && cli.command.is_some()`) the test went red at its own
-assertion, and the file was restored from a saved copy (verified identical) and the binary rebuilt before any
+8 passed, 0 failed. With the refusal gated off at `if false && cli.command.is_some()`, the test went red at its own
+assertion, and the file was restored from a saved copy, verified identical, and the binary rebuilt before any
 further measurement - the earlier session had already shown what measuring a sabotage-built binary costs.
 
-**CI:** `7f25e43` reports 15 success and 0 non-success; the local gate for `6eb43a7` is GREEN with
-`136 PASS, 0 FAIL, 0 SKIPPED`.## Regression from the flip, found and repaired: `run --detach` no longer refused (2026-11-09 21:10 WIB)
+**CI:** `7f25e43` reports 15 success and 0 non-success. The local gate for `6eb43a7` is GREEN with
+`136 PASS, 0 FAIL, 0 SKIPPED`.## Regression from the flip, found and repaired: `run --detach` no longer refused 2026-11-09 21:10 WIB
 
-**What broke, and why CI could not see it.** After `--engine` defaulted to `native` (`b07cd18`), this command -
+**What broke, and why CI did not see it.** After `--engine` defaulted to `native` in `b07cd18`, this command -
 the one printed in `docs/src/cli-reference.md` - exited 1 for every caller who had not named an engine:
 
 ```
@@ -2127,8 +2127,8 @@ Error: --engine native is not implemented for `--detach`: the detached session s
 through the proot path. Drop `--detach` (a foreground `run` uses the native engine), or use `--engine proot`.
 ```
 
-The refusal itself is honest and named, but the flip changed behaviour for an existing command line without
-changing the documentation, which is the class reported from real use. The doc-example checker could not catch it:
+The refusal itself is honest and named, but the flip changed behaviour for an existing command line and left the
+documentation unchanged, which is the class reported from real use. The doc-example checker did not catch it:
 `("run",)` is listed under `CANNOT_RUN` with the reason "needs an installed container", so the block is declared
 unrunnable rather than executed.
 
@@ -2144,7 +2144,7 @@ native engine.
 An EXPLICIT `--engine native --detach` is still refused by name, because an operator who named an engine deserves
 the truth rather than a silently substituted one. Telling the two apart needs the command line, not the parsed
 struct: clap's `default_value` makes the default indistinguishable from an explicit choice, so a local helper
-scans argv for `--engine` / `--engine=` (the flag is global, so it always appears verbatim).
+scans argv for `--engine` / `--engine=`. The flag is global, so it always appears verbatim.
 
 **Measured.**
 
@@ -2158,30 +2158,30 @@ scans argv for `--engine` / `--engine=` (the flag is global, so it always appear
 **A failure that is NOT this change, and is left named rather than explained away.** On the fixture store both
 detached forms end with `the detached session ended before it could be attached (pid <n>, status exit status: ...)`
 - the same message with `--engine proot`, which is the pre-flip routing, so the engine choice is not its cause.
-What fails is the detached session on this fixture; it is recorded here as unresolved and belongs to the
+What fails is the detached session on this fixture. It is recorded here as unresolved and belongs to the
 session/PTY path rather than to the engine.
 
 `crates/podnext/tests/stub_refusals.rs` gains
 `detach_selects_the_proot_path_by_default_and_refuses_an_explicit_native_engine`, asserting that an unnamed engine
 is NOT refused and that the one-line NOTE is present, while an explicit `--engine native` is refused by name.
-9 passed, 0 failed; with the selection disabled (`if false && !engine_was_requested...`) the test went red on its
-own assertion, and the file was restored from a saved copy (verified identical) and the binary rebuilt
-(`20:01:44`, the NOTE string present) before further measurement.
+9 passed, 0 failed. With the selection disabled at `if false && !engine_was_requested...`, the test went red on its
+own assertion, and the file was restored from a saved copy, verified identical, and the binary rebuilt
+at `20:01:44`, with the NOTE string present, before further measurement.
 
-**Gates:** the local gate for `0a7c049` is GREEN (`136 PASS, 0 FAIL, 0 SKIPPED`); CI for `7f25e43` reports
+**Gates:** the local gate for `0a7c049` is GREEN at `136 PASS, 0 FAIL, 0 SKIPPED`. CI for `7f25e43` reports
 15 success and 0 non-success.
 ### Correction inside the same change: the gate caught a regression I introduced (2026-11-09 21:25 WIB)
 
 The first gate run after the `--detach` routing fix was RED with `135 PASS, 1 FAIL` and the failing check was not
 the one I expected: issue #41, "the panicking reader is gone from the tree", which greps `crates/podnext/src` for
-`std::env::args()` and requires ZERO hits, because #41 fixed a panic on a non-UTF-8 argument by moving to the
+`std::env::args()` and requires ZERO hits, because #41 fixed a panic on a non-UTF-8 argument with a move to the
 byte-oriented reader.
 
 My new helper `engine_was_requested_on_the_command_line()` used exactly that panicking reader. The predicate is a
 past decision and was NOT weakened: the helper now uses `args_os()` and converts each argument with
 `to_string_lossy()`, which cannot panic on invalid UTF-8. A second round was needed because the FIRST fix left the
 literal in a comment explaining the rule - the check greps sources including comments - so the comment was
-rewritten to describe the rule without spelling out the call syntax.
+rewritten to describe the rule and not spell out the call syntax.
 
 Ledger after both rounds: `checks: 136 PASS, 0 FAIL, 0 SKIPPED`, with all four #41 checks PASS. The gate was right
 and the code was wrong, which is the order this project requires: read the failing check, fix the code, keep the
@@ -2189,8 +2189,8 @@ predicate.
 ## login now shares the host home and temp the way proot-distro does (2026-11-09 21:25 WIB)
 
 **Read from the reference, not guessed.** The installed proot-distro package is on this device
-(`$PREFIX/lib/python3.14/site-packages/proot_distro`, 77 files / 29,015 lines), and its login command says
-exactly what these flags mean (`commands/login/proot_cmd.py:205-216`):
+at `$PREFIX/lib/python3.14/site-packages/proot_distro`, with 77 files / 29,015 lines, and its login command says
+exactly what these flags mean at `commands/login/proot_cmd.py:205-216`:
 
 ```python
 if use_shared_home:
@@ -2204,18 +2204,18 @@ if IS_TERMUX and shared_x11 and dist_type != "termux":
 ```
 
 and `parser.py:158` shows `-d, --detach` is a login flag there too. PDN refused all four by name with a
-suggested `-b` command, so `podnext login` could not behave like `proot-distro login` without the caller
-spelling the binds out.
+suggested `-b` command, so `podnext login` did not behave like `proot-distro login` unless the caller
+spelled the binds out.
 
 **Implemented with those exact paths.** `crates/podnext/src/cli.rs` makes `--shared-home`, `--termux-home`
-(alias), `--shared-tmp`, `--shared-x11` and `-d/--detach` real login flags; `crates/podnext/src/commands/container.rs`
+as an alias, `--shared-tmp`, `--shared-x11` and `-d/--detach` real login flags. `crates/podnext/src/commands/container.rs`
 builds `<host home>:/root`, `<prefix>/tmp:/tmp` and `<prefix>/tmp/.X11-unix:/tmp/.X11-unix` before
-`parse_mount_specs`, so a malformed spec still refuses; `-d` routes through the same
+`parse_mount_specs`, so a malformed spec still refuses. `-d` routes through the same
 `engine_for_detached_session` decision that `run --detach` uses, so the two say the same thing about the engine.
-`--shared-x11` refuses by name when the host has no X11 socket directory, naming the path, instead of handing
+`--shared-x11` refuses by name when the host has no X11 socket directory. It names the path and does not hand
 proot a bind source that does not exist.
 
-**Measured on a real Debian 13 container** (fixture store, sentinels written by the host):
+**Measured on a real Debian 13 container**, in the fixture store, with sentinels written by the host:
 
 | command | guest sees |
 |---|---|
@@ -2227,14 +2227,14 @@ proot a bind source that does not exist.
 | `login <ctr> --shared-x11 -- ls -d /tmp/.X11-unix` | `X11-ADA` |
 | `login <ctr> --detach -- ...` | the one-line engine NOTE, then the detached path |
 
-`crates/podnext/tests/login_shares.rs` (new, 2 tests) asserts the argv the runtime builds, captured with a decoy
+`crates/podnext/tests/login_shares.rs` is new with 2 tests and asserts the argv the runtime builds, captured with a decoy
 `PROOT_BIN`: the source of the `/root` bind is the shared resolver's answer, and it is absent without the flag.
 2 passed, 0 failed. Proven able to fail: with the `--shared-home` bind disabled the test went red quoting
-`argv was []`, and the file was restored from a saved copy (verified identical) and the binary rebuilt
-(`21:16:29`, the new refusal string present) before further measurement.
+`argv was []`, and the file was restored from a saved copy, verified identical, and the binary rebuilt
+at `21:16:29`, with the new refusal string present, before further measurement.
 
 **Two of my own test expectations were wrong first, and the controls caught them**, which is the whole reason to
-write the negative arm: the fixture cannot move the host home (the resolver prefers `TERMUX__HOME`), and the
+write the negative arm: the fixture cannot move the host home, because the resolver prefers `TERMUX__HOME`, and the
 runtime ALWAYS binds the container's own `tmp` at `/tmp`, so "no `/tmp` bind without the flag" was false while
 "the prefix tmp is not bound without the flag" is the true statement.
 
@@ -2257,22 +2257,22 @@ podnext --engine native run <ctr> -- /bin/sh -c 'mkdir -p /root/x'
   Error: ... SYS_mkdirat ...
 ```
 
-The proot arm ran both. So the engine could READ a rootfs but not enter it or change it - the difference between
+The proot arm ran both. So the engine was able to READ a rootfs but not enter it or change it - the difference between
 "can start a program" and "behaves like the reference".
 
 **Three mechanisms had to land, each found by measurement rather than assumption.**
 
-1. `chdir` joined the path table (arg0, no dirfd). That immediately broke EVERY run, because the engine's own
+1. `chdir` joined the path table at arg0 with no dirfd. That immediately broke EVERY run, because the engine's own
    bootstrap chdir got translated too and refused. A debug print (`seen=Ok(None)` for the bootstrap, `seen=Ok(Some("/etc"))`
    for the guest's own `cd`) settled the rule: **a chdir whose path is not readable at that stop is the engine's
-   setup call and is exempt; a readable one is the guest's and is translated.** pids and
-   `execve_handled` could not tell them apart - that flag is true before the engine chdirs the child.
+   setup call and is exempt. A readable one is the guest's and is translated.** pids and
+   `execve_handled` did not tell them apart - that flag is true before the engine chdirs the child.
 2. The engine tracked only `plan.cwd`, the STARTING directory. A guest that runs `cd` moves, so every later
-   relative path resolved against the wrong directory (`head: cannot open 'os-release'`). Each tracee now carries
+   relative path resolved against the wrong directory, for example `head: cannot open 'os-release'`. Each tracee now carries
    its current guest cwd, updated on a successful chdir, and **a fork child inherits its parent's cwd** - the
    second half was needed because `head` and `rm` are children of the shell that moved.
-3. The write side was missing entirely: `mkdirat`, `unlinkat`, `fchmodat`, `utimensat`, `symlinkat` are now in
-   the table (arg1 with the dirfd at arg0, symlinkat's link path at arg2). `rm -rf` then still refused with
+3. The write side was absent entirely: `mkdirat`, `unlinkat`, `fchmodat`, `utimensat`, `symlinkat` are now in
+   the table at arg1 with the dirfd at arg0, and symlinkat's link path at arg2. `rm -rf` then still refused with
    `SYS_unlinkat`, because `rm` unlinks through an OPEN DESCRIPTOR: a dirfd-relative name is now resolved against
    the directory that descriptor actually points at, read from `/proc/<pid>/fd/<n>` and mapped back into the
    guest, and a descriptor outside the rootfs is still refused.
@@ -2295,12 +2295,12 @@ native cd -> PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
 ```
 
 `scripts/engine_write_parity.py` is new and keeps this honest: it runs the same workload on both engines, requires
-a real rootfs (refusing rather than skipping when there is none), and answers `DIFFERENTIAL: BOTH ARMS FAILED the
-same way - that is not parity, it is a broken fixture` instead of treating two identical failures as a pass.
+a real rootfs, and refuses rather than skips when there is none. It answers `DIFFERENTIAL: BOTH ARMS FAILED the
+same way - that is not parity, it is a broken fixture` and does not treat two identical failures as a pass.
 
 **Still refused, by name, and named here so nobody assumes otherwise:** `renameat` and `linkat` take TWO paths and
 have no translator yet, so a workload that renames or hardlinks a guest path will still stop with a named refusal.
-The `dirfd`-relative rule covers unlinkat/openat/stat-family; the two-path calls need the same treatment next.
+The `dirfd`-relative rule covers unlinkat/openat/stat-family. The two-path calls need the same treatment next.
 
 ## `mv` and `ln` in the guest: two-path translation, and one scratch slot per argument (2026-11-09 23:05 WIB)
 
@@ -2313,7 +2313,7 @@ rename and leaving the other on the host path is the half-translation this engin
 **A second defect the first fix exposed.** With both paths translated, `mv a b` still failed with
 `mv: cannot move 'a' to 'b': No such file or directory`: the translated strings were written to a SINGLE scratch
 address below the stack pointer, so the destination overwrote the source and the kernel was asked to rename a path
-onto itself. Each argument now gets its own slot (`SCRATCH_SLOT * arg_index`), which is what made `mv` work:
+onto itself. Each argument now gets its own slot, `SCRATCH_SLOT * arg_index`, which is what made `mv` work:
 
 ```
 proot  -> LINK-OK | b c | RENAME-OK
@@ -2322,7 +2322,7 @@ native -> (after the slot fix) b | RENAME-OK, with `ln` still refused by the KER
 ```
 
 **The remaining difference is a kernel policy, and the reference covers it with a feature PDN's native engine does
-not have yet.** Android's SELinux policy refuses hardlinks inside the app's data area; proot succeeds because
+not have yet.** Android's SELinux policy refuses hardlinks inside the app's data area, and proot succeeds because
 proot-core passes `--link2symlink` unconditionally and proot replaces the hardlink with a symlink. That emulation
 is NOT in the native engine yet - it was designed here (capture both paths at the entry stop, and at the exit stop,
 when the result is an error, create the symlink from the engine and report success) and the code was NOT landed,
@@ -2348,7 +2348,7 @@ reports success. The native engine did not.
 
 **What landed.** `RunPlan::link2symlink` (defaulted `true` in `crates/podnext/src/native/session.rs`, mirroring the
 unconditional flag the proot path already sends), a `pending_link` slot on each tracee, the capture of both paths at
-the `linkat` ENTRY stop (the exit stop carries only the result), and the handler at the EXIT stop: when the kernel's
+the `linkat` ENTRY stop, the exit stop carries only the result, and the handler at the EXIT stop: when the kernel's
 answer is an error, the engine creates a symlink at the translated destination using the guest's own link text and
 overwrites the result with success - the same substitution the reference makes, done from the host side because a
 syscall number cannot be rewritten on arm64.
@@ -2365,9 +2365,9 @@ own emulation showing through - recorded because it is a difference in PDN's fav
 
 **The other half, stated rather than glossed.** Whether a hardlink is allowed at all depends on the store's host
 policy: in a fixture built under `$PREFIX/tmp` both arms answered `LINK-OK`, and in a store seeded from the
-operator's containers BOTH arms failed the same call - and there proot failed SILENTLY (exit 1, no message) while
+operator's containers BOTH arms failed the same call - and there proot failed SILENTLY with exit 1 and no message, while
 the native arm printed `Permission denied`. `scripts/engine_write_parity.py` therefore does not put a hardlink in
-its equality workload; it says so in the file, with these measurements, instead of pretending the two hosts behave
+its equality workload. The file says so, with these measurements, and does not pretend that the two hosts behave
 the same.
 
 The parity harness with that exclusion reports `DIFFERENTIAL: EQUAL on exit and stdout` on the real Debian rootfs,
@@ -2384,7 +2384,7 @@ proot   id -u -> 0 | stat -> uid=0 gid=0     | ls -l -> root root
 native  id -u -> 0 | stat -> uid=10396 gid=10396 | ls -l -> 10396 10396
 ```
 
-`--change-id=0:0:0` makes proot rewrite the stat RESULT; this engine only rewrote the syscalls that RETURN an id,
+`--change-id=0:0:0` makes proot rewrite the stat RESULT. This engine only rewrote the syscalls that RETURN an id,
 which is why `id` agreed and `ls` did not.
 
 **What landed.** `stat_result_identity()` names where each stat-family call leaves its buffer and where the ids sit
@@ -2409,23 +2409,23 @@ control PDN_NATIVE_NO_ID_MAP=1  stat -> uid=10396
 ```
 
 **Still named, not hidden:** `getresuid`/`getresgid`/`getgroups` write through a POINTER into guest memory and are
-not rewritten; the x86_64 `struct stat` layout differs and is not covered by this hook.
+not rewritten. The x86_64 `struct stat` layout differs and is not covered by this hook.
 
 ### Correction inside the same change: the harness that caught the wrong argument (2026-11-10 00:25 WIB)
 
 The `st_uid` rewrite first wrote at argument 1 for `newfstatat`, which is the PATH pointer, not the result buffer -
 `newfstatat(dirfd, path, buf, flags)` keeps its result in the THIRD argument. The two heavier harnesses stayed green
-(`engine_differential` and `engine_write_parity` both EQUAL) because their guests do not stat a file the way the
-acceptance guest does; the acceptance harness went red instead:
+`engine_differential` and `engine_write_parity` both EQUAL, because their guests do not stat a file the way the
+acceptance guest does. The acceptance harness went red instead:
 
 ```
 [default] exit=1 ran=False
 [default] output: NOTE: the guest runs as root (uid 0): ...   (and nothing else)
 ```
 
-A guest that had been running stopped running, and the only output was the engine's own note - which is what
-memory corruption inside a guest looks like from outside. Fixed by naming the buffer argument per call
-(`newfstatat` -> 2, `fstat` -> 1, `statx` -> 4) and re-measured: the acceptance harness returns
+A guest that had been active stopped, and the only output was the engine's own note - which is what
+memory corruption inside a guest looks like from outside. Fixed when the buffer argument was named per call
+`newfstatat` -> 2, `fstat` -> 1, `statx` -> 4, and re-measured: the acceptance harness returns
 `[default] exit=0 ran=True` with `[decoy] proot-executed=False`, and the uid parity still reads
 `proot uid=0|root` and `native uid=0|root`.
 
@@ -2449,13 +2449,13 @@ was paid for again.
 
 Two things came out of it:
 
-- the field was added to every test initialiser (struct-update literals `..base` inherit it and were left alone), and
+- the field was added to every test initialiser: struct-update literals `..base` inherit it and were left alone, and
 - the check that answers the question in one command was actually run:
   `cargo test --workspace --no-run` -> exit 0. A local gate that only builds the binary cannot see this class, and
   now the sequence is: change a struct field -> `cargo test --workspace --no-run` -> build -> harnesses -> gate.
 
-Fixing it by script also damaged two literals (a duplicated `env:` field, and a field inserted AFTER `..base`, which
-the compiler rejected by name), so the repair was verified by the compiler rather than by reading the diff - three
+The repair by script also damaged two literals (a duplicated `env:` field, and a field inserted AFTER `..base`, which
+the compiler rejected by name), so the repair was verified by the compiler rather than by a reading of the diff - three
 iterations, each one caught by `cargo check -p proot-core --tests` naming the exact line.
 
 ### The bootstrap-chdir rule needed a second branch, and the cwd default was a lie (2026-11-10 01:40 WIB)
@@ -2464,7 +2464,7 @@ Two CI failures, both caused by rules that were true only on this device.
 
 **1. `a_relative_path_is_translated_against_the_plans_cwd` failed on the runner with `exit=126`.** The rule that
 identifies the engine's own bootstrap `chdir` was "its path is not readable at that stop", measured here
-(`seen=Ok(None)`). On the runner that same call IS readable - it carries the translated host cwd - so the rule did
+`seen=Ok(None)`. On the runner that same call IS readable - it carries the translated host cwd - so the rule did
 not fire, the already-translated path was translated a second time, and the child's chdir failed: the engine exits
 126 when its own bootstrap chdir fails. The rule now names BOTH observable forms of the same call:
 
@@ -2474,7 +2474,7 @@ unreadable at the stop   OR   an already-host path inside the resolved rootfs
 
 **2. The per-tracee cwd defaulted to `/`, which silently mistranslated relative paths.** The p7-relative control arm
 exists to prove that with no known cwd a relative name is REFUSED - the kernel resolves it against the HOST cwd, so
-rewriting it into the rootfs would point the guest at a different file. Giving the slot a `unwrap_or("/")` default
+if the engine rewrites it into the rootfs, the guest points at a different file. A `unwrap_or("/")` default on the slot
 made the engine translate `relative-report` to `<rootfs>/relative-report` while the kernel looked elsewhere, and the
 control caught it. The slot is now `Option<String>` and `None` means unknown, so the refusal stands.
 
@@ -2500,9 +2500,9 @@ DEBUG chdir pid_child=true execve_handled=true  seen=Ok(Some("/etc"))  <- the gu
 ```
 
 So the ORIGINAL rule - `number == SYS_chdir && pid == child && !execve_handled` - was correct and deterministic:
-the flag is set at the EXECVE ENTRY stop, which comes AFTER the bootstrap chdir and BEFORE anything the guest runs.
+the flag is set at the EXECVE ENTRY stop, which comes AFTER the bootstrap chdir and BEFORE the guest runs any command.
 My earlier claim that "the flag is already true at the bootstrap" was an assumption dressed as a measurement: the
-refusals I saw in that run came from the write-side calls I was adding at the same time, not from chdir, and I
+refusals I saw in that run came from the write-side calls I added at the same time, not from chdir, and I
 never checked which syscall produced them.
 
 Restored to the deterministic rule, and `cargo test -p proot-core --test native_exec_translation` is
@@ -2510,8 +2510,8 @@ Restored to the deterministic rule, and `cargo test -p proot-core --test native_
 already keeps is the identity of its own call.
 
 The lesson is older than this file and worth repeating anyway: when a rule derived from one host fails on another,
-measure the quantity the rule is about before inventing a second rule to cover the gap - and read WHICH syscall a
-refusal came from before concluding anything about the syscall you were working on.
+measure the quantity the rule is about before the invention of a second rule to cover the gap - and read WHICH syscall a
+refusal came from before you conclude anything about the syscall under repair.
 
 ### The two login tests measured this host's environment, not the flag (2026-11-10 03:05 WIB)
 
@@ -2532,15 +2532,15 @@ paths::host::home()   = TERMUX__HOME, then HOME
 paths::host::prefix() = TERMUX__PREFIX, then PREFIX
 ```
 
-On this device `TERMUX__HOME`/`TERMUX__PREFIX` are set and both processes agree; on the runner they are unset, the
+On this device `TERMUX__HOME`/`TERMUX__PREFIX` are set and both processes agree. On the runner they are unset, the
 child's `HOME` was the fixture while the test expected `/home/runner`, and for the tmp arm the bind SOURCE
-(`<prefix>/tmp`) did not exist, so the runtime refused by name and the argv was empty - which the assertion read as
+`<prefix>/tmp` did not exist, so the runtime refused by name and the argv was empty - which the assertion read as
 "the flag produced no bind".
 
-Fixed by making the expectation a function of the same fixture the child receives: the fixture sets `TERMUX__HOME`
+Fixed when the expectation became a function of the same fixture the child receives: the fixture sets `TERMUX__HOME`
 and `TERMUX__PREFIX` for the child, creates `<fixture>/usr/tmp`, and both assertions derive from the fixture root.
 
-**The control that should have existed from the first version** - run the target with the Termux variables UNSET,
+**The control that had to exist from the first version** - run the target with the Termux variables UNSET,
 which is the runner's condition:
 
 ```text
@@ -2548,13 +2548,13 @@ env -u TERMUX__HOME -u TERMUX__PREFIX -u PREFIX cargo test -p podnext --test log
     -> test result: ok. 2 passed; 0 failed
 ```
 
-A test whose pass depends on which environment variables happen to be set on the host is measuring the host. The
+A test whose pass depends on which environment variables happen to be set on the host measures the host. The
 rule applied here is the same one this file already carries for the differential harness: assert the RELATIONSHIP
-(the flag adds a bind whose source is the resolver's own answer), never the host fact.
+which is that the flag adds a bind whose source is the resolver's own answer, not the host fact.
 
 ### A pipeline's left-hand child never gets an entry stop, so its bare name is never translated (2026-11-10 12:10 WIB)
 
-Measured with a real Debian rootfs (fixture copy of `deb-renamed`, built release binary, direct commands):
+Measured with a real Debian rootfs, a fixture copy of `deb-renamed`, a built release binary and direct commands:
 
 ```text
 sh -c 'dpkg-query -W -f="${Package}\n" | wc -l'
@@ -2574,21 +2574,21 @@ STOP pid=24043 sys=221 SYS_execve entry=false     <- a child's execve, seen ONLY
 
 The pipeline's left child is attached by the fork event, but its `execve` reaches the engine **only as an exit stop**: there
 is no entry stop, so nothing is translated before the kernel resolves the name against the HOST `PATH` and answers
-`ENOENT`. Right-hand children (`head`, `wc`) do produce entry stops, which is why a battery of absolute-path cases - and the
-whole test suite - could not see this.
+`ENOENT`. Right-hand children such as `head` and `wc` do produce entry stops, which is why a battery of absolute-path cases - and the
+whole test suite - did not see this.
 
 Two things landed while measuring it, both correct on their own terms and kept:
 
-- `resolve_exec_path`: a non-absolute execve target is resolved the way the kernel would (PATH from the tracee's own
+- `resolve_exec_path`: a non-absolute execve target is resolved the way the kernel does (PATH from the tracee's own
   `/proc/<pid>/environ`, or the cwd for a name containing a slash) before the rootfs mapping, so that if the entry stop
   does happen the bare name resolves to `<rootfs>/usr/bin/...` instead of `<rootfs>/dpkg-query`.
 - `path_pointer_is_ours(&report, arg0) && slots[idx].at_entry`: the address test alone was not an identity test. A forked
   child inherits the shared page, so one of its own pointers can coincide with the published address, the "engine's own
   child" branch was taken, and with `at_entry == false` it did NOTHING - the execve then went to the kernel untouched. That
-  is the same collision that made a previous change rewrite the caller's `argv[0]` instead of resolving the name.
+  is the same collision that made a previous change rewrite the caller's `argv[0]` instead of a resolution of the name.
 
-What remains is the replay: at the exit stop of a FAILED `execve` with `-ENOENT`, the path pointer is still in `x0`
-(a failed execve does not disturb the argument registers), so the engine can resolve it through the guest PATH, write the
+What remains is the replay: at the exit stop of a FAILED `execve` with `-ENOENT`, the path pointer is still in `x0`.
+A failed execve does not disturb the argument registers, so the engine can resolve it through the guest PATH, write the
 absolute guest path into the tracee, rewind `pc` to the `svc` instruction and let the syscall be re-executed once.
 
 The honest status: `dpkg-query` under the native engine still prints 0 packages, and the battery reports DIFFERENT for that
@@ -2599,20 +2599,20 @@ case. That is the truth until the replay lands.
 `sh -c 'dpkg-query --version | head -1'` still prints `not found` under the native engine on a real Debian rootfs,
 and I have not fixed it. What the session DID establish, each by measurement:
 
-1. **Not readability.** The path is readable at the stop; the engine simply never translates that call.
+1. **Not readability.** The path is readable at the stop. The engine never translates that call.
 2. **Not the address test alone.** `path_pointer_is_ours` matched a forked child's own pointer, and pairing it with
-   `at_entry` is a real fix for that collision (kept in d532ba9), but it does not make `dpkg-query` run.
+   `at_entry` is a real fix for that collision, kept in d532ba9, but it does not make `dpkg-query` run.
 3. **Not the bare name.** `resolve_exec_path` resolves it through the tracee's own PATH and the file is found in the
-   rootfs (kept in d532ba9) - and the run still prints `not found`.
+   rootfs, kept in d532ba9, and the run still prints `not found`.
 4. **Not the birth-stop guard.** Hypothesis: the guard consumed the child's first stop, which on this kernel is
    already the execve ENTRY. Applied, rebuilt, measured: the same output. Reverted rather than kept, because a change
-   that alters stop bookkeeping without changing the behaviour is risk with no evidence.
+   that alters stop bookkeeping and does not change the behaviour is risk with no evidence.
 
 What remains true and is the next thing to measure: the child's stop trace shows
 `SYS_execve entry=false` as its only execve stop, and `head`/`wc` children DO produce entry stops. The next probe is
-the FULL stop list of one failing child (every syscall, both directions, with `at_entry`), printed for pids on both
+the FULL stop list of one failing child, every syscall, both directions, with `at_entry`, printed for pids on both
 sides of the pipeline, to see whether that child's execve is delivered as an exit only because it was reported as
-`entry=false` by the bookkeeping (an inversion) or because the kernel really delivered one stop.
+`entry=false` by the bookkeeping, an inversion, or because the kernel really delivered one stop.
 
 Status of the case, stated plainly: `dpkg-query -W | wc -l` -> proot 78, native 0. Open.
 
@@ -2629,17 +2629,17 @@ ALL pid=2770 SIGNAL SIGSYS
 ALL pid=2770 EXITED 127
 ```
 
-The stop was delivered; the LABEL was wrong. The birth-stop guard consumed the event stop and left `at_entry = false`,
+The stop was delivered. The LABEL was wrong. The birth-stop guard consumed the event stop and left `at_entry = false`,
 so the child's first syscall - its `execve` - was treated as an exit. Every entry-only step was therefore skipped for
 that tracee: the engine-child path requires `at_entry`, and the remote path was reached only after the kernel had
-already answered `ENOENT`. Four earlier hypotheses (readability, the address test, the bare name, the guard eating the
-stop) were all wrong; two of them produced real fixes that are kept, and the guard hypothesis was wrong for a
-different reason than I thought - the guard DID eat a stop, but the stop it ate was the birth event, and the damage
+already answered `ENOENT`. Four earlier hypotheses were all wrong, that is readability, the address test, the bare name, and the guard eating the
+stop. Two of them produced real fixes that are kept, and the guard hypothesis was wrong for a
+different reason than I thought. The guard DID eat a stop, but the stop it ate was the birth event, and the damage
 was the flag it left behind.
 
-The fix is one assignment: a freshly-started tracee has not executed a syscall, so `at_entry = true` before resuming.
+The fix is one assignment: a freshly-started tracee has not executed a syscall, so set `at_entry = true` before the engine resumes it.
 
-Measured after (real Debian rootfs, direct commands, both engines):
+Measured after, on a real Debian rootfs with direct commands and both engines:
 
 ```text
 dpkg-query -W -f="${Package}\n" | wc -l   -> native 78   proot 78    EQUAL
@@ -2647,49 +2647,49 @@ dpkg-query --version | head -1            -> identical strings       EQUAL
 e2e battery                               -> 8 EQUAL, 1 DIFFERENT, 1 SUSPECT
 ```
 
-`write_read` (mktemp/write/cat/rm -rf) remains the one DIFFERENT case: `SYS_unlinkat` is refused because its path
-could not be translated, so the whole run exits 1 where proot exits 0. That is the next defect, not a described-away
+`write_read`, that is mktemp/write/cat/rm -rf, remains the one DIFFERENT case: `SYS_unlinkat` is refused because its path
+cannot be translated, so the whole run exits 1 where proot exits 0. That is the next defect, not a described-away
 limitation.
 
 ### Path translation now runs at entry stops only - and `touch` still refuses (2026-11-10 14:20 WIB)
 
-`touch /tmp/f1 && rm -f /tmp/f1` on the native engine prints `UNLINK-OK` (the guest did its work) and then fails the
-run with `SYS_utimensat (88) [its path could not be translated ...]`, rc=1 where proot exits 0. `mkdir`/`rmdir` work;
-`echo x > /tmp/f3 && rm /tmp/f3` works; `rm -rf` of a populated directory refuses on `SYS_unlinkat (35)`.
+`touch /tmp/f1 && rm -f /tmp/f1` on the native engine prints `UNLINK-OK`, the guest did its work, and then fails the
+run with `SYS_utimensat (88) [its path could not be translated ...]`, rc=1 where proot exits 0. `mkdir`/`rmdir` work.
+`echo x > /tmp/f3 && rm /tmp/f3` works. `rm -rf` of a populated directory refuses on `SYS_unlinkat (35)`.
 
 The path translation is now gated to ENTRY stops, which is correct on its own terms: at an exit stop the argument
 registers hold return values, so a path syscall seen there has no path to read and must not be recorded as a refusal.
 That gating did NOT fix this case - the refusals still appear - so the untranslatable path is genuinely untranslatable
 at a real entry stop, and the reason has not yet been measured. What is known:
 
-- the guest's work SUCCEEDS (`UNLINK-OK`, `RF-OK`, `REL-OK` all print), so this is the engine failing a run that did
-  what was asked, not the guest failing;
+- the guest's work SUCCEEDS, `UNLINK-OK`, `RF-OK`, `REL-OK` all print, so this is the engine failing a run that did
+  what was asked, not the guest failing.
 - `rmdir` and `rm` of a single file by absolute path succeed, so the table entries that work are the ones without a
-  `dirfd`-relative name;
-- the two names that refuse (`utimensat`, `unlinkat`) share one property `openat` does not have in those runs: they are
-  reached with a path that the engine cannot join, which points at the cwd-unknown rule (`Option<String>` == None
-  refuses) rather than at the syscall table.
+  `dirfd`-relative name.
+- the two names that refuse, `utimensat` and `unlinkat`, share one property `openat` does not have in those runs: they are
+  reached with a path that the engine cannot join, which points at the cwd-unknown rule, where `Option<String>` == None
+  refuses, rather than at the syscall table.
 
 The next measurement is the value the engine actually reads for that argument at its entry stop, printed from inside
 `translate_path_remote` with the tracee's pid, so the choice between "the path is relative and the cwd is unknown" and
 "the read returned nothing" is made on data.
 
-Battery status after tonight: 8 EQUAL, 1 DIFFERENT (`write_read`), 1 SUSPECT.
+Battery status after tonight: 8 EQUAL, 1 DIFFERENT in `write_read`, 1 SUSPECT.
 
 ### Where the `utimensat` refusal actually comes from: site 7, the catch-all arm (2026-11-10 15:10 WIB)
 
-Marking all seven refusal sites and running `touch /tmp/f1 && rm -f /tmp/f1`:
+Mark all seven refusal sites and run `touch /tmp/f1 && rm -f /tmp/f1`:
 
 ```text
 REFUSAL-SITE-7  (x6)   ->  the non-strict push of the CATCH-ALL arm
 ```
 
 not `translate_path_remote` at all. That arm fires for a syscall that reached the `else` of the whole path-handling
-chain, so `path_syscall(88)` must be returning `None` for a call whose name `syscall_name(88)` prints as
+chain, so `path_syscall(88)` must return `None` for a call whose name `syscall_name(88)` prints as
 `SYS_utimensat`. Two concrete explanations remain, and neither is yet measured:
 
 - the arm for `SYS_utimensat` in `path_syscall` is unreachable - an earlier `if` in the same function returns first,
-  or the arm sits after an early `return None`; or
+  or the arm sits after an early `return None`, or
 - `nix::libc::SYS_utimensat` on this target is not 88, so the comparison never matches.
 
 The measurement that decides it is one line of output: the value of `path_syscall(88)` and of
@@ -2698,37 +2698,37 @@ attempts to gate the arm instead produced a gate in the wrong place (`rindex("} 
 refusal CONSTRUCTION, not the arm's own), so the tree was restored to `246d027` rather than left carrying an
 unproven edit.
 
-Also noted while measuring: `unlinkat` on an absolute path translates correctly (`raw="/tmp/f1" cwd=Some("/")`), so
-the write-side table works; the failure is specific to the calls that land in the catch-all arm.
+Also noted while measuring: `unlinkat` on an absolute path translates correctly, `raw="/tmp/f1" cwd=Some("/")`, so
+the write-side table works. The failure is specific to the calls that land in the catch-all arm.
 
-State of the end-to-end battery against a real Debian rootfs: 8 EQUAL, 1 DIFFERENT (`write_read`), 1 SUSPECT.
+State of the end-to-end battery against a real Debian rootfs: 8 EQUAL, 1 DIFFERENT in `write_read`, 1 SUSPECT.
 
 ### The refused `utimensat` path is UNREADABLE at its entry stop (2026-11-10 16:00 WIB)
 
-Two prints, each at a site confirmed by measurement rather than by reading the code:
+Two prints, each at a site confirmed by measurement rather than by inspection of the code:
 
 ```text
 SITE line1504 number=88        <- the non-strict push in translate_path_remote's Ok(false) arm
 ```
 
 and the marker placed INSIDE that same function does not appear for this call, which means the function returns before
-it. Its early returns are: no plan rootfs; `args.get(arg_index)` is None; and `peek_cstr` returning None. The plan has a
+it. Its early returns are: no plan rootfs, `args.get(arg_index)` is None, and `peek_cstr` returns None. The plan has a
 rootfs and `arg_index` for `utimensat` is 1 with six arguments present, so the remaining one is the measured
 conclusion:
 
 **`peek_cstr` cannot read the path of `utimensat` at its entry stop.** The refused call is therefore not a missing
-table arm (the arm exists, `table_has` would be true for 88) and not a labelling problem (the stop is an entry,
-`entry=true` in every recorded line): the engine is being handed a call whose path it cannot read, and it fails the run
-for it - while the guest's own work succeeded (`UNLINK-OK` prints) and proot exits 0.
+table arm, because the arm exists and `table_has` is true for 88, and not a labelling problem, because the stop is an entry
+`entry=true` in every recorded line. The engine is handed a call whose path it cannot read, and it fails the run
+for it - while the guest's own work succeeded, `UNLINK-OK` prints, and proot exits 0.
 
-That is a fact about a specific syscall on a specific kernel, and the next step is the one line that was being written
+That is a fact about a specific syscall on a specific kernel, and the next step is the one line that was in progress
 when the session stopped: print the argument POINTER and the argument index at the failed peek, for `utimensat` and
-for a neighbouring call that reads fine (`unlinkat`, whose path printed as `"/tmp/f1"`). Comparing the two pointers
+for a neighbouring call that reads fine, `unlinkat`, whose path printed as `"/tmp/f1"`. Comparing the two pointers
 decides between "the guest passes a pointer we cannot follow" and "the engine reads the wrong register for this
 syscall".
 
-Housekeeping: the marker for that print was inserted with a line filter that removed a brace along with it, so the file
-did not compile (heavy exit_code=101, 1 output line) and the run printed against the PREVIOUS binary. That output was
+Note on housekeeping: the marker for that print was inserted with a line filter that removed a brace along with it, so the file
+did not compile, heavy exit_code=101 with 1 output line, and the run printed against the PREVIOUS binary. That output was
 discarded as invalid, the file was restored to 129a269, `git status` is clean, and `cargo check -p proot-core` passes.
 The evidence above is from the build that DID compile.
 
@@ -2742,11 +2742,11 @@ PEEKDATA SYS_unlinkat  number=35 arg_index=1 arg=0x5570fefdf0  peek=Ok(Some("/tm
 ```
 
 `utimensat(fd, NULL, times, 0)` is the `futimens` form: it acts on the DESCRIPTOR in arg0 and has no path at all.
-The engine treated the NULL as a path it could not read, recorded a refusal, and failed the whole run - exit 1 where
-proot exits 0 - while the guest's own work had already succeeded (`UNLINK-OK` printed). An empty path is the same
+The engine treated the NULL as a path it cannot read, recorded a refusal, and failed the whole run - exit 1 where
+proot exits 0 - while the guest's own work had already succeeded, `UNLINK-OK` printed. An empty path is the same
 kind of non-event: the kernel answers ENOENT by itself.
 
-Both are now `Ok(true)` - "nothing to translate" - instead of `Ok(false)` - "could not translate".
+Both are now `Ok(true)` - "nothing to translate" - instead of `Ok(false)` - "cannot translate".
 
 Measured after: `touch /tmp/f1 && rm -f /tmp/f1 && echo UNLINK-OK` is EQUAL on both engines, before and after, with
 no refusal line.
@@ -2759,14 +2759,14 @@ unlinkat(AT_FDCWD, "/tmp/zz2", ...)   <- absolute
 ```
 
 `rm -rf` on a directory still refuses one `SYS_unlinkat`, and the form that fails is the descriptor-relative one:
-the name is `"a"` and arg0 is `4`, so the engine must resolve `/proc/<pid>/fd/4` and join the name; that resolution
+the name is `"a"` and arg0 is `4`, so the engine must resolve `/proc/<pid>/fd/4` and join the name. That resolution
 is what fails. The absolute form with `AT_FDCWD` reads fine.
 
-Battery after this change: 8 EQUAL, 1 DIFFERENT (`write_read`, i.e. the `rm -rf` above), 1 SUSPECT.
+Battery after this change: 8 EQUAL, 1 DIFFERENT in `write_read`, that is the `rm -rf` above, 1 SUSPECT.
 
 ### The descriptor-relative unlink is translated but has no effect (2026-11-10 17:20 WIB)
 
-Matching every spelling of the descriptor target against the rootfs removed the refusal - and exposed a different
+A match of every spelling of the descriptor target against the rootfs removed the refusal and exposed a different
 defect underneath it. Guest-side measurement, both engines, same command:
 
 ```text
@@ -2786,19 +2786,19 @@ rmdir /tmp/z3                                       -> RMDIR-OK      (both)
 ```
 
 So exactly one form fails: the descriptor-relative unlink `unlinkat(fd, "a")` that `rm -rf` uses to empty a directory
-it opened. It reaches `finish_translation` (the refusal is gone), the path it computes is the right one
-(`/tmp/z9/a`), and the file survives anyway. The engine writes an absolute host path and leaves arg0 - the descriptor
+it opened. It reaches `finish_translation`, so the refusal is gone, and the path it computes is the right one
+`/tmp/z9/a`, and the file survives anyway. The engine writes an absolute host path and leaves arg0 - the descriptor
 - in place, which is the next thing to inspect: whether the kernel honours the descriptor for a path that is now
 absolute, and whether the scratch slot the argument points at actually holds what the engine wrote there.
 
 Also recorded, because it cost a measurement: checking the effect from the HOST side is invalid here. The guest's
-`/tmp` does not resolve to the store's `rootfs/tmp` (proot also left the host path untouched while removing the
-guest's own file), so "the directory still exists on the host" said nothing about either engine. The guest's own
+`/tmp` does not resolve to the store's `rootfs/tmp`, because proot also left the host path untouched while removing the
+guest's own file. So "the directory still exists on the host" said nothing about either engine. The guest's own
 `test -e` is the measurement that counts, and it is the one printed above.
 
 ### The descriptor target is a BIND SOURCE, and the bind-aware resolution did not close it yet (2026-11-10 18:05 WIB)
 
-Printing both the written argument and the resolved host path for one recursive removal on a real Debian rootfs:
+A print of both the written argument and the resolved host path for one recursive removal on a real Debian rootfs:
 
 ```text
 WRITEARG arg_index=1 scratch=0x7fef8a7110 bytes="<store>/containers/deb-renamed/tmp/za"
@@ -2810,7 +2810,7 @@ FINISH SYS_unlinkat
 Two facts fall out of that pair, and neither was a hypothesis:
 
 1. The descriptor `rm -rf` holds points at the container's own `tmp` directory, i.e. at a BIND SOURCE
-   (`<store>/containers/<name>/tmp`), not at anything under the rootfs. `plan.binds` is built from
+   `<store>/containers/<name>/tmp`, not at anything under the rootfs. `plan.binds` is built from
    `container.config.bind` chained with `proot_distro_core::guestdirs::bindings`, so that mapping exists in the
    plan.
 2. `host_dir_for_fd_as_guest` returned the descriptor's raw HOST target as though it were a guest path, so
@@ -2822,7 +2822,7 @@ committed. It did NOT change the outcome: `test -e /tmp/zb` still answers `MASIH
 
 So the next measurement is narrower than this one was: which bind entry the guest's `/tmp` resolves through at
 runtime, and whether `resolve` actually prefers it for `"/tmp/za/a"`. The evidence above says the mapping is in the
-plan; what is not yet measured is whether the path the engine builds lands on it or on `<rootfs>/tmp/za/a`.
+plan. What is not yet measured is whether the path the engine builds lands on it or on `<rootfs>/tmp/za/a`.
 
 Also fixed while measuring, and worth keeping: the two debug prints are out of the tree again, and the edit script
 was moved to a file because a shell-level guard refuses command text mentioning a recursive remove - the same
@@ -2850,15 +2850,15 @@ answers `MASIH ADA` where proot answers `HILANG`.
 
 What is measured and certain for whoever picks this up:
 
-- the failing call is `unlinkat(fd, "<host path>/a")` issued by the guest, with the name already host-shaped;
+- the failing call is `unlinkat(fd, "<host path>/a")` issued by the guest, with the name already host-shaped.
 - the engine writes a correct absolute path for the AT_FDCWD form of the same operation, which is why
-  `rm -f` works and `rm -rf` does not;
-- three path-side fixes have landed for this case (rootfs spelling, bind-aware descriptor target, host-name mapping)
+  `rm -f` works and `rm -rf` does not.
+- three path-side fixes have landed for this case, that is rootfs spelling, bind-aware descriptor target, and host-name mapping
   and the behaviour has not moved once, which points at something upstream of the translation: whether the
   translation is applied to the argument register the kernel actually reads for `unlinkat` on this target, or whether
   the write lands in a scratch slot the kernel does not consult for a three-argument call.
 
-Housekeeping: the edit scripts live in `$HOME/.hermes/cache/scratch/pdn-*.py` because a shell-level guard refuses
+Note on housekeeping: the edit scripts live in `$HOME/.hermes/cache/scratch/pdn-*.py` because a shell-level guard refuses
 command text mentioning a recursive remove, and the phrase appears legitimately in these comments.
 
 ### A register read-back must happen AFTER set_regs, or it measures nothing (2026-11-10 19:20 WIB)
@@ -2871,7 +2871,7 @@ REGSET arg_index=1 wrote=0x7fd8d62ae0 x1=0x557a2fede0 after_x1=0x557a2fede0
 
 and reads like "the write did not stick" - `x1` does not hold the scratch address. It does not mean that. The print sits
 BEFORE `ptrace::setregs`, so `GETREGSET` returns the registers as the kernel last knew them, which is exactly the state
-before the write. The measurement was mine and it was invalid; the print was removed and the file restored to `b9e9f8e`.
+before the write. The measurement was mine and it was invalid. The print was removed and the file restored to `b9e9f8e`.
 
 For whoever continues: reading the registers back only answers anything at the NEXT stop (the exit stop of the same
 call), or after `setregs` has run. Also visible in the same output and worth keeping, because it is real:
@@ -2881,8 +2881,8 @@ unlinkat(fd=4,         path, 0)          <- the FILE removal, descriptor-relativ
 unlinkat(AT_FDCWD,     path, 0x200)      <- the DIRECTORY removal, AT_REMOVEDIR
 ```
 
-Both forms reach the engine with the right arguments, and the engine writes a translation for both, which is why the
-remaining question is not "is the call translated" but "what does the tracee see when the call actually runs".
+Both forms reach the engine with the right arguments, and the engine writes a translation for both, which is why
+the remaining question is not "is the call translated" but "what does the tracee see when the call actually runs".
 
 ### The branch IS taken, and the directory it carries is a HOST path (2026-11-10 20:05 WIB)
 
@@ -2895,21 +2895,21 @@ BRANCH fd=Some(4) against_cwd=false dir=Some("<container>/tmp/zg") cwd=Some("/")
 
 Three things are now facts, not readings:
 
-1. the descriptor branch IS reached (`fd=Some(4)`, `against_cwd=false`), so this is not a missing branch;
-2. the name the guest passes is the bare `"a"` with the directory coming from the descriptor, which is why the earlier
-   host-name mapping never applied to this call - the host-shaped string I saw was composed by the ENGINE from `dir`
-   plus `"a"`;
-3. `dir` is a HOST path (`<container>/tmp/zg`), not the guest form `/tmp/zg` that the bind-aware helper is supposed to
+1. the descriptor branch IS reached because `fd=Some(4)` and `against_cwd=false`, so this is not a missing branch.
+2. the guest passes the bare `"a"` and the directory comes from the descriptor. That is why the earlier
+   host-name mapping never applied to this call. The ENGINE composed the host-shaped string I saw from `dir`
+   plus `"a"`.
+3. `dir` is a HOST path, `<container>/tmp/zg`, and not the guest form `/tmp/zg` that the bind-aware helper must
    return. Whatever produced that value did not convert, and the print does not say which line produced it.
 
 That last point is where this session stopped, deliberately: four path-side attempts have not moved the behaviour, and
-the next one must start from the helper's actual text rather than from the intended text - `host_dir_for_fd_as_guest`
+the next one must start from the helper's actual text and not from the intended text. `host_dir_for_fd_as_guest`
 is the only thing that assigns `fd_guest_dir`, and its bind branch was supposed to rewrite exactly this value.
 
 Measured state left behind: tree clean at 0393afa, no debug markers in the tree, `cargo check -p proot-core --tests`
-passes, battery 8 EQUAL / 1 DIFFERENT (`rm -rf`) / 1 SUSPECT, and the causal chain for the failing case is complete:
-the file removal is issued with a host-shaped directory joined to a bare name, the engine writes it without mapping it
-back, the kernel answers ENOENT, and the guest's own retry sees ENOTEMPTY and prints `Directory not empty`.
+passes, battery 8 EQUAL / 1 DIFFERENT / 1 SUSPECT. The DIFFERENT case is `rm -rf`, and the causal chain for the failing case is complete:
+the engine issues the file removal with a host-shaped directory joined to a bare name, and writes it with no mapping
+back. The kernel answers ENOENT, and the guest's own retry sees ENOTEMPTY and prints `Directory not empty`.
 ### CLOSED: the descriptor branch accepted a host path, and the battery is 10/10 (2026-11-10 21:10 WIB)
 
 The resolution was not another path-map. It was an INVARIANT at the boundary:
@@ -2922,9 +2922,9 @@ if !dir_owned.starts_with('/') || std::path::Path::new(&dir_owned).starts_with(r
 let dir = dir_owned.as_str();
 ```
 
-Everything the branch was given is now forced to be a GUEST-absolute path before it is joined with the name and
-written into the tracee: a host path is mapped back with the same rule any host-shaped name gets, and anything that
-is still not a guest path refuses the call rather than being written out.
+All input to the branch is now forced to be a GUEST-absolute path before the engine joins it with the name and
+writes it into the tracee. The engine maps a host path back with the same rule that any host-shaped name gets, and
+a path that is still not a guest path refuses the call, and the engine does not write it out.
 
 Measured after, both engines, real Debian rootfs, direct commands:
 
@@ -2936,21 +2936,21 @@ e2e battery: 10 cases, 10 EQUAL, 0 DIFFERENT, 0 SUSPECT, exit 0
 ```
 
 The battery's SUSPECT rule was narrowed at the same time: identical failures are only suspicious when BOTH engines
-print an engine-level `Error:` line, so a probe that legitimately exits non-zero with no stdout (the `exit 7` case) is
-EQUAAL again instead of being flagged. That was a false positive in my own instrument, and it is the reason the summary
+print an engine-level `Error:` line, so a probe that legitimately exits non-zero with no stdout, as in the `exit 7` case, is
+EQUAAL again and the battery does not flag it. That was a false positive in my own instrument, and it is the reason
 now shows 10/10 rather than 9/1.
 
 What the last hour actually taught, in order:
 
-1. a host path can enter `fd_guest_dir` even though the helper prints a correct rootfs prefix array - I could not
-   reconcile those two observations, so I stopped relying on the explanation and enforced the invariant instead;
-2. text surgery on this file has now broken the braces four times; the `patch` tool with an exact anchor and a visible
+1. a host path can enter `fd_guest_dir` even though the helper prints a correct rootfs prefix array. I did not
+   reconcile those two observations. I stopped relying on the explanation and enforced the invariant instead.
+2. text surgery on this file has now broken the braces four times. The `patch` tool with an exact anchor and a visible
    diff works, and Python surgery with regexes does not. That is why this change is the smallest one of the block.
 
-Two further notes for the next session, both measured: the failing call was `unlinkat(fd=4, <host dir>/<name>)` with
-the kernel answering ENOENT and the guest retrying into ENOTEMPTY, and `rm -f`, `rmdir`, `ls`, `dpkg-query`,
-`touch`, pipelines, nested shells and `cd` all agreed on both engines BEFORE this change - so the battery now
-covers the case that was broken without weakening any case that was already right.
+Two further notes for the next session, both measured: the failing call was `unlinkat(fd=4, <host dir>/<name>)`, and
+the kernel answered ENOENT and the guest retried into ENOTEMPTY, and `rm -f`, `rmdir`, `ls`, `dpkg-query`,
+`touch`, pipelines, nested shells and `cd` all agreed on both engines BEFORE this change. The battery now
+covers the case that was broken and does not weaken any case that was already right.
 ### The guest's PWD no longer leaks the host layout (2026-11-10 22:15 WIB)
 
 `env | sort` in the guest gave, on the same image and the same command:
@@ -2961,20 +2961,20 @@ native  PWD=/data/data/.../.podnext/containers/deb-renamed/rootfs
 ```
 
 The engine chdir's the child inside the rootfs, so `getcwd` answers with a host path and the shell derives `PWD` from
-it. The result is now rewritten to its guest form (`translate_getcwd_result`), using the same host-to-guest rule as
-everything else and only when it fits the caller's buffer.
+it. The engine now rewrites the result to its guest form, `translate_getcwd_result`, with the same host-to-guest rule as
+all other paths, and only when the result fits the caller's buffer.
 
 Two mistakes on the way, both worth recording:
 
-- the first version read the buffer pointer from x0 at the EXIT stop, where x0 is the returned LENGTH for getcwd - the
-  buffer has to be captured at the entry stop, which is what the existing `faccessat_result` field already does;
+- the first version read the buffer pointer from x0 at the EXIT stop, where x0 is the returned LENGTH for getcwd. The
+  buffer must be captured at the entry stop, and the existing `faccessat_result` field already does this.
 - the capture was first placed inside the `faccessat2` branch, so it only ran for that syscall. It now sits on the
   general entry path.
 
 Measured after: `env | grep PWD; pwd; cd /etc && pwd` gives `PWD=/ | / | /etc` on BOTH engines.
 
-The 22-case battery then exposed three real differences, none of them caused by this change (symlink and chmod_stat
-were EQUAL before it and are measured below with their own outputs, so the next session starts from data):
+The 22-case battery then exposed three real differences, and this change caused none of them. symlink and chmod_stat
+were EQUAL before it and are measured below with their own outputs, so the next session starts from data.
 
 ```text
 symlink      proot: rc=0 out="sl-t|y"    native: rc=1 out=""                       (a step in the chain fails)
@@ -2984,7 +2984,7 @@ signal_self  proot: rc=0 out="rc=143"    native: rc=0 out="rc=0"                
 
 ### Forwarding every signal broke the engine completely - reverted with the numbers (2026-11-10 23:05 WIB)
 
-`signal_self` (`sh -c 'kill -TERM $$'`: proot rc=143, this engine rc=0) is a real defect: a signal delivered to a
+`signal_self` runs `sh -c 'kill -TERM $$'` and gives proot rc=143 and this engine rc=0. It is a real defect: a signal delivered to a
 tracee stops it, and the engine resumed with `None`, which DISCARDS it. The first fix was to forward every signal
 except SIGTRAP/SIGSTOP. Measured immediately after:
 
@@ -2992,17 +2992,17 @@ except SIGTRAP/SIGSTOP. Measured immediately after:
 e2e battery: 22 cases, 0 EQUAL, 22 DIFFERENT
 ```
 
-Every case broke, not just the signal one - the engine forwards `SIGSYS` too, and Android's seccomp trap produces
-SIGSYS on the syscalls it blocks (`faccessat2`, `set_robust_list`, `rseq`), so the guests were being killed by the
-engine's own filter. The change was reverted rather than patched in place, and the battery returned to
-21 EQUAL / 1 DIFFERENT (`signal_self` only), which is the state this entry leaves behind.
+Every case broke, and not only the signal case. The engine forwards `SIGSYS` too, and Android's seccomp trap produces
+SIGSYS on the syscalls that it blocks, such as `faccessat2`, `set_robust_list` and `rseq`. The engine's own filter
+killed the guests. The change was reverted rather than patched in place, and the battery returned to
+21 EQUAL / 1 DIFFERENT, `signal_self` only, which is the state that this entry leaves behind.
 
 What the next attempt must do differently, with the evidence above as the constraint: forward a signal only when it is
-the guest's own (not SIGSYS from the seccomp trap, not SIGTRAP/SIGSTOP bookkeeping, not SIGCHLD from a child exit), and
-prove it on the battery rather than on the single case that motivated it - the single case looked better (the child
-died) while 21 cases that worked had stopped working.
+the guest's own signal, and not SIGSYS from the seccomp trap, not SIGTRAP/SIGSTOP bookkeeping, and not SIGCHLD from a child exit. Then
+prove it on the battery and not on the single case that motivated it. The single case looked better because the child
+died, but 21 cases that worked had stopped working.
 
-This is the second time tonight the battery caught a change that a targeted probe called an improvement; the first was
+This is the second time tonight that the battery caught a change that a targeted probe called an improvement. The first was
 the `utimensat` gating that turned a working path into a refusal.
 
 ### 22/22: the signal rule had to be narrow, and now the battery agrees on every case (2026-11-10 23:40 WIB)
@@ -3035,9 +3035,9 @@ nested shells, cwd-relative reads, rename, symlink, chmod+stat, /dev/null and /d
 recursive grep, a self-inflicted SIGTERM, the guest environment, statfs, du, and pure shell arithmetic.
 
 Two changes to the instrument itself are part of the result and are stated so the number is not over-read: the SUSPECT
-verdict now requires an engine-level "Error:" line from BOTH arms (a probe that legitimately exits non-zero is EQUAL),
-and the battery must not be run while a cargo build is in flight - two cases failed earlier purely because the binary
-was being relinked (`Text file busy`).
+verdict now requires an engine-level "Error:" line from BOTH arms. A probe that legitimately exits non-zero is EQUAL.
+The battery must not be run while a cargo build is in flight. Two cases failed earlier purely because the binary
+was relinked with `Text file busy`.
 
 ### A test of mine encoded the defect I had just fixed (2026-11-10 23:55 WIB)
 
@@ -3048,8 +3048,8 @@ was being relinked (`Text file busy`).
 assertion `left == right` failed: with cwd: Some("/") the guest's own getcwd() must be the translated host path
 ```
 
-The guest now answers `/` and the test demanded the host rootfs path - i.e. the assertion had been written to lock in
-exactly the behaviour the getcwd fix removed (`PWD=/data/.../rootfs` instead of `PWD=/`). Rewritten to assert the guest
+The guest now answers `/` and the test demanded the host rootfs path. The assertion had been written to lock in
+exactly the behaviour that the getcwd fix removed: `PWD=/data/.../rootfs` and not `PWD=/`. The test now asserts the guest
 path with the measurement that justifies it, and the target is green again:
 
 ```text
@@ -3058,14 +3058,14 @@ cargo test -p proot-core                                 -> exit 0, 10 targets g
 ```
 
 The lesson is the one this repository keeps re-learning: a test written against a defect is a defect with a green
-check next to it. The rewrite keeps the surrounding assertion that distinguishes the ENGINE's own pre-exec chdir (a
-host path, which is correct) from the GUEST's view (a guest path), so the original intent survives.
+check next to it. The rewrite keeps the surrounding assertion that distinguishes the ENGINE's own pre-exec chdir, a
+host path that is correct, from the GUEST's view, a guest path, so the original intent survives.
 
 ### The battery grows to 30 cases and finds `wait` (2026-11-10 00:40 WIB)
 
 Eight more cases: a pipe chain through `tr|sort|head`, a background job with `wait`, `dpkg-query --version`,
-`dpkg-query -s dash`, `/proc/meminfo`, a deep `cp -r` compared with `diff -r`, a long `ls -la | wc -l`, and `printf`
-formatting. Measured immediately:
+`dpkg-query -s dash`, `/proc/meminfo`, a deep `cp -r` compared with `diff -r`, a long `ls -la | wc -l`, and `printf` formatting.
+Measured immediately:
 
 ```text
 sh -c 'echo start; (sleep 0; echo bg-done) & wait; echo waited'
@@ -3074,15 +3074,15 @@ sh -c 'echo start; (sleep 0; echo bg-done) & wait; echo waited'
 ```
 
 So `wait` for a background job does not behave the same: the engine reaps descendants itself with `waitpid`, and the
-guest's own `wait`/`wait4` must be seeing something other than the child it is waiting for. That is the next defect,
+guest's own `wait`/`wait4` must see something other than the child that it waits for. That is the next defect,
 recorded with its exact command rather than a description.
 
 Two notes about the instrument, both earned:
 
-- the 30-case run takes longer than a foreground tool call allows, so it runs detached with its output in a file;
-- `pkill -f 'podnext'` killed the shell that ran it, exactly the trap this environment's notes warn about - the pattern
-  matches the command text itself. Kill by program identity (`ps -eo comm=`) and exclude your own PID, or use `timeout`
-  on the single command instead of hunting processes.
+- the 30-case run takes longer than a foreground tool call allows, so it runs detached with its output in a file.
+- `pkill -f 'podnext'` killed the shell that ran it, exactly the trap that this environment's notes warn about. The pattern
+  matches the command text itself. Kill by program identity, `ps -eo comm=`, and exclude your own PID, or use `timeout`
+  on the single command and do not hunt processes.
 
 ### `wait` on a background job: the guest's shell stops after it (2026-11-10 01:10 WIB)
 
@@ -3094,26 +3094,26 @@ native: + echo start / start / + + wait / echo bg / bg                          
 ```
 
 So under the native engine the guest reaches `wait`, the background child runs, and then the shell produces no further
-output at all - the commands after `wait` are never executed, while the run still reports 0. The engine reaps
-descendants with its own `waitpid`, so the guest's `wait4` is racing the tracer for the same child; whichever side
+output at all. The commands after `wait` are never executed, while the run still reports 0. The engine reaps
+descendants with its own `waitpid`, so the guest's `wait4` races the tracer for the same child. Whichever side
 observes the exit, the shell must still continue.
 
-Also fixed in the instrument, because it bit during this measurement: the battery now gives every case a 30 second
-ceiling. Without one, a guest that blocks under one engine stalls the whole battery instead of being reported as that
-case's difference - which is exactly what happened when this case hung.
+Also fixed in the instrument, because it bit during this measurement: the battery now gives every case a 30 second ceiling.
+Without one, a guest that blocks under one engine stalls the whole battery, and the battery does not report that
+case's difference. That is exactly what happened when this case hung.
 
 ### wait4 groundwork, and the battery's breadth finds `mkdir -p` (2026-11-10 02:20 WIB)
 
 Two pieces of engineering, one of them incomplete and stated as such.
 
 **Incomplete: `wait`.** The tracer must reap descendants to follow them, so the guest's own `wait4` answers ECHILD
-whether or not its child has exited. The engine now records every descendant's status word (`(code & 0xff) << 8` for an
-exit, `sig & 0x7f` for a signal), hands it back when the guest asks for a pid it already holds, and REPLAYS the call -
-restoring the original pid into x0 and rewinding the pc to the `svc` - while descendants are still alive, so the guest
-retries instead of receiving a false ECHILD. Measured: `sh -c 'echo start; (echo bg) & wait; echo "wait-rc=$?"; echo
-after'` still prints only `start | bg` where proot prints `start | bg | wait-rc=0 | after`, so the case stays
-DIFFERENT and the next measurement is which call the shell actually makes (`waitid` is a separate syscall from
-`wait4`, and dash may use either).
+whether or not its child has exited. The engine now records every descendant's status word, `(code & 0xff) << 8` for an
+exit and `sig & 0x7f` for a signal. It hands the word back when the guest asks for a pid that it already holds, and
+REPLAYS the call while descendants are still alive. The replay puts the original pid back into x0 and rewinds the pc to the `svc`, so the guest
+retries and does not receive a false ECHILD. Measured:
+`sh -c 'echo start; (echo bg) & wait; echo "wait-rc=$?"; echo after'` still prints only `start | bg` where proot prints `start | bg | wait-rc=0 | after`, so the case stays
+DIFFERENT, and the next measurement is which call the shell actually makes. `waitid` is a separate syscall from
+`wait4`, and dash can use either.
 
 **New, from the wider battery: `mkdir -p` of a nested path fails.**
 
@@ -3123,10 +3123,10 @@ sh -c 'mkdir -p /tmp/ct/a/b && echo x > /tmp/ct/a/b/f && ...'
   proot : copied-same
 ```
 
-`mkdir -p` creates the components one at a time and the nested one does not survive, so a recursive copy - and anything
-else that prepares a directory tree - fails under the native engine.
+`mkdir -p` creates the components one at a time and the nested one does not survive. A recursive copy, and anything
+else that prepares a directory tree, fails under the native engine.
 
-Battery after both: 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job`, `cp_tree`), 0 SUSPECT. The wait4 work did not
+Battery after both: 30 cases, 28 EQUAL, 2 DIFFERENT, `background_job` and `cp_tree`, 0 SUSPECT. The wait4 work did not
 regress anything: the 28 include every case that was EQUAL before it.
 
 ### `mkdir -p` loses every nested component (2026-11-10 02:40 WIB)
@@ -3141,15 +3141,15 @@ native: /tmp/kk   ls: cannot access '/tmp/kk/a': No such file or directory
                   ls: cannot access '/tmp/kk/a/b': No such file or directory
 ```
 
-The FIRST component is created and every nested one is silently dropped, with `mkdir -p` still reporting rc=0 - so a
-guest preparing a directory tree (a recursive copy, an archive extraction, a build's output path) gets a success and no
+The FIRST component is created and every nested one is silently dropped, while `mkdir -p` still reports rc=0. A
+guest that prepares a directory tree, for example a recursive copy, an archive extraction or a build's output path, gets a success and no
 tree. This is the same family as the descriptor-relative `unlinkat` that was closed earlier tonight, which is the
 measurement worth carrying forward: both are descriptor-relative calls on a nested name, and for the removal the engine
-was found writing a HOST directory into the guest's argument. The equivalent check for `mkdirat` is the next thing to
-run - is the directory it resolves with a host path, is the call refused, or is it translated to a parent that does not
-exist yet.
+was found to write a HOST directory into the guest's argument. The equivalent check for `mkdirat` is the next thing to
+run. Is the directory that it resolves with a host path? Is the call refused? Is it translated to a parent that does not
+exist yet?
 
-State: battery 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job` = wait, `cp_tree` = this). All fixes are pushed; the
+State: battery 30 cases, 28 EQUAL, 2 DIFFERENT. `background_job` is wait and `cp_tree` is this. All fixes are pushed and the
 tree is clean.
 
 ### The asymmetry that names the family: explicit nested mkdir works, `mkdir -p` does not (2026-11-10 03:05 WIB)
@@ -3173,17 +3173,17 @@ So the same filesystem operation succeeds when the SHELL issues it and fails whe
 is the third member of one family, and the family is now named by evidence rather than by guesswork: calls the guest
 makes RELATIVE TO AN OPEN DESCRIPTOR.
 
-- `unlinkat(fd, "a")` inside a recursive removal wrote a host directory into the guest's argument (closed tonight by
-  enforcing that the directory handed to the guest must be a guest path);
-- `wait` on a background job (the tracer reaps, so the guest's wait4 sees ECHILD);
+- `unlinkat(fd, "a")` inside a recursive removal wrote a host directory into the guest's argument. It closed tonight when
+  the engine enforced that the directory handed to the guest must be a guest path.
+- `wait` on a background job, where the tracer reaps and the guest's wait4 sees ECHILD.
 - `mkdirat` from `mkdir -p`, which opens the parent and creates each component through it.
 
 The next measurement is the one that failed to anchor tonight: print the guest and host paths that
-`mkdirat` is given and writes, for the `mkdir -p` case only. Writing it as a `patch` against the exact text - not as a
-Python string replacement - is the lesson from four broken edits: the fuzzy matcher reports a diff, the string surgery
+`mkdirat` is given and writes, for the `mkdir -p` case only. Write it as a `patch` against the exact text, not as a
+Python string replacement. That is the lesson from four broken edits. The fuzzy matcher reports a diff. The string surgery
 reports nothing and breaks braces.
 
-Battery stands at 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job`, `cp_tree`), tree clean.
+Battery stands at 30 cases, 28 EQUAL, 2 DIFFERENT. The two different cases are `background_job` and `cp_tree`. The tree is clean.
 
 ### The translated path for `mkdirat` is correct and the directory still does not appear (2026-11-10 03:35 WIB)
 
@@ -3197,13 +3197,13 @@ ls: cannot access '/tmp/n2/a': No such file or directory
 Three facts, and the third is the one that redirects the work:
 
 1. exactly ONE `mkdirat` is translated for `mkdir -p /tmp/n2/a` - the absolute one for the leaf. The component above
-   it is issued by coreutils RELATIVE to a descriptor it opened, and that form produces no write at all;
-2. the path the engine writes is CORRECT - `<container>/tmp/n2/a` is exactly where the bind puts the guest's `/tmp`;
+   coreutils issues it RELATIVE to a descriptor that it opened, and that form produces no write at all.
+2. the path the engine writes is CORRECT - `<container>/tmp/n2/a` is exactly where the bind puts the guest's `/tmp`.
 3. the directory still does not exist afterwards, so a correct write with `arg_index = 1` is not enough for `mkdirat`
    to act on it.
 
 Point 3 is the next question, and it is now a question about the WRITE reaching the kernel rather than about the path:
-the register that carries the path must be checked at the NEXT stop (after `setregs` has run) instead of at the moment
+the register that carries the path must be checked at the NEXT stop, after `setregs` has run, instead of at the moment
 of the write, and compared with what the kernel reports it received. Every earlier attempt to answer that read the
 registers too early and measured nothing, which is recorded in this file already.
 
@@ -3216,7 +3216,7 @@ State left behind: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2
 
 Two checks, neither needing a build, settle where this belongs.
 
-**Hypothesis falsified:** `write_path_and_redirect_arg` might write the path but never commit the register. It does
+**Hypothesis falsified:** the claim was that `write_path_and_redirect_arg` writes the path but never commits the register. It does
 commit - `set_regs(pid, raw)?` at the end of the function - so the register the kernel reads has the translated path.
 
 **Evidence that places the defect:** when the parent already exists, the nested create works.
@@ -3226,14 +3226,14 @@ mkdir /tmp/m1; mkdir /tmp/m1/a        -> both created          (parent made by t
 mkdir -p /tmp/n2/a                    -> /tmp/n2 exists, /tmp/n2/a missing
 ```
 
-So `mkdirat` is not broken in general and its absolute-path translation is correct - what is missing is the PARENT
+So `mkdirat` is not broken in general and its absolute-path translation is correct - what is absent is the PARENT
 directory, which `mkdir -p` creates through a descriptor it opened rather than by absolute path, and that form produces
-no translated write at all (measured: exactly one WRITEPATH for the two components).
+no translated write at all. The measurement shows exactly one WRITEPATH for the two components.
 
 That is the same shape as the other two open defects, and it is now a single piece of work rather than three guesses:
 the descriptor-relative form must translate its name against the directory the descriptor refers to, map that back to
 the guest form, and let the kernel act on the result - for `mkdirat` here, for `wait4` it is the reaping race, and for
-`unlinkat` it is the same mechanism that was closed earlier tonight by enforcing that the directory handed to the guest
+`unlinkat` it is the same mechanism that was closed earlier tonight when the engine enforced that the directory handed to the guest
 is a guest path.
 
 State: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, everything pushed.
@@ -3241,35 +3241,35 @@ State: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, 
 ### One rule, one implementation - and the parent create still writes nothing (2026-11-10 04:30 WIB)
 
 `host_dir_for_fd_as_guest` carried its own copy of the host-to-guest mapping: every spelling of the rootfs, then the
-bind sources. `guest_form_of_host_path` does the same job for NAMES and is the one that works (`unlinkat` inside a
-recursive removal was closed by it tonight). Two implementations of one rule is how a host directory reached the
+bind sources. `guest_form_of_host_path` does the same job for NAMES and is the one that works. It closed the `unlinkat` inside a
+recursive removal tonight. Two implementations of one rule is how a host directory reached the
 guest's argument while the other copy mapped the identical string correctly, so the copy is gone and the function is
 now a read of `/proc/<pid>/fd/<n>` followed by that one call.
 
-Measured after: `mkdir -p /tmp/n5/a` still leaves `/tmp/n5` and no `/tmp/n5/a` (proot creates both), and the battery is
+Measured after: `mkdir -p /tmp/n5/a` still leaves `/tmp/n5` and no `/tmp/n5/a`. Proot creates both. The battery is
 unchanged at 30 cases / 28 EQUAL / 2 DIFFERENT - so this is a de-duplication with no regression and NOT a fix.
 
 What that narrows: the create of the PARENT produces no translated write at all, even with the single mapping, so
 `fd_guest_dir` is `None` for it - the descriptor's target matches neither the rootfs nor any bind at the instant the
 call is handled. The next measurement is the fd target and the bind list printed at that exact stop, which is the probe
-that failed to anchor twice; it belongs in `patch` with an exact anchor, not in string surgery.
+that failed to anchor twice. It belongs in `patch` with an exact anchor, not in string surgery.
 
 ### Two more falsifications, and where the next measurement must look (2026-11-10 05:00 WIB)
 
-The parent create of `mkdir -p` still produces neither a translated write nor a call into the descriptor helper - measured
-by instrumenting `host_dir_for_fd_as_guest` itself: `PDN_FDPROBE=1` with `mkdir -p /tmp/n6/a` prints NOTHING, so that
-function is never reached for this case, and the earlier run showed exactly one WRITEPATH (the leaf).
+The parent create of `mkdir -p` still produces neither a translated write nor a call into the descriptor helper. The measurement instrumented
+`host_dir_for_fd_as_guest` itself. `PDN_FDPROBE=1` with `mkdir -p /tmp/n6/a` prints NOTHING, so that
+function is never reached for this case, and the earlier run showed exactly one WRITEPATH. That one is the leaf.
 
 Two explanations were tested and are now excluded:
 
-- `guest_access` (the engine's own answer for the seccomp-blocked `faccessat2`) is NOT the liar: it reads the guest path,
-  resolves it, and answers `-ENOENT` when the host path does not exist - read in the code, not assumed;
+- `guest_access` is the engine's own answer for the seccomp-blocked `faccessat2`, and it is NOT the liar: it reads the guest path,
+  resolves it, and answers `-ENOENT` when the host path does not exist - read in the code, not assumed.
 - the descriptor branch of `translate_path_remote` is not silent because the fd is rejected: the helper is simply never
   called, which is what its own instrumented absence proves.
 
-What that leaves, stated as the next probe and nothing more: the create of the parent is either not an entry stop (the
+What that leaves, stated as the next probe and nothing more: the create of the parent is either not an entry stop. The
 path translation is gated to entries, and an exit stop silently skips it - the same inversion class that was fixed for
-a fork child's FIRST syscall tonight), or it is a syscall the table does not carry. The measurement that decides it is
+a fork child's FIRST syscall tonight, or it is a syscall the table does not carry. The measurement that decides it is
 the full stop trace of ONE `mkdir -p` run - every stop for every pid, with the syscall name and the entry/exit flag -
 which is the instrument that produced the night's biggest fix and has not yet been pointed at this case.
 
@@ -3292,7 +3292,7 @@ along - it is a RELATIVE-NAME problem: with an unknown or wrongly-stored cwd, `n
 
 That narrowed the search to where the per-tracee cwd is remembered, and the reason is visible there: the value is read
 from the tracee at the ENTRY stop, i.e. AFTER the engine wrote its own translated path into that memory, so what got
-stored as "the guest's current directory" was a HOST path. Mapping it back through the same single rule is now done,
+stored as "the guest's current directory" was a HOST path. The engine now maps it back through the same single rule,
 with the measurement above as the justification.
 
 Measured after: `mkdir -p /tmp/c1/a/b` still leaves only `/tmp/c1`, and the battery is unchanged at 30 cases /
@@ -3311,12 +3311,12 @@ RELPATH SYS_mkdirat raw="a"  cwd=Some("/tmp")     WRONG for this call
 
 The guest asks for `mkdirat(AT_FDCWD, "a")` and the engine believes the current directory is `/tmp`, so `a` is joined
 to `/tmp` and the directory is created as `/tmp/a` while the guest expected `/tmp/q1/a` - which is exactly why `ls
-/tmp/q1/a` fails and `mkdir -p` still reports success (its own `mkdir` calls returned success, just not where the guest
-meant).
+/tmp/q1/a` fails and `mkdir -p` still reports success. Its own `mkdir` calls returned success, but not where the guest
+meant.
 
-And the chdir IS asked for: the full trace of the same command shows two `chdir` stops in that process. So the
-bookkeeping is what lags - the update runs only when the path translation reports `Ok(true)`, and the cwd it stores is
-the value read after the engine wrote its own host path (the mapping fix from the previous commit), so a chdir whose
+And the chdir IS asked for: the full trace of the same command shows two `chdir` stops in that process. So the bookkeeping
+is what lags - the update runs only when the path translation reports `Ok(true)`, and the cwd it stores is
+the value read after the engine wrote its own host path. That is the mapping fix from the previous commit. A chdir whose
 translation took a different branch leaves the older cwd in place.
 
 Next: print the `chdir` stops of this exact command together with the stored cwd before and after each, which decides
@@ -3324,7 +3324,7 @@ between "the update branch is not reached" and "the update stores the wrong valu
 
 ### The cwd bookkeeping WORKS - it is stale per tracee, not broken (2026-11-10 06:45 WIB)
 
-The chdir probe, printing the stored cwd before each path call of one `mkdir -p /tmp/r2/a`, grouped:
+The chdir probe recorded the stored cwd before each path call of one `mkdir -p /tmp/r2/a`. The result is grouped below:
 
 ```text
 25x before="/"         the shell, which never moves
@@ -3332,14 +3332,14 @@ The chdir probe, printing the stored cwd before each path call of one `mkdir -p 
  1x before="/tmp/r2"   a process whose cwd DID reach the target
 ```
 
-So the update mechanism is not dead: some tracee reaches `/tmp/r2` exactly as it should. What fails is that the process
+So the update mechanism is not dead: one tracee reaches `/tmp/r2` correctly. What fails is that the process
 which creates the LEAF holds `/tmp` at that moment, so `a` is joined onto `/tmp` and the guest's `/tmp/r2/a` is never
 made. The defect is therefore per-tracee state that lags - a slot whose cwd was not carried over when the process moved
 or was forked - not a missing branch and not a wrong join.
 
 That is a precise enough place to stop tonight, and the next probe is narrow: which pid creates the leaf, what its
 slot's cwd was at fork, and which of its chdir stops did not update it. Everything measured is in this file with the
-command that produced it; nothing here is inferred from a passing suite.
+command that produced it. Nothing here is inferred from a passing suite.
 
 ### Localised: the child never records the chdir into `s1` (2026-11-10 07:20 WIB)
 
@@ -3357,11 +3357,11 @@ though the guest's own trace shows a `chdir` in that process. So one update is m
 engine's slot did not follow, which is why `a` lands as `/tmp/a` while the guest means `/tmp/s1/a`.
 
 That is the last thing this session measured, and it is narrow enough to finish in one pass: log every `chdir` stop of
-this exact command with the translation result (`Ok(true)`/`Ok(false)`) and the resulting stored cwd, and the missing
+this exact command with the translation result `Ok(true)` or `Ok(false)` and the resulting stored cwd, and the missing
 update names itself - either the branch is skipped because the translation reports the path as already-host, or the
 value stored is the pre-move one.
 
-Housekeeping: both probes were removed by brace counting rather than by matching text, twice now, because `rustfmt`
+Cleanup: both probes were removed by brace counting rather than by a text match, twice now, because `rustfmt`
 reformats an inserted block and an exact match then silently removes nothing. No debug markers remain in the tree.
 
 ### The chdir handling is CORRECT - my model of the guest was wrong (2026-11-10 07:50 WIB)
@@ -3372,20 +3372,20 @@ The probe printed one line for the whole run of `mkdir -p /tmp/t1/a`:
 CHD2 pid=23617 BEFORE=Some("/") raw=Ok(Some("/tmp"))
 ```
 
-So the engine's chdir bookkeeping does exactly what it should: the tracee asked to move, the stored cwd was `/` before and
+So the engine's chdir bookkeeping is correct: the tracee asked to move, the stored cwd was `/` before and
 the value recorded is `/tmp` - the GUEST form, not a host path - and there is exactly ONE chdir in the entire run.
 
-That falsifies the story this session had been building. If the guest never moves into `t1`, then its later
+That falsifies the story this session built. If the guest never moves into `t1`, then its later
 `mkdirat(AT_FDCWD, "a")` is genuinely relative to `/tmp`, and my assumption that coreutils chdirs into each component
-before creating the next one is simply not what this binary does. The engine is following the guest; the divergence must
+before it creates the next one is simply not what this binary does. The engine follows the guest. The divergence must
 come from what proot does with that same sequence - and the honest next step is a probe of the SAME shape against proot:
 does proot record a chdir into `t1` that the native engine never sees, or does it answer the relative `a` differently?
 
-Five fixes landed tonight and two defects remain open, but this entry is the one worth reading first tomorrow: three
-hours of instrumentation narrowed `mkdir -p` to a single relative name, and the last measurement says the engine's
-handling of that name is right and the model of the guest was wrong. That is a cheaper mistake to fix than the code was.
+Five fixes landed tonight and two defects remain open, but this entry is the first to read tomorrow: three
+hours of instrumentation narrowed `mkdir -p` to a single relative name, and the last measurement says the engine's handling
+of that name is right and the model of the guest was wrong. That is a cheaper mistake to fix than the code was.
 
-Housekeeping: every probe removed by brace counting, no debug markers in the tree, battery unchanged at 30 cases /
+Cleanup: every probe removed by brace counting, no debug markers in the tree, battery unchanged at 30 cases /
 28 EQUAL / 2 DIFFERENT, everything pushed.
 
 ### Both processes ARE traced; the second chdir per process is what does not update (2026-11-10 08:25 WIB)
@@ -3411,14 +3411,14 @@ clone seen:  2 events, both on pid 4085
 
 Both processes are traced and each asks for TWO chdirs, while the previous probe saw the cwd update only once per
 process. So the second chdir takes a path that does not update: either its translation reports `Ok(false)` and the move
-is refused, or it never reaches the table at all (the bootstrap exemption or the catch-all arm).
+is refused, or it never reaches the table at all. The other candidates are the bootstrap exemption and the catch-all arm.
 
-Next probe, exactly one line of output per chdir: which branch each of the two chdir stops takes - table hit (and what it
-stored), bootstrap exemption, or catch-all.
+Next probe, exactly one line of output per chdir: which branch each of the two chdir stops takes. The answer is a table
+hit that also shows what it stored, the bootstrap exemption, or the catch-all.
 
 ### The exemption swallows the shell's chdirs - measured, and the flag that should stop it (2026-11-10 09:00 WIB)
 
-One line per chdir stop, naming the state the branch decision reads:
+One line per chdir stop, and each line names the state the branch decision reads:
 
 ```text
 CH3 pid=6939 child=true  entry=true  execve_handled=false bootstrap=true  table=true   <- the engine's own child (sh)
@@ -3432,18 +3432,18 @@ exemption swallows both, no translation happens, and its stored cwd never moves.
 remembered directory, which is the whole of `mkdir -p`'s behaviour: the leaf is created relative to `/tmp` where the
 guest means `/tmp/x1`.
 
-The flag is now set at the PTRACE_EVENT_EXEC stop, which is where the engine learns that the exec happened - and that
-alone did NOT fix the case (`/tmp/a` still appears instead of `/tmp/x1/a`), so something else keeps the flag false at the
+The flag is now set at the PTRACE_EVENT_EXEC stop, which is where the engine learns that the exec happened. That change did NOT fix the case
+alone. `/tmp/a` still appears instead of `/tmp/x1/a`, so something else keeps the flag false at the
 chdir stops or resets it. The battery is unchanged at 30 cases / 28 EQUAL / 2 DIFFERENT, so the change is harmless.
 
-Where this leaves the defect: the exemption is keyed on a flag that is provably false when it should be true, at a stop
-where the engine's own child is asking to move. The next probe is the same one-line print plus the flag's value at the
+Where this leaves the defect: the exemption is keyed on a flag that is provably false at a stop where it must be true.
+That stop is one where the engine's own child asks to move. The next probe is the same one-line print plus the flag's value at the
 execve ENTRY stop and at the exec event for that pid - which of the two paths sets it, and whether the slot the chdir
 reads is the same slot the exec event wrote.
 
 ### The exec-event fix could not work: no EXEC stop reaches the engine's own child (2026-11-10 09:35 WIB)
 
-Re-measuring the exemption's state AFTER setting the flag in the exec-event arm:
+The exemption's state, measured again after the flag was set in the exec-event arm:
 
 ```text
 CH4 pid=22923 child=true  entry=true  execve_handled=false bootstrap=true    <- engine's own child, unchanged
@@ -3451,7 +3451,7 @@ CH4 pid=22927 child=false entry=true  execve_handled=true  bootstrap=false   <- 
 ```
 
 Still false, and the flag is written in three places - the engine-child execve entry, the remote execve translation,
-and (as of the previous commit) the PTRACE_EVENT_EXEC arm. None of them runs for that pid, so the conclusion is not
+and, as of the previous commit, the PTRACE_EVENT_EXEC arm. None of them runs for that pid, so the conclusion is not
 "the flag is reset" but "**no EXEC stop is delivered for the engine's own child**". That is why setting the flag there
 changed nothing, and it is a stronger fact than the one it replaced.
 
