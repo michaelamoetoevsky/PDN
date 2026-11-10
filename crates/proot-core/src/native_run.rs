@@ -1437,8 +1437,17 @@ fn parent_loop(
                         name,
                         arg_index,
                         dirfd_arg,
-                    }) = path_syscall(number).filter(|_| !engine_bootstrap_chdir)
-                    {
+                    }) = path_syscall(number).filter({
+                        // ENTRY STOPS ONLY (2026-11-10). At an exit stop the argument registers hold
+                        // RETURN VALUES, so a path syscall seen there has no path to read: the read
+                        // fails, the engine records a refusal, and a successful run is failed for a
+                        // call that had already completed. Measured on a real Debian rootfs:
+                        //   touch /tmp/f1 && rm -f /tmp/f1      -> SYS_utimensat (88) refused, rc=1
+                        //   mkdir /tmp/zz2; touch .../a; rm -rf -> SYS_unlinkat (35) refused, rc=1
+                        // while proot ran both and exited 0. The refusals were all exit stops.
+                        let at_entry = slots[idx].at_entry;
+                        move |_| !engine_bootstrap_chdir && at_entry
+                    }) {
                         let tracee_cwd = slots[idx].cwd.clone();
                         match translate_path_remote(
                             pid,

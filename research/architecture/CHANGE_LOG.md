@@ -2650,3 +2650,28 @@ e2e battery                               -> 8 EQUAL, 1 DIFFERENT, 1 SUSPECT
 `write_read` (mktemp/write/cat/rm -rf) remains the one DIFFERENT case: `SYS_unlinkat` is refused because its path
 could not be translated, so the whole run exits 1 where proot exits 0. That is the next defect, not a described-away
 limitation.
+
+### Path translation now runs at entry stops only - and `touch` still refuses (2026-11-10 14:20 WIB)
+
+`touch /tmp/f1 && rm -f /tmp/f1` on the native engine prints `UNLINK-OK` (the guest did its work) and then fails the
+run with `SYS_utimensat (88) [its path could not be translated ...]`, rc=1 where proot exits 0. `mkdir`/`rmdir` work;
+`echo x > /tmp/f3 && rm /tmp/f3` works; `rm -rf` of a populated directory refuses on `SYS_unlinkat (35)`.
+
+The path translation is now gated to ENTRY stops, which is correct on its own terms: at an exit stop the argument
+registers hold return values, so a path syscall seen there has no path to read and must not be recorded as a refusal.
+That gating did NOT fix this case - the refusals still appear - so the untranslatable path is genuinely untranslatable
+at a real entry stop, and the reason has not yet been measured. What is known:
+
+- the guest's work SUCCEEDS (`UNLINK-OK`, `RF-OK`, `REL-OK` all print), so this is the engine failing a run that did
+  what was asked, not the guest failing;
+- `rmdir` and `rm` of a single file by absolute path succeed, so the table entries that work are the ones without a
+  `dirfd`-relative name;
+- the two names that refuse (`utimensat`, `unlinkat`) share one property `openat` does not have in those runs: they are
+  reached with a path that the engine cannot join, which points at the cwd-unknown rule (`Option<String>` == None
+  refuses) rather than at the syscall table.
+
+The next measurement is the value the engine actually reads for that argument at its entry stop, printed from inside
+`translate_path_remote` with the tracee's pid, so the choice between "the path is relative and the cwd is unknown" and
+"the read returned nothing" is made on data.
+
+Battery status after tonight: 8 EQUAL, 1 DIFFERENT (`write_read`), 1 SUSPECT.
