@@ -2593,3 +2593,25 @@ absolute guest path into the tracee, rewind `pc` to the `svc` instruction and le
 
 The honest status: `dpkg-query` under the native engine still prints 0 packages, and the battery reports DIFFERENT for that
 case. That is the truth until the replay lands.
+
+### Four hypotheses about the missing entry stop, all falsified (2026-11-10 13:05 WIB)
+
+`sh -c 'dpkg-query --version | head -1'` still prints `not found` under the native engine on a real Debian rootfs,
+and I have not fixed it. What the session DID establish, each by measurement:
+
+1. **Not readability.** The path is readable at the stop; the engine simply never translates that call.
+2. **Not the address test alone.** `path_pointer_is_ours` matched a forked child's own pointer, and pairing it with
+   `at_entry` is a real fix for that collision (kept in d532ba9), but it does not make `dpkg-query` run.
+3. **Not the bare name.** `resolve_exec_path` resolves it through the tracee's own PATH and the file is found in the
+   rootfs (kept in d532ba9) - and the run still prints `not found`.
+4. **Not the birth-stop guard.** Hypothesis: the guard consumed the child's first stop, which on this kernel is
+   already the execve ENTRY. Applied, rebuilt, measured: the same output. Reverted rather than kept, because a change
+   that alters stop bookkeeping without changing the behaviour is risk with no evidence.
+
+What remains true and is the next thing to measure: the child's stop trace shows
+`SYS_execve entry=false` as its only execve stop, and `head`/`wc` children DO produce entry stops. The next probe is
+the FULL stop list of one failing child (every syscall, both directions, with `at_entry`), printed for pids on both
+sides of the pipeline, to see whether that child's execve is delivered as an exit only because it was reported as
+`entry=false` by the bookkeeping (an inversion) or because the kernel really delivered one stop.
+
+Status of the case, stated plainly: `dpkg-query -W | wc -l` -> proot 78, native 0. Open.
