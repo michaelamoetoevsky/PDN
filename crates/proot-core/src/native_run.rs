@@ -2360,11 +2360,24 @@ fn translate_path_remote(
     let Some(arg) = args.get(arg_index) else {
         return Ok(false);
     };
+    // A NULL path is NOT an untranslatable one (2026-11-10). `utimensat(fd, NULL, times, 0)` is the
+    // `futimens` form: it operates on the DESCRIPTOR in arg0 and simply has no path, so there is nothing
+    // to translate and nothing to complain about. Measured on a real Debian rootfs with
+    // `touch /tmp/f1 && rm -f /tmp/f1`:
+    //   PEEKDATA SYS_utimensat number=88 arg_index=1 arg=0x0               peek=Ok(None)
+    //   PEEKDATA SYS_unlinkat  number=35 arg_index=1 arg=0x558b6e19e0      peek=Ok(Some("/tmp/f1"))
+    // Treating that NULL as a failed translation made the engine refuse and the run exit 1 where proot
+    // exits 0, even though the guest's own work had already succeeded (`UNLINK-OK` printed).
+    if *arg == 0 {
+        return Ok(true);
+    }
     let Some(raw) = peek_cstr(pid, *arg)? else {
         return Ok(false);
     };
     if raw.is_empty() {
-        return Ok(false);
+        // Same reasoning: an empty path is something the kernel rejects with ENOENT by itself. Failing
+        // the whole RUN for it would report the engine's bookkeeping, not the guest's behaviour.
+        return Ok(true);
     }
     // A RELATIVE guest path (2026-11-09, p7 relative). Once `RunPlan::cwd` is applied the guest's
     // starting directory is INSIDE the rootfs, so a relative name resolved there cannot reach the host

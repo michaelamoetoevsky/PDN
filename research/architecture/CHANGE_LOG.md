@@ -2731,3 +2731,35 @@ Housekeeping: the marker for that print was inserted with a line filter that rem
 did not compile (heavy exit_code=101, 1 output line) and the run printed against the PREVIOUS binary. That output was
 discarded as invalid, the file was restored to 129a269, `git status` is clean, and `cargo check -p proot-core` passes.
 The evidence above is from the build that DID compile.
+
+### A NULL path is not an untranslatable path - and that closed `touch`/`rm` (2026-11-10 16:40 WIB)
+
+Two prints of the same call pair, in `translate_path_remote`, decided it:
+
+```text
+PEEKDATA SYS_utimensat number=88 arg_index=1 arg=0x0           peek=Ok(None)
+PEEKDATA SYS_unlinkat  number=35 arg_index=1 arg=0x5570fefdf0  peek=Ok(Some("/tmp/f1"))
+```
+
+`utimensat(fd, NULL, times, 0)` is the `futimens` form: it acts on the DESCRIPTOR in arg0 and has no path at all.
+The engine treated the NULL as a path it could not read, recorded a refusal, and failed the whole run - exit 1 where
+proot exits 0 - while the guest's own work had already succeeded (`UNLINK-OK` printed). An empty path is the same
+kind of non-event: the kernel answers ENOENT by itself.
+
+Both are now `Ok(true)` - "nothing to translate" - instead of `Ok(false)` - "could not translate".
+
+Measured after: `touch /tmp/f1 && rm -f /tmp/f1 && echo UNLINK-OK` is EQUAL on both engines, before and after, with
+no refusal line.
+
+What that leaves, measured rather than guessed:
+
+```text
+unlinkat(fd=4,        "a")            <- the path is RELATIVE to a real descriptor
+unlinkat(AT_FDCWD, "/tmp/zz2", ...)   <- absolute
+```
+
+`rm -rf` on a directory still refuses one `SYS_unlinkat`, and the form that fails is the descriptor-relative one:
+the name is `"a"` and arg0 is `4`, so the engine must resolve `/proc/<pid>/fd/4` and join the name; that resolution
+is what fails. The absolute form with `AT_FDCWD` reads fine.
+
+Battery after this change: 8 EQUAL, 1 DIFFERENT (`write_read`, i.e. the `rm -rf` above), 1 SUSPECT.
