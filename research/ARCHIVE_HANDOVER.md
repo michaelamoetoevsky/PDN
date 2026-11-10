@@ -160,6 +160,21 @@ The engine is not a complete replacement for `proot`. Two ordinary guest workloa
 section 6 names the rest. A reader must not read the sentence "the default engine is native" as "parity is
 complete".
 
-The documentation in this repository was rewritten to ASD-STE100 Simplified Technical English at archive time. The
-gate `scripts/check_ste.py` measures the mechanical part of that standard: sentence length, verb form, punctuation
-and modal verbs. The vocabulary part of the standard is not machine-checked. This document does not claim it.
+## 9. The documentation pass at archive
+
+The documentation was rewritten to ASD-STE100 Simplified Technical English in this change. Two scripts support
+that work:
+
+* `scripts/check_ste.py` measures the mechanical part of the standard: sentence length, verb form, punctuation
+  and modal verbs. It exits 2 when it measured nothing, so an empty measurement is not a pass.
+* `scripts/apply-ste.py` copies a rewrite into the tree only when the gate reports 0 violations AND the
+  structure equals the original blob from git: the same count of fenced blocks, headings and table rows, with
+  the fenced text byte-identical.
+
+The coverage is the tracked documentation: the repository root, `docs/`, `docs/src/`, `docs/tutorials/`,
+`research/` and `research/architecture/`. The directory `.omh/` holds a tool's own state file and is not
+documentation of this project. The directory `workbench/` is ignored by git and is not part of the archive.
+
+Two limits are stated here rather than hidden. The gate measures the mechanical part of the standard only, so
+the vocabulary part is unverified. A table cell keeps its original words, because a table carries identifiers
+and counts, and a rewrite puts a silent change on them.
