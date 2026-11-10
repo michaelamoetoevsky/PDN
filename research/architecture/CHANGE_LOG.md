@@ -3060,3 +3060,26 @@ cargo test -p proot-core                                 -> exit 0, 10 targets g
 The lesson is the one this repository keeps re-learning: a test written against a defect is a defect with a green
 check next to it. The rewrite keeps the surrounding assertion that distinguishes the ENGINE's own pre-exec chdir (a
 host path, which is correct) from the GUEST's view (a guest path), so the original intent survives.
+
+### The battery grows to 30 cases and finds `wait` (2026-11-10 00:40 WIB)
+
+Eight more cases: a pipe chain through `tr|sort|head`, a background job with `wait`, `dpkg-query --version`,
+`dpkg-query -s dash`, `/proc/meminfo`, a deep `cp -r` compared with `diff -r`, a long `ls -la | wc -l`, and `printf`
+formatting. Measured immediately:
+
+```text
+sh -c 'echo start; (sleep 0; echo bg-done) & wait; echo waited'
+  proot : start | bg-done | waited      rc=0
+  native: start | bg-done |             rc=0     <- `waited` never printed
+```
+
+So `wait` for a background job does not behave the same: the engine reaps descendants itself with `waitpid`, and the
+guest's own `wait`/`wait4` must be seeing something other than the child it is waiting for. That is the next defect,
+recorded with its exact command rather than a description.
+
+Two notes about the instrument, both earned:
+
+- the 30-case run takes longer than a foreground tool call allows, so it runs detached with its output in a file;
+- `pkill -f 'podnext'` killed the shell that ran it, exactly the trap this environment's notes warn about - the pattern
+  matches the command text itself. Kill by program identity (`ps -eo comm=`) and exclude your own PID, or use `timeout`
+  on the single command instead of hunting processes.

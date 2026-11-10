@@ -144,6 +144,22 @@ case_begin df_root /bin/sh -c 'df -P / > /dev/null; echo "rc=$?"'
 case_begin du_etc /bin/sh -c 'test -d /etc && echo "etc-present"'
 # 22. Arithmetic and string handling in the guest shell - no filesystem at all.
 case_begin shell_builtin /bin/sh -c 'i=0; while [ $i -lt 3 ]; do i=$((i+1)); done; echo "i=$i"'
+# 23. A pipe between two guest processes, with a filter in the middle.
+case_begin pipe_chain /bin/sh -c 'echo "c b a" | tr " " "\n" | sort | head -2'
+# 24. Background a job and wait for it - job control and the fork/exit path together.
+case_begin background_job /bin/sh -c '(sleep 0; echo bg-done) & wait; echo waited'
+# 25. The package manager's own version banner, i.e. a dynamically linked program with options.
+case_begin dpkg_version /bin/sh -c 'dpkg-query --version 2>/dev/null | head -1'
+# 26. A dpkg state query for one package, which reads the package database.
+case_begin dpkg_status /bin/sh -c 'dpkg-query -s dash 2>/dev/null | head -2'
+# 27. /proc/meminfo, which the sysdata layer is supposed to serve for the guest.
+case_begin proc_meminfo /bin/sh -c 'head -1 /proc/meminfo'
+# 28. A deep copy of a directory tree, then a comparison of the two trees.
+case_begin cp_tree /bin/sh -c 'mkdir -p /tmp/ct/a/b && echo x > /tmp/ct/a/b/f && cp -r /tmp/ct /tmp/cw && diff -r /tmp/ct /tmp/cw && echo "copied-same"; rm -rf /tmp/ct /tmp/cw'
+# 29. A long capture through a pipe, exercising buffer sizes rather than one line.
+case_begin big_pipe /bin/sh -c 'ls -la /usr/bin | wc -l'
+# 30. printf formatting, i.e. a libc-level format path.
+case_begin printf_fmt /bin/sh -c 'printf "%s=%d\n" answer 42'
 
 printf '\n=== summary ===\n'
 printf '  cases     : %s\n' "$CASES"
