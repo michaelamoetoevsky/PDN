@@ -3184,3 +3184,30 @@ Python string replacement - is the lesson from four broken edits: the fuzzy matc
 reports nothing and breaks braces.
 
 Battery stands at 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job`, `cp_tree`), tree clean.
+
+### The translated path for `mkdirat` is correct and the directory still does not appear (2026-11-10 03:35 WIB)
+
+The write itself, printed for every translated path:
+
+```text
+WRITEPATH arg_index=1 bytes="<container>/tmp/n2/a"
+ls: cannot access '/tmp/n2/a': No such file or directory
+```
+
+Three facts, and the third is the one that redirects the work:
+
+1. exactly ONE `mkdirat` is translated for `mkdir -p /tmp/n2/a` - the absolute one for the leaf. The component above
+   it is issued by coreutils RELATIVE to a descriptor it opened, and that form produces no write at all;
+2. the path the engine writes is CORRECT - `<container>/tmp/n2/a` is exactly where the bind puts the guest's `/tmp`;
+3. the directory still does not exist afterwards, so a correct write with `arg_index = 1` is not enough for `mkdirat`
+   to act on it.
+
+Point 3 is the next question, and it is now a question about the WRITE reaching the kernel rather than about the path:
+the register that carries the path must be checked at the NEXT stop (after `setregs` has run) instead of at the moment
+of the write, and compared with what the kernel reports it received. Every earlier attempt to answer that read the
+registers too early and measured nothing, which is recorded in this file already.
+
+Also consistent with tonight's family: `mkdir -p`'s calls are descriptor-relative, exactly like the `unlinkat` inside a
+recursive removal and the `wait` on a background job - three defects, one shape.
+
+State left behind: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, everything pushed.
