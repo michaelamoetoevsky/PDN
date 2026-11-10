@@ -2763,3 +2763,35 @@ the name is `"a"` and arg0 is `4`, so the engine must resolve `/proc/<pid>/fd/4`
 is what fails. The absolute form with `AT_FDCWD` reads fine.
 
 Battery after this change: 8 EQUAL, 1 DIFFERENT (`write_read`, i.e. the `rm -rf` above), 1 SUSPECT.
+
+### The descriptor-relative unlink is translated but has no effect (2026-11-10 17:20 WIB)
+
+Matching every spelling of the descriptor target against the rootfs removed the refusal - and exposed a different
+defect underneath it. Guest-side measurement, both engines, same command:
+
+```text
+sh -c 'echo "tmp=$(readlink -f /tmp)"; mkdir -p /tmp/z9 && touch /tmp/z9/a && rm -rf /tmp/z9;
+        test -e /tmp/z9 && echo "MASIH ADA" || echo "HILANG"'
+
+native : rm: cannot remove '/tmp/z9': Directory not empty     MASIH ADA
+proot  :                                                      HILANG
+```
+
+And step by step, with `rm`'s own messages, both engines agree on every OTHER form:
+
+```text
+mkdir -p /tmp/z3 && touch /tmp/z3/a && ls /tmp/z3   -> "a"           (both)
+rm -f /tmp/z3/a && ls -la /tmp/z3                   -> empty         (both)
+rmdir /tmp/z3                                       -> RMDIR-OK      (both)
+```
+
+So exactly one form fails: the descriptor-relative unlink `unlinkat(fd, "a")` that `rm -rf` uses to empty a directory
+it opened. It reaches `finish_translation` (the refusal is gone), the path it computes is the right one
+(`/tmp/z9/a`), and the file survives anyway. The engine writes an absolute host path and leaves arg0 - the descriptor
+- in place, which is the next thing to inspect: whether the kernel honours the descriptor for a path that is now
+absolute, and whether the scratch slot the argument points at actually holds what the engine wrote there.
+
+Also recorded, because it cost a measurement: checking the effect from the HOST side is invalid here. The guest's
+`/tmp` does not resolve to the store's `rootfs/tmp` (proot also left the host path untouched while removing the
+guest's own file), so "the directory still exists on the host" said nothing about either engine. The guest's own
+`test -e` is the measurement that counts, and it is the one printed above.

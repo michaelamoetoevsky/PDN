@@ -2299,8 +2299,26 @@ fn write_path_and_redirect_arg(pid: Pid, arg_index: usize, bytes: &[u8]) -> Resu
 /// A descriptor outside the rootfs answers `None` and the caller refuses, as before.
 fn host_dir_for_fd_as_guest(pid: Pid, fd: i32, rootfs: &Path) -> Option<String> {
     let target = std::fs::read_link(format!("/proc/{}/fd/{}", pid.as_raw(), fd)).ok()?;
-    let rel = target.strip_prefix(rootfs).ok()?;
-    Some(format!("/{}", rel.display()))
+    // Compare every spelling of the two paths before declaring the descriptor to be OUTSIDE the rootfs
+    // (2026-11-10). `rm -rf` unlinks a directory's children through a descriptor it opened, and the
+    // target `/proc/<pid>/fd/N` reports is the same directory as the rootfs path in the store - but not
+    // necessarily the same STRING: the store can hold a symlinked or non-canonical rootfs while the
+    // descriptor reports the resolved one. A textual `strip_prefix` then failed, the call was refused,
+    // and `rm -rf` exited 1 where proot exits 0 (`SYS_unlinkat (35) ... could not be translated`), while
+    // the absolute form with `AT_FDCWD` translated fine.
+    let root_forms = [rootfs.to_path_buf(), std::fs::canonicalize(rootfs).ok()?];
+    let target_forms = [
+        target.clone(),
+        std::fs::canonicalize(&target).unwrap_or_else(|_| target.clone()),
+    ];
+    for root in root_forms.iter().flatten() {
+        for t in target_forms.iter() {
+            if let Ok(rel) = t.strip_prefix(root) {
+                return Some(format!("/{}", rel.display()));
+            }
+        }
+    }
+    None
 }
 
 /// Resolve `guest` through the same `resolve` the rest of the engine uses, write the host path into
