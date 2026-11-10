@@ -1269,11 +1269,22 @@ fn parent_loop(
                     // host's `/bin/ls` (Android's toybox via the /bin -> /system/bin symlink) and
                     // died inside bionic's loader with `library "libcrypto.so" not found` - not a
                     // missing guest file, an UNTRANSLATED second exec.
-                    if path_pointer_is_ours(&report, arg0) {
+                    // The address test ALONE is not an identity test (2026-11-10): a forked child
+                    // inherits the shared page, so an ordinary pointer of its own can coincide with the
+                    // published address. Measured on a real Debian rootfs with
+                    // `sh -c 'dpkg-query -W | wc -l'`: the pipeline's left child exec'd the BARE name
+                    // `dpkg-query`, its arg0 matched the page address, this branch was taken, and
+                    // `at_entry == false` meant NOTHING happened - the execve reached the kernel with the
+                    // host PATH and returned ENOENT (`/bin/sh: dpkg-query: not found`, 0 packages) while
+                    // proot printed its 78. The same collision explains the bare-name `ls` case that a
+                    // previous change worked around by rewriting the caller's argv[0] instead.
+                    // Only an entry stop carries the published pointer, which the comment below always
+                    // said; so the pointer test is now paired with it and everything else is treated as
+                    // a REMOTE path, read out of the tracee and rewritten there.
+                    if path_pointer_is_ours(&report, arg0) && slots[idx].at_entry {
                         // The engine's OWN child: the path lives in the shared page, so the rewrite
-                        // is a plain memory write through `translate_execve`, and only an ENTRY stop
-                        // carries the published pointer in arg0.
-                        if slots[idx].at_entry {
+                        // is a plain memory write through `translate_execve`.
+                        {
                             slots[idx].execve_handled = true;
                             if let Err(e) = translate_execve(page, plan, &mut report) {
                                 let _ = ptrace::kill(pid);
@@ -2437,6 +2448,53 @@ fn translate_path_remote(
 ///
 /// Returns `Ok(false)` when `arg0` does not point at a readable string (a non-entry stop) or when
 /// there is no plan, so the caller can tell "nothing to do here" from a real refusal.
+/// Resolve a NON-absolute execve path the way the kernel would for THIS tracee (2026-11-10).
+///
+/// A shell execs a bare name (`dpkg-query`) and lets the kernel search `PATH`; a relative path
+/// (`./prog`, `sub/prog`) is resolved against the cwd. Translation needs an ABSOLUTE guest path,
+/// because that path is what gets mapped into the rootfs - and without this step the bare name was
+/// resolved against `/` (`<rootfs>/dpkg-query`), the file was not found, the execve was left alone and
+/// the KERNEL answered `ENOENT` after searching the host's PATH. That is what a user sees as
+///
+/// ```text
+/// /bin/sh: 1: dpkg-query: not found
+/// ```
+///
+/// while the same guest under proot prints its 78 packages. MEASURED, 5 runs each way: native 0,
+/// proot 78, deterministic. The full path worked all along (`/usr/bin/dpkg-query --version`), which
+/// is why a battery that only ever used absolute paths could not see this.
+///
+/// `None` means "the engine cannot tell where the kernel would look" - not absolute, cwd unknown, or
+/// nothing in PATH exists in the rootfs. The caller then leaves the execve alone so the guest gets the
+/// kernel's own error, which is the honest answer.
+fn resolve_exec_path(pid: Pid, guest: &str, plan: &RunPlan) -> Option<String> {
+    if guest.starts_with('/') {
+        return Some(guest.to_string());
+    }
+    let rootfs = plan.rootfs.as_ref()?;
+    if guest.contains('/') {
+        let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+        let host_root = std::fs::canonicalize(rootfs).ok()?;
+        let rel = cwd.strip_prefix(&host_root).ok()?;
+        let joined = format!("{}/{}", rel.display(), guest);
+        let joined = joined.trim_start_matches('/');
+        return Some(format!("/{joined}"));
+    }
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+    let path_var = environ
+        .split(|b| *b == 0)
+        .filter_map(|e| std::str::from_utf8(e).ok())
+        .find_map(|e| e.strip_prefix("PATH="))
+        .unwrap_or("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+    for dir in path_var.split(':').filter(|d| d.starts_with('/')) {
+        let candidate = format!("{}/{}", dir.trim_end_matches('/'), guest);
+        if resolve(rootfs, &candidate, &plan.binds).exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn translate_execve_remote(
     pid: Pid,
     arg0: u64,
@@ -2455,6 +2513,11 @@ fn translate_execve_remote(
     if guest.is_empty() {
         return Ok(false);
     }
+    // A bare name or a relative one is what the KERNEL would search for; the engine needs the absolute
+    // guest path it would have found, or it must leave the call alone (see `resolve_exec_path`).
+    let Some(guest) = resolve_exec_path(pid, &guest, plan) else {
+        return Ok(false);
+    };
 
     // The descendant's interpreter substitution: the SAME three-condition policy the child path
     // uses, reused through `guest_interpreter`. A substitution only happens when the interpreter is

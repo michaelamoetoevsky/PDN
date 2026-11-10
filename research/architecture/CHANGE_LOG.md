@@ -2551,3 +2551,45 @@ env -u TERMUX__HOME -u TERMUX__PREFIX -u PREFIX cargo test -p podnext --test log
 A test whose pass depends on which environment variables happen to be set on the host is measuring the host. The
 rule applied here is the same one this file already carries for the differential harness: assert the RELATIONSHIP
 (the flag adds a bind whose source is the resolver's own answer), never the host fact.
+
+### A pipeline's left-hand child never gets an entry stop, so its bare name is never translated (2026-11-10 12:10 WIB)
+
+Measured with a real Debian rootfs (fixture copy of `deb-renamed`, built release binary, direct commands):
+
+```text
+sh -c 'dpkg-query -W -f="${Package}\n" | wc -l'
+  proot   : 78                     (5/5 runs)
+  native  : /bin/sh: 1: dpkg-query: not found   0        (5/5 runs)
+  full path '/usr/bin/dpkg-query --version' -> identical on both engines
+```
+
+Deterministic, and the full path works, so the defect is in the BARE name. The engine's stop log shows why:
+
+```text
+STOP pid=24036 sys=221 SYS_execve entry=true      <- the shell itself, translated
+STOP pid=24036 sys=220 SYS_clone  (two pairs)     <- the two pipeline children
+STOP pid=24043 sys=221 SYS_execve entry=false     <- a child's execve, seen ONLY at exit
+  dpkg-query: not found
+```
+
+The pipeline's left child is attached by the fork event, but its `execve` reaches the engine **only as an exit stop**: there
+is no entry stop, so nothing is translated before the kernel resolves the name against the HOST `PATH` and answers
+`ENOENT`. Right-hand children (`head`, `wc`) do produce entry stops, which is why a battery of absolute-path cases - and the
+whole test suite - could not see this.
+
+Two things landed while measuring it, both correct on their own terms and kept:
+
+- `resolve_exec_path`: a non-absolute execve target is resolved the way the kernel would (PATH from the tracee's own
+  `/proc/<pid>/environ`, or the cwd for a name containing a slash) before the rootfs mapping, so that if the entry stop
+  does happen the bare name resolves to `<rootfs>/usr/bin/...` instead of `<rootfs>/dpkg-query`.
+- `path_pointer_is_ours(&report, arg0) && slots[idx].at_entry`: the address test alone was not an identity test. A forked
+  child inherits the shared page, so one of its own pointers can coincide with the published address, the "engine's own
+  child" branch was taken, and with `at_entry == false` it did NOTHING - the execve then went to the kernel untouched. That
+  is the same collision that made a previous change rewrite the caller's `argv[0]` instead of resolving the name.
+
+What remains is the replay: at the exit stop of a FAILED `execve` with `-ENOENT`, the path pointer is still in `x0`
+(a failed execve does not disturb the argument registers), so the engine can resolve it through the guest PATH, write the
+absolute guest path into the tracee, rewind `pc` to the `svc` instruction and let the syscall be re-executed once.
+
+The honest status: `dpkg-query` under the native engine still prints 0 packages, and the battery reports DIFFERENT for that
+case. That is the truth until the replay lands.
