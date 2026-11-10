@@ -2467,49 +2467,14 @@ fn host_dir_for_fd_as_guest(
     binds: &[(String, PathBuf)],
 ) -> Option<String> {
     let target = std::fs::read_link(format!("/proc/{}/fd/{}", pid.as_raw(), fd)).ok()?;
-    // Compare every spelling of the two paths before declaring the descriptor to be OUTSIDE the rootfs
-    // (2026-11-10). `rm -rf` unlinks a directory's children through a descriptor it opened, and the
-    // target `/proc/<pid>/fd/N` reports is the same directory as the rootfs path in the store - but not
-    // necessarily the same STRING: the store can hold a symlinked or non-canonical rootfs while the
-    // descriptor reports the resolved one. A textual `strip_prefix` then failed, the call was refused,
-    // and `rm -rf` exited 1 where proot exits 0 (`SYS_unlinkat (35) ... could not be translated`), while
-    // the absolute form with `AT_FDCWD` translated fine.
-    let root_forms = [rootfs.to_path_buf(), std::fs::canonicalize(rootfs).ok()?];
-    let target_forms = [
-        target.clone(),
-        std::fs::canonicalize(&target).unwrap_or_else(|_| target.clone()),
-    ];
-    for root in root_forms.iter().flatten() {
-        for t in target_forms.iter() {
-            if let Ok(rel) = t.strip_prefix(root) {
-                return Some(format!("/{}", rel.display()));
-            }
-        }
-    }
-    // THE BINDS TOO, and this is the case that mattered (2026-11-10). The guest's `/tmp` is a BIND whose
-    // SOURCE is `<store>/containers/<name>/tmp`, i.e. outside the rootfs - so a descriptor held by a
-    // recursive removal, opened on that directory, has a target no rootfs prefix matches. The
-    // untranslated host path was then handed to `resolve` and mapped into the rootfs a SECOND time:
-    //   guest = "<store>/containers/deb-renamed/tmp/za/a"
-    //   host  = "<store>/containers/deb-renamed/rootfs/<store>/containers/deb-renamed/tmp/za/a"
-    // The call then acted on a path that does not exist, silently did nothing, and the guest reported
-    // `Directory not empty` while proot removed the directory. Matching the bind SOURCE recovers the
-    // guest form of that directory, which is what belongs in the tracee.
-    for (guest, host) in binds {
-        let host_forms = [
-            host.clone(),
-            std::fs::canonicalize(host).unwrap_or_else(|_| host.clone()),
-        ];
-        for h in host_forms.iter() {
-            for t in target_forms.iter() {
-                if let Ok(rel) = t.strip_prefix(h) {
-                    let joined = format!("{}/{}", guest.trim_end_matches('/'), rel.display());
-                    return Some(joined.trim_end_matches('/').to_string());
-                }
-            }
-        }
-    }
-    None
+    // ONE implementation of host->guest (2026-11-10). This function used to carry its own copy of the mapping -
+    // every spelling of the rootfs, then the bind sources - and that copy is exactly how a HOST directory reached the
+    // guest's argument while `guest_form_of_host_path`, which does the same job for names, mapped the identical
+    // string correctly. Two implementations of one rule WAS the defect; the rule now lives in one place.
+    //   measured: `mkdir -p /tmp/n2/a` -> /tmp/n2 exists, /tmp/n2/a missing
+    // because the parent is created relative to an open descriptor and that call produced no translated write.
+    let raw = target.to_string_lossy().into_owned();
+    guest_form_of_host_path(&raw, rootfs, binds)
 }
 
 /// Resolve `guest` through the same `resolve` the rest of the engine uses, write the host path into

@@ -3237,3 +3237,19 @@ the guest form, and let the kernel act on the result - for `mkdirat` here, for `
 is a guest path.
 
 State: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, everything pushed.
+
+### One rule, one implementation - and the parent create still writes nothing (2026-11-10 04:30 WIB)
+
+`host_dir_for_fd_as_guest` carried its own copy of the host-to-guest mapping: every spelling of the rootfs, then the
+bind sources. `guest_form_of_host_path` does the same job for NAMES and is the one that works (`unlinkat` inside a
+recursive removal was closed by it tonight). Two implementations of one rule is how a host directory reached the
+guest's argument while the other copy mapped the identical string correctly, so the copy is gone and the function is
+now a read of `/proc/<pid>/fd/<n>` followed by that one call.
+
+Measured after: `mkdir -p /tmp/n5/a` still leaves `/tmp/n5` and no `/tmp/n5/a` (proot creates both), and the battery is
+unchanged at 30 cases / 28 EQUAL / 2 DIFFERENT - so this is a de-duplication with no regression and NOT a fix.
+
+What that narrows: the create of the PARENT produces no translated write at all, even with the single mapping, so
+`fd_guest_dir` is `None` for it - the descriptor's target matches neither the rootfs nor any bind at the instant the
+call is handled. The next measurement is the fd target and the bind list printed at that exact stop, which is the probe
+that failed to anchor twice; it belongs in `patch` with an exact anchor, not in string surgery.
