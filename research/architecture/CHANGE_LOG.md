@@ -2981,3 +2981,26 @@ symlink      proot: rc=0 out="sl-t|y"    native: rc=1 out=""                    
 chmod_stat   proot: rc=0 out="640"       native: rc=1 "stat: cannot statx 'md-f': No such file or directory"
 signal_self  proot: rc=0 out="rc=143"    native: rc=0 out="rc=0"                   (self-SIGTERM not reflected)
 ```
+
+### Forwarding every signal broke the engine completely - reverted with the numbers (2026-11-10 23:05 WIB)
+
+`signal_self` (`sh -c 'kill -TERM $$'`: proot rc=143, this engine rc=0) is a real defect: a signal delivered to a
+tracee stops it, and the engine resumed with `None`, which DISCARDS it. The first fix was to forward every signal
+except SIGTRAP/SIGSTOP. Measured immediately after:
+
+```text
+e2e battery: 22 cases, 0 EQUAL, 22 DIFFERENT
+```
+
+Every case broke, not just the signal one - the engine forwards `SIGSYS` too, and Android's seccomp trap produces
+SIGSYS on the syscalls it blocks (`faccessat2`, `set_robust_list`, `rseq`), so the guests were being killed by the
+engine's own filter. The change was reverted rather than patched in place, and the battery returned to
+21 EQUAL / 1 DIFFERENT (`signal_self` only), which is the state this entry leaves behind.
+
+What the next attempt must do differently, with the evidence above as the constraint: forward a signal only when it is
+the guest's own (not SIGSYS from the seccomp trap, not SIGTRAP/SIGSTOP bookkeeping, not SIGCHLD from a child exit), and
+prove it on the battery rather than on the single case that motivated it - the single case looked better (the child
+died) while 21 cases that worked had stopped working.
+
+This is the second time tonight the battery caught a change that a targeted probe called an improvement; the first was
+the `utimensat` gating that turned a working path into a refusal.
