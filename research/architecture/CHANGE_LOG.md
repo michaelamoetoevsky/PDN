@@ -3299,3 +3299,25 @@ Measured after: `mkdir -p /tmp/c1/a/b` still leaves only `/tmp/c1`, and the batt
 28 EQUAL / 2 DIFFERENT. So this is a correct change with no regression that does NOT close the case - the remaining
 question is why the relative name still is not rewritten, and the next probe is the value of `tracee_cwd` and the join
 it produces for `"n8"`, printed at that call.
+
+### The engine's per-tracee cwd goes STALE: `a` is joined onto `/tmp` (2026-11-10 06:15 WIB)
+
+The relative-name probe, printed at each call of one `mkdir -p /tmp/q1/a`:
+
+```text
+RELPATH SYS_mkdirat raw="q1" cwd=Some("/tmp")     correct
+RELPATH SYS_mkdirat raw="a"  cwd=Some("/tmp")     WRONG for this call
+```
+
+The guest asks for `mkdirat(AT_FDCWD, "a")` and the engine believes the current directory is `/tmp`, so `a` is joined
+to `/tmp` and the directory is created as `/tmp/a` while the guest expected `/tmp/q1/a` - which is exactly why `ls
+/tmp/q1/a` fails and `mkdir -p` still reports success (its own `mkdir` calls returned success, just not where the guest
+meant).
+
+And the chdir IS asked for: the full trace of the same command shows two `chdir` stops in that process. So the
+bookkeeping is what lags - the update runs only when the path translation reports `Ok(true)`, and the cwd it stores is
+the value read after the engine wrote its own host path (the mapping fix from the previous commit), so a chdir whose
+translation took a different branch leaves the older cwd in place.
+
+Next: print the `chdir` stops of this exact command together with the stored cwd before and after each, which decides
+between "the update branch is not reached" and "the update stores the wrong value".
