@@ -2951,3 +2951,33 @@ Two further notes for the next session, both measured: the failing call was `unl
 the kernel answering ENOENT and the guest retrying into ENOTEMPTY, and `rm -f`, `rmdir`, `ls`, `dpkg-query`,
 `touch`, pipelines, nested shells and `cd` all agreed on both engines BEFORE this change - so the battery now
 covers the case that was broken without weakening any case that was already right.
+### The guest's PWD no longer leaks the host layout (2026-11-10 22:15 WIB)
+
+`env | sort` in the guest gave, on the same image and the same command:
+
+```text
+proot   PWD=/
+native  PWD=/data/data/.../.podnext/containers/deb-renamed/rootfs
+```
+
+The engine chdir's the child inside the rootfs, so `getcwd` answers with a host path and the shell derives `PWD` from
+it. The result is now rewritten to its guest form (`translate_getcwd_result`), using the same host-to-guest rule as
+everything else and only when it fits the caller's buffer.
+
+Two mistakes on the way, both worth recording:
+
+- the first version read the buffer pointer from x0 at the EXIT stop, where x0 is the returned LENGTH for getcwd - the
+  buffer has to be captured at the entry stop, which is what the existing `faccessat_result` field already does;
+- the capture was first placed inside the `faccessat2` branch, so it only ran for that syscall. It now sits on the
+  general entry path.
+
+Measured after: `env | grep PWD; pwd; cd /etc && pwd` gives `PWD=/ | / | /etc` on BOTH engines.
+
+The 22-case battery then exposed three real differences, none of them caused by this change (symlink and chmod_stat
+were EQUAL before it and are measured below with their own outputs, so the next session starts from data):
+
+```text
+symlink      proot: rc=0 out="sl-t|y"    native: rc=1 out=""                       (a step in the chain fails)
+chmod_stat   proot: rc=0 out="640"       native: rc=1 "stat: cannot statx 'md-f': No such file or directory"
+signal_self  proot: rc=0 out="rc=143"    native: rc=0 out="rc=0"                   (self-SIGTERM not reflected)
+```

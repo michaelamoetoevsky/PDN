@@ -1053,6 +1053,9 @@ fn parent_loop(
         /// The answer the engine computed for a `faccessat2` whose path it resolved, applied at the
         /// exit stop only if the host refused the call with `-ENOSYS` (see `parent_loop`).
         faccessat_result: Option<i32>,
+        /// The `(buffer, capacity)` of a `getcwd` in flight, captured at its ENTRY stop because the exit stop's
+        /// x0 is the returned length, not the pointer (2026-11-10).
+        getcwd_buffer: Option<(u64, u64)>,
     }
     let mut slots: Vec<TraceeSlot> = vec![TraceeSlot {
         pid: child,
@@ -1066,6 +1069,7 @@ fn parent_loop(
         cwd: plan.cwd.clone(),
         started: true,
         faccessat_result: None,
+        getcwd_buffer: None,
     }];
     let mut original_exit: Option<i32> = None;
 
@@ -1126,6 +1130,7 @@ fn parent_loop(
                         cwd: plan.cwd.clone(),
                         started: false,
                         faccessat_result: None,
+                        getcwd_buffer: None,
                     });
                     slots.len() - 1
                 }
@@ -1189,6 +1194,13 @@ fn parent_loop(
                 if number == nix::libc::SYS_faccessat2 as i64 {
                     if slots[idx].at_entry {
                         slots[idx].faccessat_result = guest_access(pid, &args, plan)?;
+                        if number == nix::libc::SYS_getcwd as i64 {
+                            if let (Some(buf), Some(cap)) =
+                                (args.first().copied(), args.get(1).copied())
+                            {
+                                slots[idx].getcwd_buffer = Some((buf, cap));
+                            }
+                        }
                     } else if let Some(answer) = slots[idx].faccessat_result.take() {
                         let rv = return_raw(&get_regs(pid)?);
                         // MEASURED: a seccomp-trapped syscall returns WITHOUT writing x0 - the
@@ -1238,6 +1250,23 @@ fn parent_loop(
                     }
                 }
 
+                // THE CWD THE GUEST IS TOLD IT IS IN (2026-11-10). The engine chdir's the child inside the
+                // rootfs, so `getcwd` answers with a HOST path and the guest sees it. Measured on a real Debian
+                // rootfs, `env | sort`:
+                //   proot   PWD=/
+                //   native  PWD=/data/data/.../.podnext/containers/deb-renamed/rootfs
+                // A shell derives PWD from getcwd, so every guest that prints or reasons about its own
+                // directory was seeing the host layout. The guest form is computed with the same rule any
+                // host-shaped path gets and written back only when the call succeeded and it fits the buffer
+                // the caller passed.
+                if !slots[idx].at_entry && number == nix::libc::SYS_getcwd as i64 {
+                    if let (Some((buf, cap)), Some(rootfs)) =
+                        (slots[idx].getcwd_buffer.take(), plan.rootfs.as_deref())
+                    {
+                        let _ = translate_getcwd_result(pid, buf, cap, rootfs, &plan.binds);
+                    }
+                }
+
                 if !slots[idx].at_entry
                     && number == SYS_LINKAT
                     && plan.link2symlink
@@ -1261,6 +1290,17 @@ fn parent_loop(
 
                 if slots[idx].at_entry {
                     report.entries += 1;
+                    // Capture the getcwd buffer HERE, on the GENERAL entry path (2026-11-10). At an exit stop x0 is
+                    // the returned length, so the pointer must be read while it is still an argument. The first
+                    // version of this capture sat inside the faccessat2 branch and therefore only ran for that
+                    // syscall; measured after that attempt: `PWD` still carried the host path.
+                    if number == nix::libc::SYS_getcwd as i64 {
+                        if let (Some(buf), Some(cap)) =
+                            (args.first().copied(), args.get(1).copied())
+                        {
+                            slots[idx].getcwd_buffer = Some((buf, cap));
+                        }
+                    }
                     // The child writes its self-report after its opening `read()` returns, i.e.
                     // only after the engine releases it, so the header is read on the first entry
                     // stop at which it exists (2026-11-08, p4 step 3b). Reading it before the
@@ -1586,6 +1626,7 @@ fn parent_loop(
                         cwd: inherited_cwd,
                         started: false,
                         faccessat_result: None,
+                        getcwd_buffer: None,
                     });
                 }
                 ptrace::syscall(pid, None)?;
@@ -1791,6 +1832,42 @@ fn syscall_result(pid: Pid) -> Result<i64> {
     {
         Ok(raw.rax as i64)
     }
+}
+
+/// Write the GUEST form of the current directory into the buffer `getcwd` just filled (2026-11-10).
+///
+/// The engine chdir's the child inside the rootfs, so the kernel's answer is a host path; the guest must be told the
+/// directory it believes it is in, exactly as proot reports it. Measured before this: `env | sort` gave
+/// `PWD=/data/data/.../containers/deb-renamed/rootfs` under the native engine against `PWD=/` under proot.
+///
+/// The buffer pointer and its capacity are the call's own arguments, which at an exit stop are still in x0 and x1
+/// (rdi/rsi on x86_64) because getcwd does not overwrite them - the result goes in x0. The rewrite is skipped when the
+/// guest path does not fit, rather than truncating a path the guest would then trust.
+fn translate_getcwd_result(
+    pid: Pid,
+    buf: u64,
+    capacity: u64,
+    rootfs: &Path,
+    binds: &[(String, PathBuf)],
+) -> Result<()> {
+    if buf == 0 {
+        return Ok(());
+    }
+    let Some(host) = peek_cstr(pid, buf)? else {
+        return Ok(());
+    };
+    if !host.starts_with('/') {
+        return Ok(());
+    }
+    let Some(guest) = guest_form_of_host_path(&host, rootfs, binds) else {
+        return Ok(());
+    };
+    if guest.len() + 1 > capacity as usize {
+        return Ok(());
+    }
+    let mut bytes = guest.into_bytes();
+    bytes.push(0);
+    poke_bytes(pid, buf, &bytes)
 }
 
 /// Make an id-reporting syscall answer 0, the fake root proot presents via `--change-id=0:0:0`.

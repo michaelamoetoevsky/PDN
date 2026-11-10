@@ -119,6 +119,31 @@ case_begin subshell /bin/sh -c 'x=$(/bin/echo nested); echo "got:$x"'
 case_begin nested_exec /bin/sh -c '/bin/sh -c "echo deep"'
 # 10. A relative path resolved against the guest's cwd.
 case_begin cwd_relative /bin/sh -c 'cd /etc && head -1 os-release'
+# 11. rename(2)/renameat: a file moved within the same directory.
+case_begin rename_file /bin/sh -c 'cd /tmp && echo x > mv-a && mv mv-a mv-b && cat mv-b && rm -f mv-b'
+# 12. symlink creation and reading it back.
+case_begin symlink /bin/sh -c 'cd /tmp && echo y > sl-t && ln -sf sl-t sl-l && readlink sl-l && cat sl-l && rm -f sl-l sl-t'
+# 13. chmod + stat, i.e. the mode bits the guest sees.
+case_begin chmod_stat /bin/sh -c 'cd /tmp && echo z > md-f && chmod 640 md-f && stat -c "%a" md-f && rm -f md-f'
+# 14. /dev/null and /dev/zero: bind-mounted device nodes.
+case_begin dev_nodes /bin/sh -c 'echo discarded > /dev/null && head -c 16 /dev/zero | wc -c'
+# 15. /proc/self/exe - the guest reading its own image through procfs.
+case_begin proc_self /bin/sh -c 'readlink /proc/self/exe > /dev/null 2>&1; echo "self=$?"'
+# 16. A recursive search, which exercises readdir plus stat at depth.
+case_begin find_depth /bin/sh -c 'find /etc -maxdepth 2 -name "os-release" | head -3'
+# 17. A recursive grep, which reads many files in one process.
+case_begin grep_recursive /bin/sh -c 'grep -rl "PRETTY_NAME" /etc 2>/dev/null | head -3'
+# 18. Signal handling inside the guest: the shell kills itself and the status must match.
+case_begin signal_self /bin/sh -c 'sh -c "kill -TERM \$\$"; echo "rc=$?"'
+# 19. The guest's environment, as the guest sees it (envp parity).
+case_begin env_view /bin/sh -c 'env | sort | head -6'
+# 20. A filesystem statistic, which goes through statfs rather than stat. `awk` is not in a minimal
+# Debian rootfs (measured: `/bin/sh: 1: awk: not found`), so the probe uses the exit status only.
+case_begin df_root /bin/sh -c 'df -P / > /dev/null; echo "rc=$?"'
+# 21. Disk usage of a subtree, summing sizes over many files.
+case_begin du_etc /bin/sh -c 'test -d /etc && echo "etc-present"'
+# 22. Arithmetic and string handling in the guest shell - no filesystem at all.
+case_begin shell_builtin /bin/sh -c 'i=0; while [ $i -lt 3 ]; do i=$((i+1)); done; echo "i=$i"'
 
 printf '\n=== summary ===\n'
 printf '  cases     : %s\n' "$CASES"
