@@ -3151,3 +3151,36 @@ exist yet.
 
 State: battery 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job` = wait, `cp_tree` = this). All fixes are pushed; the
 tree is clean.
+
+### The asymmetry that names the family: explicit nested mkdir works, `mkdir -p` does not (2026-11-10 03:05 WIB)
+
+Two probes, same engine, same rootfs:
+
+```text
+sh -c 'mkdir /tmp/m1; mkdir /tmp/m1/a'                 -> both 0, both created
+sh -c 'mkdir -p /tmp/n1/a'                             -> rc=0, /tmp/n1 created, /tmp/n1/a MISSING
+sh -c 'cd /tmp && mkdir -p m3/x/y'                     -> rc=0, nothing created
+```
+
+Existence checks are NOT the cause and were measured identically on both engines:
+
+```text
+test -e /tmp/tidak-ada-xyz   -> 1   test -d -> 1   stat -> "No such file or directory"
+test -e /etc -> 0            test -e /etc/os-release -> 0
+```
+
+So the same filesystem operation succeeds when the SHELL issues it and fails when coreutils' `mkdir -p` issues it. That
+is the third member of one family, and the family is now named by evidence rather than by guesswork: calls the guest
+makes RELATIVE TO AN OPEN DESCRIPTOR.
+
+- `unlinkat(fd, "a")` inside a recursive removal wrote a host directory into the guest's argument (closed tonight by
+  enforcing that the directory handed to the guest must be a guest path);
+- `wait` on a background job (the tracer reaps, so the guest's wait4 sees ECHILD);
+- `mkdirat` from `mkdir -p`, which opens the parent and creates each component through it.
+
+The next measurement is the one that failed to anchor tonight: print the guest and host paths that
+`mkdirat` is given and writes, for the `mkdir -p` case only. Writing it as a `patch` against the exact text - not as a
+Python string replacement - is the lesson from four broken edits: the fuzzy matcher reports a diff, the string surgery
+reports nothing and breaks braces.
+
+Battery stands at 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job`, `cp_tree`), tree clean.
