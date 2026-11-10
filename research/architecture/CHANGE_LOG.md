@@ -3363,3 +3363,27 @@ value stored is the pre-move one.
 
 Housekeeping: both probes were removed by brace counting rather than by matching text, twice now, because `rustfmt`
 reformats an inserted block and an exact match then silently removes nothing. No debug markers remain in the tree.
+
+### The chdir handling is CORRECT - my model of the guest was wrong (2026-11-10 07:50 WIB)
+
+The probe printed one line for the whole run of `mkdir -p /tmp/t1/a`:
+
+```text
+CHD2 pid=23617 BEFORE=Some("/") raw=Ok(Some("/tmp"))
+```
+
+So the engine's chdir bookkeeping does exactly what it should: the tracee asked to move, the stored cwd was `/` before and
+the value recorded is `/tmp` - the GUEST form, not a host path - and there is exactly ONE chdir in the entire run.
+
+That falsifies the story this session had been building. If the guest never moves into `t1`, then its later
+`mkdirat(AT_FDCWD, "a")` is genuinely relative to `/tmp`, and my assumption that coreutils chdirs into each component
+before creating the next one is simply not what this binary does. The engine is following the guest; the divergence must
+come from what proot does with that same sequence - and the honest next step is a probe of the SAME shape against proot:
+does proot record a chdir into `t1` that the native engine never sees, or does it answer the relative `a` differently?
+
+Five fixes landed tonight and two defects remain open, but this entry is the one worth reading first tomorrow: three
+hours of instrumentation narrowed `mkdir -p` to a single relative name, and the last measurement says the engine's
+handling of that name is right and the model of the guest was wrong. That is a cheaper mistake to fix than the code was.
+
+Housekeeping: every probe removed by brace counting, no debug markers in the tree, battery unchanged at 30 cases /
+28 EQUAL / 2 DIFFERENT, everything pushed.
