@@ -3275,3 +3275,27 @@ which is the instrument that produced the night's biggest fix and has not yet be
 
 State: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, everything pushed, CI 15/15 on the last
 verified commit.
+
+### The trace named the calls: `mkdir -p` uses RELATIVE names with AT_FDCWD (2026-11-10 05:45 WIB)
+
+The full stop trace, pointed at one `mkdir -p /tmp/n8/a`, printed what coreutils actually asks for:
+
+```text
+mkdirat(dirfd=0xffffffffffffff9c, "/tmp")   absolute          (AT_FDCWD)
+mkdirat(dirfd=0xffffffffffffff9c, "n8")     RELATIVE
+mkdirat(dirfd=0xffffffffffffff9c, "a")      RELATIVE
+```
+
+plus two `chdir` stops in the same process. So this was never a descriptor problem - the descriptor is AT_FDCWD all
+along - it is a RELATIVE-NAME problem: with an unknown or wrongly-stored cwd, `n8` is joined onto the wrong base, and
+`resolve` then returns the guest unchanged so nothing is rewritten and the tree lands somewhere the guest cannot see.
+
+That narrowed the search to where the per-tracee cwd is remembered, and the reason is visible there: the value is read
+from the tracee at the ENTRY stop, i.e. AFTER the engine wrote its own translated path into that memory, so what got
+stored as "the guest's current directory" was a HOST path. Mapping it back through the same single rule is now done,
+with the measurement above as the justification.
+
+Measured after: `mkdir -p /tmp/c1/a/b` still leaves only `/tmp/c1`, and the battery is unchanged at 30 cases /
+28 EQUAL / 2 DIFFERENT. So this is a correct change with no regression that does NOT close the case - the remaining
+question is why the relative name still is not rewritten, and the next probe is the value of `tracee_cwd` and the join
+it produces for `"n8"`, printed at that call.

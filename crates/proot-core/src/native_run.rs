@@ -1560,6 +1560,20 @@ fn parent_loop(
                                 // next relative path resolves there (guest-absolute, lexically joined).
                                 if name == "SYS_chdir" {
                                     if let Ok(Some(raw)) = peek_cstr(pid, args[arg_index]) {
+                                        // The value read HERE is what the engine itself just wrote for the kernel: a
+                                        // HOST path (2026-11-10). Remembering it as the guest's cwd made every later
+                                        // relative name resolve as if the guest stood inside the host rootfs - measured
+                                        // with `mkdir -p /tmp/n8/a`: the engine is handed `chdir` then the RELATIVE
+                                        // names `n8` and `a` (dirfd = AT_FDCWD), the join produced a host path, and
+                                        // `resolve` returned it unchanged, so the tree appeared under the rootfs and
+                                        // the guest's `/tmp/n8/a` did not exist. Map it back to the guest form first.
+                                        let raw = match plan.rootfs.as_deref() {
+                                            Some(rootfs) => {
+                                                guest_form_of_host_path(&raw, rootfs, &plan.binds)
+                                                    .unwrap_or(raw)
+                                            }
+                                            None => raw,
+                                        };
                                         slots[idx].cwd = Some(if raw.starts_with('/') {
                                             raw
                                         } else {
