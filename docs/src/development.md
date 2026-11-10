@@ -128,19 +128,19 @@ cargo bench --package pn-gateway guardrails
 
 ### Catch formatting at commit time, not in CI
 
-CI fails a whole cycle on unformatted Rust (`Run cargo fmt check`). The same gate
-runs locally before every commit once you install the repository hooks:
+CI fails a whole cycle on unformatted Rust. The failing check is `Run cargo fmt check`.
+The same gate runs locally before every commit once you install the repository hooks:
 
 ```bash
 sh scripts/install-hooks.sh          # sets core.hooksPath=.githooks
 sh scripts/install-hooks.sh --check  # verify, change nothing
 ```
 
-`core.hooksPath` lives in the shared `.git/config`, so `git worktree add` clones
-inherit the hook too — parallel work in worktrees cannot commit unformatted code
-that later breaks CI. Only staged `*.rs` files trigger the check, so doc-only
-commits are unaffected. Bypass a single commit with `PDN_SKIP_HOOKS=1 git commit …`
-when the formatting fix genuinely belongs in a later commit.
+`core.hooksPath` lives in the shared `.git/config`. Thus clones from `git worktree add`
+inherit the hook too. Parallel work in worktrees cannot commit unformatted code
+that later breaks CI. Only staged `*.rs` files trigger the check. Thus doc-only
+commits are unaffected. You can bypass a single commit with `PDN_SKIP_HOOKS=1 git commit …`
+Do this when the formatting fix genuinely belongs in a later commit.
 
 ### Formatting
 
@@ -238,18 +238,18 @@ security(pn-gateway): add rate limiting to guardrails
 4. Update documentation if needed
 5. Create PR against `develop`
 6. CI must pass
-7. Code review required
+7. A reviewer must review the code.
 8. Squash and merge
 
 ## Release Process
 
 ### Versioning
 
-Semantic Versioning (SemVer): `MAJOR.MINOR.PATCH`
+Semantic Versioning, also known as SemVer, uses the format `MAJOR.MINOR.PATCH`.
 
 - MAJOR: Breaking changes
-- MINOR: New features (backward compatible)
-- PATCH: Bug fixes (backward compatible)
+- MINOR: New features that are backward compatible
+- PATCH: Bug fixes that are backward compatible
 
 ### Release Steps
 
@@ -284,7 +284,7 @@ cargo publish --package podnext
 
 ### Release Automation
 
-The release is automated via GitHub Actions (`.github/workflows/release.yml`):
+GitHub Actions automates the release. The workflow file is `.github/workflows/release.yml`:
 
 1. Tag push triggers workflow
 2. Build for host and Android
@@ -473,7 +473,7 @@ Be respectful, inclusive, and constructive. See `CODE_OF_CONDUCT.md`.
 ### Getting Help
 
 - GitHub Discussions
-- Discord/Slack (if available)
+- Discord or Slack, if available
 - Email maintainers
 
 ## Tools and Scripts

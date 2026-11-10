@@ -12,45 +12,45 @@ From termux-packages CONTRIBUTING.md:
 
 ---
 
-## Phase 1: Foundation (Weeks 1-4)
+## Phase 1: Foundation, Weeks 1-4
 
 ### 1.1 Documentation Overhaul
-- [ ] Complete User Guide (installation, basic usage, advanced features)
-- [ ] API Documentation (auto-generated from code)
-- [ ] Migration Guide from proot-distro (detailed)
+- [ ] Complete User Guide: installation, basic usage, and advanced features
+- [ ] API Documentation, auto-generated from code
+- [ ] Detailed Migration Guide from proot-distro
 - [ ] Troubleshooting FAQ
-- [ ] Video tutorials (screen recordings)
+- [ ] Video tutorials with screen recordings
 
 ### 1.2 Example Projects & Use Cases
 - [ ] **Dev Environment**: Node.js + PostgreSQL + Redis stack
 - [ ] **CI/CD Runner**: GitHub Actions self-hosted runner in container
 - [ ] **Database Server**: MariaDB/MySQL with persistence
 - [ ] **Web Server**: Nginx + PHP-FPM + SSL
-- [ ] **ML/AI**: Python + PyTorch/TensorFlow (if GPU works)
+- [ ] **ML/AI**: Python + PyTorch/TensorFlow, if the GPU works
 - [ ] **Game Server**: Minecraft/Valheim dedicated server
 
 ### 1.3 Integration Points
-- [ ] **VS Code Dev Containers** support (.devcontainer.json)
+- [ ] **VS Code Dev Containers** support with .devcontainer.json
 - [ ] **GitHub Actions** action for PDN
 - [ ] **Docker Compose** compatibility layer
 - [ ] **Ansible** role for provisioning
-- [ ] **Terraform** provider (long-term)
+- [ ] **Terraform** provider for the long term
 
 ---
 
-## Phase 2: Community Building (Weeks 4-12)
+## Phase 2: Community Building, Weeks 4-12
 
 ### 2.1 Communication Channels
 - [ ] **GitHub Discussions** enabled and active
 - [ ] **Discord Server** for real-time chat
-- [ ] **Matrix/Element** room (FOSS-friendly)
+- [ ] **Matrix/Element** room, FOSS-friendly
 - [ ] **Reddit** r/PDN or r/Termux community posts
 - [ ] **Twitter/X** account for updates
 
 ### 2.2 Content Strategy
-- [ ] Monthly blog posts (releases, tutorials, case studies)
-- [ ] YouTube channel (terminal recordings)
-- [ ] Conference talks (FOSS conferences, Android dev meetups)
+- [ ] Monthly blog posts on releases, tutorials, and case studies
+- [ ] YouTube channel with terminal recordings
+- [ ] Conference talks at FOSS conferences and Android dev meetups
 - [ ] Guest posts on Termux blog, Android Police, etc.
 
 ### 2.3 Contributor Onboarding
@@ -61,7 +61,7 @@ From termux-packages CONTRIBUTING.md:
 
 ---
 
-## Phase 3: Ecosystem Growth (Months 3-6)
+## Phase 3: Ecosystem Growth, Months 3-6
 
 ### 3.1 Package Ecosystem
 - [ ] **PDN Hub** - curated container images
@@ -73,33 +73,33 @@ From termux-packages CONTRIBUTING.md:
 - [ ] **RBAC** for multi-user Termux
 - [ ] **Audit logging** for compliance
 - [ ] **Backup/DR** automation
-- [ ] **Monitoring** integration (Prometheus/Grafana)
+- [ ] **Monitoring** integration with Prometheus and Grafana
 
 ### 3.3 Platform Expansion
-- [ ] **Linux desktop** support (not just Termux)
-- [ ] **ChromeOS** (Crostini) support
+- [ ] **Linux desktop** support, not only Termux
+- [ ] **ChromeOS** Crostini support
 - [ ] **WSL2** compatibility
 - [ ] **Rootless Podman** alternative
 
 ---
 
-## Phase 4: Maturity (Months 6-12)
+## Phase 4: Maturity, Months 6-12
 
 ### 4.1 Governance
 - [ ] **RFC process** for major changes
 - [ ] **Steering committee** with diverse stakeholders
-- [ ] **Release schedule** (monthly minor, quarterly major)
+- [ ] **Release schedule**: monthly minor releases and quarterly major releases
 - [ ] **LTS releases** with security support
 
 ### 4.2 Sustainability
 - [ ] **OpenCollective** / GitHub Sponsors
-- [ ] **Corporate sponsors** (Termux-related companies)
+- [ ] **Corporate sponsors** from Termux-related companies
 - [ ] **Consulting/support** offerings
 - [ ] **Training/certification** program
 
 ---
 
-## Immediate Action Items (This Week)
+## Immediate Action Items for This Week
 
 ### Week 1 Checklist
 - [ ] Enable GitHub Discussions on PDN repo
@@ -137,7 +137,7 @@ From termux-packages CONTRIBUTING.md:
 
 ## Resubmission Criteria
 
-Before resubmitting to termux-packages:
+Before you resubmit to termux-packages:
 - [ ] ≥ 500 GitHub stars
 - [ ] ≥ 3 months sustained activity
 - [ ] ≥ 10 external contributors
@@ -159,7 +159,7 @@ Before resubmitting to termux-packages:
 
 ---
 
-## Quick Wins (Do This Week)
+## Quick Wins for This Week
 
 1. **Enable GitHub Discussions** - 5 min
 2. **Create Discord** - 10 min

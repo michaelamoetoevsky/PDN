@@ -1,6 +1,6 @@
 # Contributing to PDN
 
-Thank you for your interest in contributing to PDN (PRoot Distro Next)! This document provides guidelines for contributing to the project.
+Thank you for your interest in PDN, or PRoot Distro Next. This document gives guidelines for contributions to the project.
 
 ## Ways to Contribute
 
@@ -24,9 +24,9 @@ Thank you for your interest in contributing to PDN (PRoot Distro Next)! This doc
 
 ### Prerequisites
 
-- Rust 1.70+ (install via `rustup`)
-- Android NDK r27c (for Android builds)
-- Termux environment (for testing on Android)
+- Rust 1.70+ installed via `rustup`
+- Android NDK r27c for Android builds
+- A Termux environment to test on Android
 
 ### Building
 
@@ -49,8 +49,8 @@ cargo fmt --all --check
 
 ## Code Style
 
-- Follow Rust standard style (`cargo fmt`)
-- Pass clippy lints (`cargo clippy`)
+- Follow the Rust standard style with `cargo fmt`
+- Pass the clippy lints with `cargo clippy`
 - Write tests for new functionality
 - Document public APIs with `///` comments
 - Use meaningful commit messages
@@ -60,12 +60,12 @@ cargo fmt --all --check
 1. Ensure all tests pass
 2. Update documentation if needed
 3. Add tests for new features
-4. Reference related issues in PR description
+4. Reference related issues in the PR description
 5. Request review from maintainers
 
 ## Good First Issues
 
-Look for issues labeled `good first issue` - these are specifically designed for newcomers:
+Look for issues labeled `good first issue`. The maintainers design these issues for newcomers:
 
 - [Add shell completion for PowerShell](https://github.com/michaelamoetoevsky/PDN/issues/1)
 - [Add example service configurations](https://github.com/michaelamoetoevsky/PDN/issues/2)
@@ -73,17 +73,17 @@ Look for issues labeled `good first issue` - these are specifically designed for
 
 ## Reporting Bugs
 
-When reporting bugs, please include:
+When you report bugs, include this information:
 
-- PDN version (`podnext --version`)
+- PDN version from `podnext --version`
 - Termux/Android version
 - Steps to reproduce
-- Expected vs actual behavior
-- Relevant logs (`podnext service logs <service>`)
+- Expected behavior against actual behavior
+- Relevant logs from `podnext service logs <service>`
 
 ## Feature Requests
 
-Feature requests are welcome! Please:
+Feature requests are welcome. Please do these steps:
 
 - Check existing issues first
 - Describe the use case
@@ -92,7 +92,7 @@ Feature requests are welcome! Please:
 
 ## Code of Conduct
 
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+Read our [Code of Conduct](CODE_OF_CONDUCT.md) before you take part.
 
 ## Security
 
@@ -100,7 +100,7 @@ For security issues, please see [SECURITY.md](SECURITY.md) for responsible discl
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the GPL-2.0-or-later license.
+When you contribute, you agree that your contributions will be licensed under the GPL-2.0-or-later license.
 
 ## Questions?
 

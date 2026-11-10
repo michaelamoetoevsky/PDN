@@ -1,4 +1,4 @@
-# PDN Phase 1–4 Evidence Record
+# PDN Phase 1 to 4 Evidence Record
 
 **Repository**: https://github.com/michaelamoetoevsky/PDN
 **Workspace version**: `0.1.7`
@@ -10,8 +10,8 @@ This document records verified repository state. A CLI entry, Rust compilation, 
 ## Evidence rules
 
 - **Runtime-proven**: exercised locally and output captured.
-- **Test-proven**: test target executed; scope stated.
-- **Compile-proven**: compiled or help/metadata inspected; runtime behavior not established.
+- **Test-proven**: test target executed. Scope stated.
+- **Compile-proven**: compiled or help/metadata inspected. Runtime behavior not established.
 - **Declared/stub**: source exposes the interface, but implementation returns a placeholder or is not exercised.
 - **Unverified**: no current evidence.
 
@@ -29,16 +29,16 @@ This document records verified repository state. A CLI entry, Rust compilation, 
 | Daemon IPC smoke | PASS | Unix socket: `ping` → `{"type":"pong"}`; `list` → `{"type":"ok","data":[]}` |
 | Active build/runtime processes after verification | None found | `cargo`, `rustc`, `podnext`, `podnext-daemon` |
 
-Remote GitHub release status is deliberately separate: API verification found releases through `v0.1.5`; `v0.1.7` is not established as a remote release. The local tag `v0.1.7` and local binaries do not prove publication.
+Remote GitHub release status is deliberately separate. API verification found releases through `v0.1.5`. `v0.1.7` is not established as a remote release. The local tag `v0.1.7` and local binaries do not prove publication.
 
-## Phase 1 — Core stabilization
+## Phase 1: Core stabilization
 
 ### Verified
 
 - Workspace metadata is centralized in root `Cargo.toml` with version `0.1.7`.
-- `podnext` and `podnext-daemon` use `#[command(version)]`; both local release binaries report `0.1.7`.
+- `podnext` and `podnext-daemon` use `#[command(version)]`. Both local release binaries report `0.1.7`.
 - Repository metadata points to `https://github.com/michaelamoetoevsky/PDN`.
-- Debug output changed to opt-in through `PN_NEXT_DEBUG`; release CLI help scan found no `[DEBUG main]` leakage.
+- Debug output changed to opt-in through `PN_NEXT_DEBUG`. The release CLI help scan found no `[DEBUG main]` leakage.
 - Release workflow contains Android targets `aarch64-linux-android` and `x86_64-linux-android`.
 - The daemon creates a Unix socket and answered `ping` and `list` during the recorded foreground smoke test.
 - Workspace and CRI-scoped test commands passed as listed in the baseline table.
@@ -49,7 +49,7 @@ Remote GitHub release status is deliberately separate: API verification found re
 - GitHub release `v0.1.7` and its assets are not proven to exist remotely.
 - The release workflow itself was not executed in this local pass.
 
-## Phase 2 — Feature surface and implementation depth
+## Phase 2: Feature surface and implementation depth
 
 | Area | Evidence status | Exact finding |
 |---|---|---|
@@ -63,7 +63,7 @@ Remote GitHub release status is deliberately separate: API verification found re
 
 Phase 2 is therefore **partially implemented**, not feature-complete.
 
-## Phase 3 — Platform maturity
+## Phase 3: Platform maturity
 
 | Area | Evidence status | Exact finding |
 |---|---|---|
@@ -75,7 +75,7 @@ Phase 2 is therefore **partially implemented**, not feature-complete.
 
 Phase 3 is **not production-ready on the available evidence**.
 
-## Phase 4 — Ecosystem and adoption
+## Phase 4: Ecosystem and adoption
 
 | Area | Evidence status | Exact finding |
 |---|---|---|
@@ -87,9 +87,9 @@ Phase 3 is **not production-ready on the available evidence**.
 
 ## Open work
 
-1. Classify and remove or implement remaining `TODO`/stub paths before claiming feature completion.
-2. Add real daemon IPC integration coverage instead of treating the existing client example as a test; that example currently runs `0 tests`.
-3. Register or separately invoke `tests/integration/v2_criteria.rs`; its execution by Cargo is not established.
+1. Classify and remove or implement the remaining `TODO` and stub paths before you claim feature completion.
+2. Add real daemon IPC integration coverage. Do not treat the existing client example as a test. That example currently runs `0 tests`.
+3. Register or separately invoke `tests/integration/v2_criteria.rs`. Its execution by Cargo is not established.
 4. Exercise Android cross-build and artifact verification in CI.
 5. Publish and independently verify `v0.1.7` only after the intended commit and assets are available remotely.
 

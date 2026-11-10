@@ -12,13 +12,13 @@ curl -fsSL https://raw.githubusercontent.com/michaelamoetoevsky/PDN/main/install
 
 ## What It Does
 
-1. **Detects architecture** (aarch64, x86_64, armv7)
-2. **Installs dependencies** (proot, proot-distro, curl, dpkg)
-3. **Downloads latest release** (.deb preferred, binary fallback)
-4. **Installs via dpkg** or to `~/.local/bin`
-5. **Generates shell completions** (bash, zsh, fish)
-6. **Creates default config** and service directories
-7. **Adds to PATH** automatically
+1. **Detects architecture**: aarch64, x86_64, armv7
+2. **Installs dependencies**: proot, proot-distro, curl and dpkg
+3. **Downloads the latest release**, with a .deb file first and a binary as the fallback
+4. **Installs via dpkg** or into `~/.local/bin`
+5. **Generates shell completions** for bash, zsh and fish
+6. **Creates the default config** and the service directories
+7. **Adds the binary to PATH** automatically
 
 ## Manual Install
 
@@ -52,13 +52,13 @@ podnext service create myservice
 podnext service start myservice
 ```
 
-## Custom Domain (pdn.dev)
+## Custom Domain pdn.dev
 
-Once configured, users can also use:
+After configuration, users can also use:
 ```bash
 curl -fsSL https://pdn.dev/install.sh | bash
 ```
 
 ## GitHub Actions Auto-Publish
 
-The installer scripts are automatically synced to the repo on each release via `.github/workflows/release.yml`.
+The release workflow syncs the installer scripts to the repository on each release. The workflow file is `.github/workflows/release.yml`.

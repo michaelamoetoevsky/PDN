@@ -4,13 +4,33 @@ All notable changes to PDN (`podnext`) are recorded here. The format is
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The release of record is the version in `Cargo.toml` (currently `0.2.0`). Entries under
-**Unreleased** have landed on `master` and are not yet tagged. Every entry names the commit
-that carries it, so it can be re-derived with `git show <sha>`.
+The release of record is the version in `Cargo.toml` (currently `0.2.0`). The `unstable` tag names the
+archived state of the project: everything that landed on `master` after the `v0.2.0` release. Entries under
+**Unreleased** are not tagged at all. Every entry names the commit that carries it, so it can be re-derived
+with `git show <sha>`.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [unstable] - 2026-11-10
+
+The archived state of the project. This tag carries everything that landed on `master` after the `v0.2.0`
+release, and the owner stopped development on this date.
+
 ### Added
+
+- The in-tree engine is the default for containers, and `proot` is optional. `--engine <proot|native>` selects either one, `doctor` and the installer no longer require `proot`, and a decoy arm proves that the native path starts no `proot` binary (`b07cd18`, `1fd91b0`, `6c19ae1`, `scripts/own_engine_acceptance.py`).
+- `scripts/e2e_parity_battery.sh` runs 30 guest commands on a real Debian rootfs in both engines and prints one verdict per case: EQUAL, DIFFERENT, BLOCKED or SUSPECT. It never touches the operator store, and each arm has a 30 second ceiling (`7d72edb`, `f1f0e9c`).
+- `scripts/engine_differential.py` and `scripts/engine_write_parity.py` compare one workload in two arms and report each field separately (`36ff688`, `b8d3abf`).
+- The engine translates the two-path calls, one scratch slot per argument, so `mv` across two guest paths works (`292a4c1`).
+- The engine tracks the guest working directory for each tracee and stores its guest form, so `cd` inside the guest works and `PWD` shows a guest path (`e4a617b`, `65237ae`, `a4da56c`).
+- `--link2symlink` is implemented. A guest hardlink that the kernel refuses becomes a symlink and reports success, the way `proot` behaves (`244da09`).
+- The engine maps `st_uid` and `st_gid` in stat results and answers `getuid`, `geteuid`, `getgid` and `getegid` with the mapped identity. `PDN_NATIVE_NO_ID_MAP=1` turns the mapping off for tests (`ee99ce4`, `dec84bd`).
+- The engine forwards the guest's signals, excluding the four that belong to the trace loop (`364922e`).
+- The engine records the exit status of each descendant it reaps and replays the `wait4` syscall (`b85cda2`, partial).
+- `scripts/check_ste.py` measures a Markdown file against the mechanical part of ASD-STE100, and it refuses to report a pass when it measured nothing.
+- `research/ARCHIVE_HANDOVER.md` records the archived state, the defects that are closed, and the work that remains.
 
 - `scripts/check_release_notes.sh` checks the file a release body is read from - real line breaks, and no
   literal backslash-n token - and `--self-test` proves the check discriminates: a clean copy passes, a copy
@@ -23,6 +43,13 @@ that carries it, so it can be re-derived with `git show <sha>`.
   PDN already does as well or better, and what was not read at statement level (`3870792`).
 
 ### Fixed
+
+- The first syscall of a fork child was labelled as an exit, so the engine misread every `execve` of a child. `dpkg-query -W` counted 0 packages where `proot` counts 78; the fix sets the entry flag at the birth stop (`3f858c3`).
+- Path translation ran at exit stops, where a register holds a result instead of an argument. `unlinkat` and `utimensat` were refused for that reason (`246d027`).
+- A NULL or an empty path was treated as a failed translation, which broke `futimens` (`9a5787a`).
+- A descriptor target was matched against one spelling of the rootfs path only, and it was not resolved against the bind sources. `rm -rf` of a directory with content now removes it (`fd1466d`, `56aa7f7`, `af56dfa`).
+- `getcwd` was read at the exit stop, where the return register holds a length, and the guest saw the host rootfs path in `PWD`. The pointer is read at the entry stop and answered in guest form (`a4da56c`).
+- The bootstrap `chdir` exemption was keyed on a flag that is false on the engine's own child. The flag is now set at the exec event. This change did not close `mkdir -p` and did not change the battery, so it stands as harmless and insufficient (`6b11aa1`).
 
 - The release body is no longer flattened on the way out. The workflow submitted the notes through an
   Actions output, which is line-oriented, so every newline became the two characters `\` `n`: the published
@@ -88,6 +115,12 @@ that carries it, so it can be re-derived with `git show <sha>`.
   overwritten the curated notes had it ever run, its binaries were a second build path that preflight does not
   verify, and nothing in the repository referenced it or the tarballs it built. 124 lines removed, nothing
   added, one publisher remains (`3ae1d37`; #77).
+
+### Archived
+
+- The owner stopped the project on 2026-11-10 and tagged this state `unstable`. The documentation of this repository was rewritten to ASD-STE100 Simplified Technical English in the same change.
+- The engine is not a complete replacement for `proot` when this tag was made. Two ordinary guest workloads still differ: a nested `mkdir -p` loses a component, and `wait` does not return a background job. Section 5 of `research/ARCHIVE_HANDOVER.md` records the measured mechanism of each one.
+- The binary that the owner installs on this device is still version `0.1.7` and still runs the external `proot` binary. The archive note in `research/ARCHIVE_HANDOVER.md` gives the command that installs the release build.
 
 ## [0.2.0] - 2026-11-06
 

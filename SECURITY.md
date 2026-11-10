@@ -11,13 +11,13 @@ We provide security updates for the following versions:
 
 ## Reporting a Vulnerability
 
-We take security vulnerabilities seriously. If you discover a security vulnerability in PDN, please report it responsibly.
+We take security vulnerabilities seriously. If you find a security vulnerability in PDN, please report it responsibly.
 
 ### How to Report
 
 **Please do NOT create a public GitHub issue for security vulnerabilities.**
 
-Instead, please report security vulnerabilities by emailing: **security@pdn.example.com**
+Instead, please report security vulnerabilities by email to **security@pdn.example.com**
 
 Include the following information:
 
@@ -25,15 +25,15 @@ Include the following information:
 - Steps to reproduce
 - Potential impact
 - Affected versions
-- Any suggested fixes (if known)
+- Any suggested fixes that you know
 
 ### What to Expect
 
 1. **Acknowledgment**: We will acknowledge receipt within 48 hours
 2. **Assessment**: We will assess the vulnerability and determine severity
 3. **Timeline**: We will provide an estimated timeline for a fix
-4. **Coordination**: We will coordinate with you on disclosure timeline
-5. **Credit**: We will credit you in the security advisory (if desired)
+4. **Coordination**: We will coordinate with you on the disclosure timeline
+5. **Credit**: We will credit you in the security advisory if you want that credit
 
 ## Security Best Practices for Users
 
@@ -47,10 +47,10 @@ Include the following information:
 
 ### Network Security
 
-- Use PDN's built-in network isolation
-- Avoid exposing unnecessary ports
+- Use the built-in network isolation of PDN
+- Avoid exposure of unnecessary ports
 - Use TLS for inter-service communication
-- Configure firewall rules on host
+- Configure firewall rules on the host
 
 ### Container Images
 
@@ -70,18 +70,18 @@ Include the following information:
 
 ### PRoot Limitations
 
-PDN uses PRoot for containerization, which has known limitations:
+PDN uses PRoot for containerization. PRoot has known limitations:
 
 - PRoot uses `ptrace` for syscall interception
-- Not a full kernel-level isolation (like KVM or gVisor)
-- Some syscalls may not be fully intercepted
-- Not suitable for untrusted code execution
+- This is not full kernel-level isolation like KVM or gVisor
+- PRoot does not fully intercept some syscalls
+- PRoot is not suitable for untrusted code execution
 
 ### Termux Environment
 
-- Runs on Android without root
-- Limited by Android's security model
-- SELinux policies may restrict some operations
+- PDN runs on Android without root
+- The Android security model limits PDN
+- SELinux policies can restrict some operations
 - File system permissions differ from standard Linux
 
 ## Vulnerability Disclosure Timeline
@@ -111,4 +111,4 @@ For security-related questions or concerns:
 
 ---
 
-*This policy is based on industry best practices and may be updated periodically.*
+*This policy is based on industry best practices. The PDN team updates this policy periodically.*

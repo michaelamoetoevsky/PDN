@@ -1,8 +1,8 @@
 # Comprehensive Architectural Analysis & Development Roadmap for PDN (PRoot Distro Next)
 
 **Date:** November 2026
-**Baseline Status:** v0.1.7 (Stable master commit `c00809c`, 100% Green CI/CD)
-**Target Platform:** Termux on Android 16+ (aarch64) & Rootless Linux Environments (x86_64, aarch64)
+**Baseline Status:** v0.1.7, stable master commit `c00809c`, 100% Green CI/CD
+**Target Platform:** Termux on Android 16+ for aarch64, and Rootless Linux Environments for x86_64 and aarch64
 **Related Documents:** `research/INTERNAL_CAPABILITY_TESTS_RUN2.md`, `research/DOCKER_RUNTIME_INTEGRATION_PLAN.md`, `docs/src/migration-guide.md`
 
 ---
@@ -11,31 +11,31 @@
 
 ### 1.1 Validated Foundations
 PDN has evolved from an exploratory Rust port into a production-grade container management and service orchestration platform:
-1. **CI/CD Pipeline Integrity**: 15 GitHub Actions workflow jobs (Host Build, 133 Unit/Integration Tests, Cross-Compile Matrix for aarch64/x86_64 across NDK r27c & r30, Docs mdBook, Fuzzing, Security Audit) are **100% GREEN**.
+1. **CI/CD Pipeline Integrity**: 15 GitHub Actions workflow jobs are **100% GREEN**. The jobs are Host Build, 133 Unit/Integration Tests, a Cross-Compile Matrix, Docs mdBook, Fuzzing, and Security Audit. The Cross-Compile Matrix covers aarch64/x86_64 across NDK r27c & r30.
 2. **Defect Remediation & Security Hardening**:
-   - *Child Process Exit Code*: Accurate propagation of child exit codes via `proot_core::ChildExit` downcasting (exit statuses 0..127 forwarded directly without collapsing to 1).
-   - *Guest Path Traversal*: Traversal vulnerability closed in `copy` subcommands (strict token validation, rejection of `..`, and canonical rootfs boundary enforcement).
+   - *Child Process Exit Code*: The code propagates child exit codes accurately through `proot_core::ChildExit` downcasting. It forwards exit statuses 0..127 directly and does not collapse them to 1.
+   - *Guest Path Traversal*: PDN closed the traversal vulnerability in `copy` subcommands. The fix uses strict token validation, refuses `..`, and enforces the canonical rootfs boundary.
    - *SELinux Hardlink Safe Unpacking*: Automated fallback to file copies when `hard_link` is denied by Android SELinux policies during OCI layer extraction.
    - *Shared Memory `/dev/shm` 1777*: Standalone POSIX shared memory store, enabling Chromium Headless and Playwright DOM extraction without crashes.
-   - *Environment Variable Sanitization*: Clean guest environment isolation (only 6 essential variables passed, eliminating the leakage of 163 host Termux variables).
+   - *Environment Variable Sanitization*: The guest environment is clean and isolated. Only 6 essential variables pass through, which eliminates the leakage of 163 host Termux variables.
    - *Dynamic Distribution Identification*: Real-time distribution identification parsed from guest `/etc/os-release` or `/usr/lib/os-release` for accurate `podnext list` reporting.
 3. **Full Parity with proot-distro**:
-   - `install`, `login`, `run`, `list`, `remove`, `rename`, `copy`, `sync` (sha256 + `--delete`), `reset`, `search`, and `info`.
+   - `install`, `login`, `run`, `list`, `remove`, `rename`, `copy`, `sync` with sha256 and `--delete`, `reset`, `search`, and `info`.
 
-### 1.2 Fundamental Android Kernel Constraints (Empirical Ground Truth)
+### 1.2 Fundamental Android Kernel Constraints: Empirical Ground Truth
 In-depth empirical testing documented in `research/INTERNAL_CAPABILITY_TESTS_RUN2.md` confirms the hard boundaries of pure PRoot on Android:
-- `mount(2)` is intercepted and terminated with `SIGSYS` (Signal 31) by Android Bionic's seccomp filter.
-- `unshare(CLONE_NEWUSER)` returns `EINVAL` (unprivileged user namespaces are disabled by default in Google's Android GKI kernel).
-- `unshare(CLONE_NEWPID | CLONE_NEWNET)` returns `EPERM` due to unprivileged process capabilities (`CapEff=0`).
+- Android Bionic's seccomp filter intercepts `mount(2)` and terminates it with `SIGSYS`, signal 31.
+- `unshare(CLONE_NEWUSER)` returns `EINVAL`, because Google's Android GKI kernel disables unprivileged user namespaces by default.
+- `unshare(CLONE_NEWPID | CLONE_NEWNET)` returns `EPERM`, because unprivileged process capabilities are in force with `CapEff=0`.
 - `/sys/fs/cgroup` is mounted read-only for unprivileged Termux users.
 
-**Logical Deduction:** Running a genuine Docker daemon (`dockerd`) directly inside pure PRoot is fundamentally impossible without a real Linux kernel. The required architectural solution is **Runtime Backend Modularization**.
+**Logical Deduction:** A genuine Docker daemon, `dockerd`, cannot run directly inside pure PRoot without a real Linux kernel. The required architectural solution is **Runtime Backend Modularization**.
 
 ---
 
 ## 2. Forensic Source Code Comparative Mapping: PRoot C Engine & PRoot-distro v5.10.3
 
-To ensure PDN's architectural blueprint is complete and executable in a single pass (*single-pass execution*), forensic code audits were performed directly on the upstream PRoot C codebase (`source/proot-src`) and the Termux `proot_distro` Python framework (v5.10.3).
+The goal is one single pass: the PDN architectural blueprint must be complete and executable in one pass. The project then ran forensic code audits on the upstream PRoot C codebase `source/proot-src` and the Termux `proot_distro` Python framework v5.10.3.
 
 ### 2.1 Anatomy & Internal Mechanics of the PRoot C Engine (`proot-src`)
 
@@ -64,27 +64,27 @@ To ensure PDN's architectural blueprint is complete and executable in a single p
 
 ## 3. Maturity Gap Evaluation & Opportunities for PDN
 
-Comparing current PDN crates (`proot-core`, `proot-distro-core`, `podnext`) with upstream implementations highlights the following concrete development opportunities:
+The comparison of current PDN crates `proot-core`, `proot-distro-core` and `podnext` with upstream implementations finds the following concrete development opportunities:
 
-1. **Session Registry & Inode-Based Process Teardown (`session` & `kill`)**:
+1. **Session Registry & Inode-Based Process Teardown, `session` & `kill`**:
    - *Current State*: PDN lacks a centralized per-PID session registry with inherited `flock(2)` descriptors.
    - *Risk*: Abrupt termination of `podnext run` can leave background processes running as orphaned zombies in Termux.
-2. **Hardened Descriptor VFS (`dirfd`)**:
+2. **Hardened Descriptor VFS, `dirfd`**:
    - *Current State*: Some operations in `proot-distro-core` rely on standard `std::path::PathBuf` walking.
    - *Risk*: Susceptibility to symlink race conditions or FIFO deadlocks when operating on untrusted container filesystems.
-3. **Link2Symlink Tree Rewriting on Container Relocation (`l2s`)**:
+3. **Link2Symlink Tree Rewriting on Container Relocation, `l2s`**:
    - *Current State*: `podnext rename` and `podnext copy` relocate rootfs directories but do not update embedded `.proot.l2s.` symlinks.
-   - *Risk*: Internal hard links (such as `/usr/bin/perl` or package manager links) become broken symlinks after renaming.
-4. **Custom Image Building (`build`)**:
+   - *Risk*: Internal hard links, such as `/usr/bin/perl` or package manager links, become broken symlinks after a rename.
+4. **Custom Image Building, `build`**:
    - *Current State*: PDN can pull and unpack images from Docker Hub, but lacks a native `podnext build` subcommand for local Dockerfiles.
-5. **Dynamic Host CPU Topology Alignment (`sysdata`)**:
+5. **Dynamic Host CPU Topology Alignment, `sysdata`**:
    - *Current State*: Synthesized `/proc/stat` entries in `sysdata.rs` use static rows rather than reading dynamically offline CPU cores from `/proc/cpuinfo`.
 
 ---
 
 ## 4. Infrastructure Evolution
 
-### 4.1 Dual-Runtime Backend (`RuntimeBackend` Trait)
+### 4.1 Dual-Runtime Backend: The `RuntimeBackend` Trait
 PDN decouples execution backends via a polymorphic trait interface:
 
 ```rust
@@ -98,60 +98,60 @@ pub trait RuntimeBackend: Send + Sync {
 }
 ```
 
-1. **`ProotBackend` (Lightweight & Instant)**:
+1. **`ProotBackend`, Lightweight & Instant**:
    - Optimized for 80% of everyday workflows: Debian/Ubuntu/Alpine shells, compilers, Python/Node.js, Playwright, toolchain development.
    - Metrics: Cold-start 0.09s, zero virtualization memory overhead, direct native CPU instruction execution.
-2. **`UmlBackend` (Kernel & Docker Full-Fidelity)**:
-   - Connects PDN to the User-Mode Linux daemon (`uml4termuxd`) via UNIX domain sockets.
+2. **`UmlBackend`, Kernel & Docker Full-Fidelity**:
+   - Connects PDN to the User-Mode Linux daemon `uml4termuxd` through UNIX domain sockets.
    - Activated when users run `podnext docker` or launch containers requiring systemd, iptables, wireguard, overlayfs, and cgroup controllers.
-   - Delivers real Linux kernel isolation without requiring Android root privileges.
+   - Delivers real Linux kernel isolation and does not require Android root privileges.
 
-### 4.2 Termux Packaging & Ecosystem Standardization (`termux-packages`)
-- **Binary Separation**: Clear separation between `podnext` (CLI client) and `podnext-daemon` (service supervisor).
+### 4.2 Termux Packaging & Ecosystem Standardization: `termux-packages`
+- **Binary Separation**: A clear separation between `podnext`, the CLI client, and `podnext-daemon`, the service supervisor.
 - **Termux Build Recipe**: Up-to-date `termux-package/recipe/build.sh` aligned with NDK r27c/r30 for submission to official Termux repositories.
-- **Runit Service Scripts**: Standard service templates (`$PREFIX/var/service/podnextd`) enabling supervisor management via `sv up podnextd` / `sv down podnextd`.
+- **Runit Service Scripts**: Standard service templates at `$PREFIX/var/service/podnextd` enable supervisor management through `sv up podnextd` and `sv down podnextd`.
 
 ### 4.3 Android Sleep Mitigation & Phantom Process Killer Protection
-Android 12+ enforces a *Phantom Process Killer* (limiting background child processes to 32) and aggressive Doze Mode:
-- **Android WakeLock Engine**: Automated acquisition of `PARTIAL_WAKE_LOCK` while supervised services are running.
+Android 12+ enforces a *Phantom Process Killer* that limits background child processes to 32, and aggressive Doze Mode:
+- **Android WakeLock Engine**: The engine acquires `PARTIAL_WAKE_LOCK` automatically while supervised services run.
 - **Foreground Service Integration**: Integration with Termux:API and Termux:Boot to maintain persistent notifications, preventing Android OOM termination.
 
 ### 4.4 Image Store & Registry Transport — planned for the next major version
 
 Planned infrastructure, not implemented. Full analysis, measurements and the reference architecture:
-`research/IMAGE_STORE_AND_PUSH.md`. Tracked by #37 (lookup) and #39 (layer store).
+`research/IMAGE_STORE_AND_PUSH.md`. Tracked by #37 for the lookup and #39 for the layer store.
 
 Today an image in PDN **is** its container directory: `build local` writes
 `~/.podnext/containers/<store-key>/rootfs` and the layer blobs are discarded after extraction. That
-model cannot serve `push`, because there is nothing to send — `image push` currently fails with
-`Image '<ref>' not found locally` for an image that is present, and would refuse with *"PDN does not
+model cannot serve `push`, because the model retains nothing to send. `image push` currently fails with
+`Image '<ref>' not found locally` for an image that is present, and will refuse with *"PDN does not
 retain layer blobs after extraction"* even once the lookup is fixed.
 
 The next major version changes the model rather than patching around it:
 
-- **Images become OCI artifacts** — manifest + config + layer blobs, digest-addressed. Containers
-  become *derived* state, produced by applying layers to a rootfs, instead of being the image.
-- **Layer cache** — one file per blob named by the digest of its content, behind a digest-grammar
-  validator so a crafted digest cannot escape the cache directory (the same trust boundary as #16).
-- **Build emits one layer per instruction** by snapshotting the stage rootfs and diffing, with OCI
+- **Images become OCI artifacts**: manifest + config + layer blobs, digest-addressed. Containers
+  become *derived* state, produced when the system applies layers to a rootfs, and not the image itself.
+- **Layer cache**: one file per blob named by the digest of its content, behind a digest-grammar
+  validator, so a crafted digest cannot escape the cache directory. That is the same trust boundary as #16.
+- **Build emits one layer per instruction**: it snapshots the stage rootfs and diffs, with OCI
   whiteouts for deletions, and an image-config `history` whose non-empty entry count matches the
-  layer count. Multi-stage (`COPY --from=<stage>`, per-stage `ENV`/`ARG`/`WORKDIR`/`USER`) is part of
+  layer count. Multi-stage support, with `COPY --from=<stage>` and per-stage `ENV`/`ARG`/`WORKDIR`/`USER`, is part of
   the same step.
-- **Registry transport** (Docker Registry v2) — push skips blobs the registry already has (HEAD),
-  streams the missing ones, then PUTs the manifest; credentials are scoped to the registry's own
-  origin and stripped on cross-origin redirects; 401/403 and rate limits get named errors. `pull` is
+- **Registry transport**, Docker Registry v2: a HEAD request skips blobs the registry already has,
+  streams the missing ones, then PUTs the manifest. Credentials are scoped to the registry's own
+  origin and stripped on cross-origin redirects. The 401/403 responses and rate limits get named errors. `pull` is
   the same path in reverse, and `install` works offline from a cached manifest.
-- **Local OCI layout archives** — install from an image-layout archive, with blobs verified against
+- **Local OCI layout archives**: install from an image-layout archive, with blobs verified against
   the digests the archive names and bounded reads, because an archive is untrusted input.
 
-Cost, measured on this device (Termux aarch64): the snapshot/diff work is in the 0.1–0.25 s band per
-build (rootfs walk measured at 105 ms / 575 entries, 229 ms / 6,188, 214 ms / 11,641), paid at build
-time. The alternative — no artifact store, tar the rootfs at push time — costs ≈0.35 s raw /
-≈2.1 s gzip per 307 MB image and produces a single opaque layer with no build history; it is the
+Cost, measured on this device with Termux aarch64: the snapshot/diff work is in the 0.1 s to 0.25 s band per
+build. The rootfs walk measured 105 ms / 575 entries, 229 ms / 6,188 and 214 ms / 11,641. This cost is paid at build
+time. The alternative, no artifact store and a tar of the rootfs at push time, costs ≈0.35 s raw /
+≈2.1 s gzip per 307 MB image and produces a single opaque layer with no build history. It is the
 intermediate option, not the target.
 
 Prerequisite: the licence metadata must be consistent before any code is compared against the
-GPL-3.0 reference (#40).
+GPL-3.0 reference, issue #40.
 
 ---
 
@@ -159,17 +159,17 @@ GPL-3.0 reference (#40).
 
 ### 5.1 Decoupled Client-Daemon IPC Architecture
 - **Thin Client**: The `podnext` binary translates CLI commands into structured RPC requests.
-- **Robust Daemon (`podnextd`)**: Manages centralized state, lock coordination, cgroup limits, and network routing.
+- **Robust Daemon `podnextd`**: It manages centralized state, lock coordination, cgroup limits, and network routing.
 - **IPC Protocol**: UNIX Domain Sockets utilizing JSON-RPC 2.0 or D-Bus Wire Protocol at `$TMPDIR/podnext/podnextd.sock`, with automatic direct-execution fallback if the daemon is offline.
 
 ### 5.2 Event-Driven Reactive State Engine
-- **State Store**: Replaces raw directory scanning with a robust embedded database engine (`sled` or `sqlite` at `$PN_DATA_DIR/state.db`).
-- **Atomic State Transitions**: Status changes (`Creating` -> `Installing` -> `Stopped` -> `Running` -> `Failed`) are recorded through Write-Ahead Logging (WAL) to prevent orphaned state on ungraceful exits.
-- **Event Broadcasting**: Tokio broadcast channels stream lifecycle events to the CLI (`podnext log follow`), D-Bus monitors, and web dashboards in real time.
+- **State Store**: Replaces raw directory scanning with a robust embedded database engine, `sled` or `sqlite`, at `$PN_DATA_DIR/state.db`.
+- **Atomic State Transitions**: Status changes `Creating` -> `Installing` -> `Stopped` -> `Running` -> `Failed` are recorded through Write-Ahead Logging, WAL. That record prevents orphaned state on ungraceful exits.
+- **Event Broadcasting**: Tokio broadcast channels stream lifecycle events to the CLI `podnext log follow`, to D-Bus monitors, and to web dashboards in real time.
 
-### 5.3 Container Runtime Interface (CRI) & OCI Compliance
-- Finalizes `pn-next/src/runtime.rs` (CRI gRPC layer built on `tonic`).
-- Enables lightweight container orchestration (e.g., `k3s` or edge agent runners), allowing an Android Termux instance to serve as an edge computing node.
+### 5.3 Container Runtime Interface, CRI, and OCI Compliance
+- Finalizes `pn-next/src/runtime.rs`, the CRI gRPC layer built on `tonic`.
+- Enables lightweight container orchestration for `k3s` or edge agent runners, and lets an Android Termux instance serve as an edge computing node.
 
 ---
 
@@ -181,16 +181,16 @@ The following technical specifications define the modules required for unified i
 - **Purpose**: Centralized container session registry and reliable process tree termination.
 - **Implementation**:
   1. *Data Format*: Structured `$RUNTIME_DIR/sessions/<pid>.json` files storing `container_name`, `pid`, `started_at`, `login_uid`, and `cmdline`.
-  2. *Inherited Locking*: Before invoking `execvpe` to launch PRoot, acquire `flock(fd, LOCK_EX)` on the session file and clear the `FD_CLOEXEC` flag.
-  3. *Liveness Probing*: `podnext ps` attempts a non-blocking shared lock `flock(fd, LOCK_SH | LOCK_NB)` on each registry file. Success indicates the session has terminated (safe to unlink); refusal (`EWOULDBLOCK`) confirms the session is alive.
-  4. *Teardown Engine (`podnext kill <container> [--all]`)`:
+  2. *Inherited Locking*: Before the call to `execvpe` for PRoot launch, acquire `flock(fd, LOCK_EX)` on the session file and clear the `FD_CLOEXEC` flag.
+  3. *Liveness Probing*: `podnext ps` attempts a non-blocking shared lock `flock(fd, LOCK_SH | LOCK_NB)` on each registry file. Success indicates the session has terminated and is safe to unlink. Refusal with `EWOULDBLOCK` confirms the session is alive.
+  4. *Teardown Engine for `podnext kill <container> [--all]`*:
      - Inspect `/proc/[0-9]*/fd/*` symlinks to identify processes holding the session file inode.
      - Execute phased signal escalation:
-       - Phase 1: Send `SIGQUIT` to the root PRoot PID (triggering internal `kill_all_tracees2` handler).
-       - Phase 2: Wait 500ms; verify whether guest processes remain.
+       - Phase 1: Send `SIGQUIT` to the root PRoot PID, which triggers the internal `kill_all_tracees2` handler.
+       - Phase 2: Wait 500ms, then verify whether guest processes remain.
        - Phase 3: Send `SIGTERM` followed by `SIGKILL` directly to any surviving orphaned tracees.
 
-### 6.2 Module `proot-distro-core::dirfd` (Hardened Descriptor VFS)
+### 6.2 Module `proot-distro-core::dirfd`, Hardened Descriptor VFS
 - **Purpose**: Prevent symlink race attacks and FIFO blocking during host-guest file operations.
 - **Implementation**:
   1. Rust `DirFd(RawFd)` wrapper with automated cleanup via `Drop`.
@@ -200,14 +200,14 @@ The following technical specifications define the modules required for unified i
      - `safe_chmod_at(&self, fd: RawFd, mode: u32) -> Result<()>` modifying permissions directly through open descriptors.
      - `atomic_write_at(&self, name: &str, content: &[u8]) -> Result<()>` writing to unique temporary inodes followed by `renameat(2)`.
 
-### 6.3 Module `proot-distro-core::l2s` (Link2Symlink Tree Rewriter)
+### 6.3 Module `proot-distro-core::l2s`, Link2Symlink Tree Rewriter
 - **Purpose**: Repair intermediate hard link symlinks when containers are renamed or relocated.
 - **Implementation**:
   1. Function `rewrite_l2s_tree(rootfs: &Path, old_rootfs: &Path, new_rootfs: &Path) -> Result<usize>`.
   2. Recursive tree traversal:
      - Check symlink targets: if matching `.proot.l2s.` or `.l2s.` prefixed with `old_rootfs`, substitute with `new_rootfs`.
      - Use atomic link creation and replacement via `renameat`.
-  3. Guard traversal with signal blockers (`SIGINT`/`SIGTERM`) to ensure atomic completion.
+  3. Guard traversal with the signal blockers `SIGINT`/`SIGTERM` to ensure atomic completion.
   4. Automatically invoked at the conclusion of `podnext rename` and `podnext copy`.
 
 ### 6.4 Module `podnext build` (Native Dockerfile Builder & OCI Layer Differ)
@@ -219,44 +219,44 @@ The following technical specifications define the modules required for unified i
      - Executes sequential `RUN` steps inside the isolated PRoot environment.
   3. *Layer Differ*:
      - Computes SHA-256 hashes of modified and newly created files.
-     - Detects deleted files and injects standard OCI whiteout markers (`.wh.<filename>`).
+     - Detects deleted files and injects standard OCI whiteout markers such as `.wh.<filename>`.
      - Archives delta layers into compressed `tar.gz` blobs.
   4. *OCI Serializer*: Generates standard OCI v1 manifests, image configuration JSON, and registers images with the local cache.
 
-### 6.5 Module `proot-distro-core::sysdata` (Dynamic CPU Topology Generator)
-- **Purpose**: Prevent monitoring utilities (`htop`, `top`, Node.js) from failing due to dynamic CPU core throttling on Android.
+### 6.5 Module `proot-distro-core::sysdata`, Dynamic CPU Topology Generator
+- **Purpose**: Prevent failures in monitoring utilities such as `htop`, `top` and Node.js, caused by dynamic CPU core throttling on Android.
 - **Implementation**:
   1. Reads host `/proc/cpuinfo` to detect currently online CPU cores.
   2. Synthesizes `/proc/stat` containing matching `cpu0`, `cpu1`, ... entries aligned with host USER_HZ.
-  3. Generates realistic default values for `/proc/loadavg` (`0.12 0.07 0.02 2/165 765`), `/proc/uptime` (`124.08`), `/proc/sys/fs/overflowuid` (`65534`), and `/proc/sys/kernel/cap_last_cap`.
-  4. Stores synthetic files outside guest rootfs (`$CONTAINER_DIR/sysdata/`) and bind-mounts them read-only.
+  3. Generates realistic default values for `/proc/loadavg`, `/proc/uptime`, `/proc/sys/fs/overflowuid` and `/proc/sys/kernel/cap_last_cap`. The values are `0.12 0.07 0.02 2/165 765`, `124.08`, and `65534`.
+  4. Stores synthetic files outside the guest rootfs, at `$CONTAINER_DIR/sysdata/`, and bind-mounts them read-only.
 
-### 6.6 Module `proot-distro-core::locking` (Inheritable POSIX Lock Manager)
+### 6.6 Module `proot-distro-core::locking`, Inheritable POSIX Lock Manager
 - **Purpose**: Prevent data corruption caused by concurrent operations on container filesystems.
 - **Implementation**:
   1. `ContainerLock` manages `$RUNTIME_DIR/locks/<container>.lock`:
-     - `Shared`: for `login`, `run`, `backup`, `copy` (source).
-     - `Exclusive`: for `install`, `remove`, `reset`, `rename`, `copy` (destination).
-  2. `BuildLock` manages `$RUNTIME_DIR/locks/build/<image_tag>.lock` (always `Exclusive`).
-  3. Re-entrancy tracking prevents deadlocks during nested operations (such as `reset` calling `install`).
+     - `Shared`: for `login`, `run`, `backup`, and `copy` as the source.
+     - `Exclusive`: for `install`, `remove`, `reset`, `rename`, and `copy` as the destination.
+  2. `BuildLock` manages `$RUNTIME_DIR/locks/build/<image_tag>.lock` and is always `Exclusive`.
+  3. Re-entrancy tracking prevents deadlocks during nested operations, such as a `reset` that calls `install`.
 
 ### 6.7 Networking Module (Userspace Rootless TCP/IP & Dynamic DNS Helper)
 - **Gvproxy / Slirp4netns Integration**:
   - Delivers complete user-space TCP/IP stack emulation.
-  - Enables container port publishing (`podnext run -p 8080:80`) without requiring iptables or host root privileges.
+  - Enables container port publishing with `podnext run -p 8080:80` and needs no iptables or host root privileges.
 - **Adaptive Dynamic DNS Helper**:
   - Monitors network route changes as Android switches between Wi-Fi and mobile data.
   - Routes container `/etc/resolv.conf` to a local DNS forwarding resolver managed by `podnextd`.
 
-### 6.8 Storage Module (OverlayFS Emulation & Layer Deduplication)
+### 6.8 Storage Module: OverlayFS Emulation and Layer Deduplication
 - **OverlayFS Emulation / Reflink Deduplication**:
   - Leverages rootless `fuse-overlayfs` or symlink/hardlink tree branching to eliminate storage duplication across multiple containers sharing a common Debian base.
 - **Garbage Collection & Prune Engine**:
-  - Automated pruning of dangling image layers and unreferenced volumes (`podnext image prune`, `podnext volume prune`).
+  - Automated pruning of dangling image layers and unreferenced volumes through `podnext image prune` and `podnext volume prune`.
 
 ### 6.9 Supervisor, Watchdog & IPC Module
 - **Adaptive Backoff & Flapping Detection**:
-  - Enhances the circuit breaker: detects rapid crash loops (flapping) and transitions services into a `Quarantine` state rather than consuming CPU with infinite restart loops.
+  - Enhances the circuit breaker: it detects rapid crash loops, flapping, and transitions services into a `Quarantine` state rather than consuming CPU with infinite restart loops.
 - **Systemd Unit File Importer**:
   - Translates basic systemd `.service` unit files into native `podnext service` definitions.
 
@@ -266,10 +266,10 @@ The following technical specifications define the modules required for unified i
 
 ### 7.1 Zero-Trust Guest Boundary
 - Adheres to verified security practices: **all data received from guest environments is untrusted**.
-- Symlinks traversing outside rootfs (`/data/data/com.termux`, `/storage/emulated/0`) are intercepted at the VFS layer and rejected unless explicitly permitted via `--bind`.
+- Symlinks that traverse outside the rootfs, such as `/data/data/com.termux` and `/storage/emulated/0`, are intercepted at the VFS layer and rejected unless `--bind` permits them explicitly.
 
 ### 7.2 Distro-Tailored Seccomp Profiling
-- Prevents application crashes from blocked syscalls by returning graceful `ENOSYS` or `EPERM` error codes via BPF filters for calls such as `sys_setxattr`, `keyctl`, or `bpf`.
+- The filters return graceful `ENOSYS` or `EPERM` error codes for calls such as `sys_setxattr`, `keyctl`, or `bpf`. This prevents application crashes from blocked syscalls.
 
 ---
 
@@ -312,28 +312,28 @@ This roadmap serves as the definitive engineering blueprint for elevating contai
 
 ## 9. Roadmap to v0.2.0 — stability, simplicity, and the interactive shell
 
-**Status (5 Nov 2026): not complete.** Every figure below names the command that produced it. The
-`v0.1.9` release was withdrawn before it was tagged (`5b479d1`), `Cargo.toml` still reads `0.1.8`,
-and section 9.3 still has open work items. A one-line status per sub-section follows its
-heading. Ledger: 80 PASS / 0 FAIL / 13 SKIPPED of 93 offline; 93 PASS / 0 FAIL / 0 SKIPPED in CI at
-`892549a` (`python3 scripts/build_issue_ledger.py --offline | tail -1`).
+**Status, 5 Nov 2026: not complete.** Every figure below names the command that produced it. The
+`v0.1.9` release was withdrawn before it was tagged at `5b479d1`, `Cargo.toml` still reads `0.1.8`,
+and section 9.3 still has open work items. A one-line status per sub-section follows its heading.
+Ledger: 80 PASS / 0 FAIL / 13 SKIPPED of 93 offline, and 93 PASS / 0 FAIL / 0 SKIPPED in CI at
+`892549a`, from `python3 scripts/build_issue_ledger.py --offline | tail -1`.
 
 Decisions already taken, so they are not reopened here:
 
 - **Licence**: `GPL-2.0-or-later`, declared identically in `LICENSE`, `Cargo.toml` and `README.md`,
-  pinned by four ledger predicates (#40, closed).
-- **Image model**: unchanged in v0.2.0. Images are still container directories; the OCI artifact
+  pinned by four ledger predicates, issue #40, closed.
+- **Image model**: unchanged in v0.2.0. Images are still container directories. The OCI artifact
   store, layers and registry transport are section 4.4 and belong to the next major version.
-- **TUI**: not in v0.2.0. A TUI is a consumer; it is cheap only once a stable machine interface
+- **TUI**: not in v0.2.0. A TUI is a consumer. It is cheap only once a stable machine interface
   exists underneath. section 9.2 builds that interface first.
 
 ### 9.1 Stability and honesty — freeze breadth, deepen the paths people use daily
 
-**Status (5 Nov 2026): landed.** Every command carries a `stable` / `experimental` label and every stub refuses with a named reason (#42, `fcabc1c`); the exit-code contract is documented and the CLI-reference contract test runs the built binary (#42, `28c4594`); the audit findings were triaged into the tracker. Two halves of these criteria were read closely enough afterwards to notice they had never been exercised, and both are now closed: the **examples** in `docs/src/cli-reference.md` were not run by anything until **#64** built `scripts/check_doc_examples.py` (50 blocks, 10 executed, 41 excluded with a printed reason, run in CI, and it found two genuinely wrong examples), and the exit-code classes are asserted by `crates/podnext/tests/exit_codes.rs` (`665b3ba`, now 7) as well as by the documentation. Verified by the ledger: **129 PASS / 0 FAIL / 0 SKIPPED of 129 in CI at `ad123ef`** - no check without a verdict - and 111 PASS / 18 SKIPPED offline, where the memory guard refuses the bench build.
+**Status, 5 Nov 2026: landed.** Every command carries a `stable` / `experimental` label, and every stub refuses with a named reason, issue #42 at `fcabc1c`. The exit-code contract is documented, and the CLI-reference contract test runs the built binary, issue #42 at `28c4594`. The audit findings were triaged into the tracker. Two halves of these criteria were read closely enough afterwards to notice that nothing had exercised them. Both are now closed. The **examples** in `docs/src/cli-reference.md` had no runner until **#64** built `scripts/check_doc_examples.py`. That script covers 50 blocks: it runs 10, excludes 41 with a printed reason, and it found two genuinely wrong examples. The exit-code classes are asserted by `crates/podnext/tests/exit_codes.rs`, `665b3ba`, now 7, as well as by the documentation. The ledger verifies this: **129 PASS / 0 FAIL / 0 SKIPPED of 129 in CI at `ad123ef`**, so no check is without a verdict. Offline the ledger shows 111 PASS / 18 SKIPPED, where the memory guard refuses the bench build.
 
 The defect pattern of the last three rounds was consistent: a command existed, printed something
-plausible, and could not do what it claimed (`image push`, benchmark reporting, `image inspect`,
-`login --detach`). v0.2.0 removes the pattern rather than more instances of it.
+plausible, and did not do what it claimed. The examples are `image push`, benchmark reporting, `image inspect`
+and `login --detach`. v0.2.0 removes the pattern rather than more instances of it.
 
 | Work item | Acceptance criterion |
 |---|---|
@@ -345,21 +345,21 @@ plausible, and could not do what it claimed (`image push`, benchmark reporting, 
 
 ### 9.2 Simplicity and performance — one source of truth, one module per domain
 
-**Status (6 Nov 2026, after four rounds): the split is done, the latency criterion is recorded as an exception, and metadata is routed.** `main.rs` 4,679 to **1,040** lines, the whole Clap surface in a new `cli.rs` (1,445), and `commands/mod.rs` 3,719 to **813** across eight extractions (`image` / `volume` / `network` / `sync` / `container`, then `policy` / `quota` / `log` / `dbus` / `socket`, then `service` / `watchdog` / `power`, then `build` / `gitops`). Every `--help` screen is byte-identical before and after; the 123-screen dump is the gate, and as of this round it is a **tracked fixture** (`research/cli-help-baseline.txt`, 123 screens, sha256 `8236a573...`) compared in CI, so a help text change cannot land without updating it in the same commit. That comparison settled one question by measurement rather than assumption: the dump is **platform-independent** - the fixture generated on the device (aarch64) is byte-identical to the runner's dump (x86_64) - so one fixture suffices and it does not need keying per platform the way the warning ceiling does. The cached container index landed (`cf3f487`) with mtime invalidation proved in both directions: in-process p50 **1.3-2.2 ms** with ten containers, against a criterion of under 10 ms. What that criterion cannot mean here is end-to-end: process start alone is p50 31-36 ms, so the 42-53 ms baseline was never the store scan.
+**Status, 6 Nov 2026, after four rounds: the split is done, the latency criterion is recorded as an exception, and metadata is routed.** `main.rs` went from 4,679 to **1,040** lines. The whole Clap surface is in a new `cli.rs` at 1,445 lines. `commands/mod.rs` went from 3,719 to **813** lines across eight extractions. The extractions are `image` / `volume` / `network` / `sync` / `container`, then `policy` / `quota` / `log` / `dbus` / `socket`, then `service` / `watchdog` / `power`, then `build` / `gitops`. Every `--help` screen is byte-identical before and after. The 123-screen dump is the gate, and as of this round it is a **tracked fixture** at `research/cli-help-baseline.txt` with 123 screens and sha256 `8236a573...`. CI compares that fixture. So a help text change cannot land without an update to that fixture in the same commit. That comparison settled one question by measurement rather than assumption: the dump is **platform-independent**. The fixture generated on the device at aarch64 is byte-identical to the runner's dump at x86_64. So one fixture suffices, and it does not need a key per platform the way the warning ceiling does. The cached container index landed at `cf3f487` with mtime invalidation proved in both directions: in-process p50 **1.3-2.2 ms** with ten containers, against a criterion of under 10 ms. What that criterion cannot mean here is end-to-end: process start alone is p50 31-36 ms. So the 42-53 ms baseline was never the store scan.
 
-**Daemon routing landed** and the criterion attached to it is recorded as an exception rather than claimed. All six metadata queries (`list` / `info` / `ps` x json/table) produce an empty diff between the daemon path and the in-process fallback, round trips are constant (1 with the daemon, 0 without) at one and ten containers, and a container created after the daemon started appears in the next answer - never stale. Latency independence is **not** met: with ten containers the daemon path is slower (in-process p50 5.20 ms against 1.48 ms) and still grows with the container count, because freshness revalidates each `metadata.json` over IPC. An O(1) freshness key would serve in-place metadata rewrites stale, a regression against the index cache above, so the criterion is left unmet on purpose with the measurement beside it. `SIZE` honesty landed earlier (#44); environment paths landed (#46).
+**Daemon routing landed**, and the criterion attached to it is recorded as an exception rather than claimed. All six metadata queries, `list` / `info` / `ps` x json/table, produce an empty diff between the daemon path and the in-process fallback. Round trips are constant at one container and at ten containers: 1 with the daemon and 0 without. A container created after the daemon started appears in the next answer, and it is never stale. Latency independence is **not** met: with ten containers the daemon path is slower at in-process p50 5.20 ms against 1.48 ms. It still grows with the container count. The reason is that freshness revalidates each `metadata.json` over IPC. An O(1) freshness key serves in-place metadata rewrites stale, a regression against the index cache above. So the criterion is left unmet on purpose with the measurement beside it. `SIZE` honesty landed earlier at #44, and environment paths landed at #46.
 
 The file-length row is **met**, in a fourth round, at every file in `crates/podnext/src`:
-`cli.rs` 1,450 to **687** and `main.rs` 1,170 to **479**, with the surplus in `direct.rs` (390),
-`cli/system.rs` (218), `cli/service.rs` (219), `subcommands.rs` (208), `dispatch.rs` (120) and seven
+`cli.rs` 1,450 to **687** and `main.rs` 1,170 to **479**, with the surplus in `direct.rs` at 390,
+`cli/system.rs` at 218, `cli/service.rs` at 219, `subcommands.rs` at 208, `dispatch.rs` at 120 and seven
 smaller `cli/` modules - no file over 800 among them. The move was text-only and the help dump is
-byte-identical to the tracked fixture (`sha256 8236a573be5952cdd983c5c8f6cd3833f8e6aa0b1782e1dc1cd08c638fd2b8c5`,
-123 screens); `scripts/local_gate.sh` is GATE GREEN and the `podnext` bin still emits 26 warnings.
+byte-identical to the tracked fixture at `sha256 8236a573be5952cdd983c5c8f6cd3833f8e6aa0b1782e1dc1cd08c638fd2b8c5` and
+123 screens, and `scripts/local_gate.sh` is GATE GREEN with the `podnext` bin still at 26 warnings.
 Measured and **not** claimed closed: `commands/mod.rs` is 813 lines and `native.rs` (a pre-existing
 file the ticket did not name) is 1,605.
 
 `native.rs` was the last one, and it was this project's own doing - 1,151 lines before the detach/attach
-round, 1,605 after - so it was split rather than excused (#72, `eaf3e2d`): 261 lines of module root behind
+round, 1,605 after, so it was split rather than excused, issue #72 at `eaf3e2d`: 261 lines of module root behind
 `native/image.rs` 579, `native/session.rs` 623 and `native/meta.rs` 184, along the OCI-install vs
 container-session seam already present in the file. The guard there is deliberately **not** the help
 fixture, which proves nothing about a file with no Clap surface: it is the 84 test targets,
@@ -369,12 +369,12 @@ SIGKILL).
 
 What remains above the guideline is one file, and it is stated rather than smoothed: `commands/mod.rs` is
 **813** lines - 13 over a `~`800 guideline, and the module root, where the re-exports live by necessity.
-The same is true of `cli.rs` at 687, whose 453-line `Commands` enum cannot leave the root without changing
+The same is true of `cli.rs` at 687, whose 453-line `Commands` enum cannot leave the root without a change to
 the rendered surface. Both are floors of their design, not places the split stopped.
 
-Measured baseline: `image ls` 28.6 ms, `list -a` 42–53 ms for ten containers, dominated by process
-start plus a full container load; `image ls` reports `SIZE` as a `stat` of the directory (3.4 KB for a
-307 MB image). Two monolithic files carry most of the CLI: `main.rs` 4,220 lines and
+Measured baseline: `image ls` 28.6 ms and `list -a` 42 to 53 ms for ten containers, dominated by process
+start plus a full container load. `image ls` reports `SIZE` as a `stat` of the directory, 3.4 KB for a
+307 MB image. Two monolithic files carry most of the CLI: `main.rs` 4,220 lines and
 `commands/mod.rs` 3,604 lines.
 
 | Work item | Acceptance criterion |
@@ -387,35 +387,35 @@ start plus a full container load; `image ls` reports `SIZE` as a `stat` of the d
 
 ### 9.3 The interactive shell — the largest untapped value
 
-**Status (6 Nov 2026, fourth round): landed - six of six.** `podnext doctor` on the host and inside the guest, 12 checks with a container (`285720a`, `a6c4fa6`; #45), and the `run ... -- <cmd>` **argv quoting table** (`5c34115`): fifteen arguments - quotes, a semicolon, a dollar-variable and a command substitution that must not expand, a glob, an empty argument, a newline, a tab, a backslash, multi-byte text - compared against what the guest actually received, NUL-separated so a newline inside one argument cannot read as two, with a second test asserting nothing expanded and no host identity leaked. **Terminal fidelity and the soak are now measured and met.** `scripts/shell_fidelity.py` reports `stty size` at a fixed winsize, a live resize the guest sees (24x80 to 40x120), `TERM` and `COLORTERM` inside the guest, a default `PS1`, an interactive prompt, and a UTF-8 round trip through both stdout and guest stdin - with a negative control that still goes red. `scripts/soak_sessions.py` runs twenty start/stop iterations and asserts no container process survives, with an injected leak caught at the iteration it happens.
+**Status, 6 Nov 2026, fourth round: landed - six of six.** `podnext doctor` runs on the host and inside the guest. It reports 12 checks when a container is present, at `285720a` and `a6c4fa6`, issue #45. The `run ... -- <cmd>` **argv quoting table** is at `5c34115`. It covers fifteen arguments. The set includes quotes, a semicolon, a dollar-variable, and a command substitution that must not expand. It also includes a glob, an empty argument, a newline, a tab, a backslash, and multi-byte text. The table compares them against what the guest actually received, NUL-separated, so a newline inside one argument cannot read as two. A second test asserts that nothing expanded and that no host identity leaked. **Terminal fidelity and the soak are now measured and met.** `scripts/shell_fidelity.py` reports `stty size` at a fixed winsize. It reports a live resize that the guest sees from 24x80 to 40x120. It also reports `TERM` and `COLORTERM` inside the guest, a default `PS1`, and an interactive prompt. A UTF-8 round trip passes through both stdout and guest stdin. A negative control still goes red. `scripts/soak_sessions.py` runs twenty start/stop iterations and asserts that no container process survives, with an injected leak caught at the iteration where it happens.
 
 **Detach and attach is a real round trip, and the two items that were still open are closed.** #57
-(`ff2e1e3`) made `run --detach` start a supervised PTY session and `attach` reconnect to it: the same
+at `ff2e1e3` made `run --detach` start a supervised PTY session and `attach` reconnect to it: the same
 shell pid answers two successive attaches, a marker written while detached is still there in the second,
 the process census is `0 proot/podnext rows` before and after, and a SIGKILL of the supervisor leaves no
 orphan. The supervisor is `setsid` with `PPid=1`, so it is not in the launcher's process group - the #68
 lesson applied to a session that must outlive whoever started it. Two simplifications are **declared** in
-`known-limitations.md` rather than hidden: a resize while attached is not re-forwarded (`SIGWINCH` is not
-re-emitted), and output produced while detached is appended to the session log rather than replayed.
+`known-limitations.md` rather than hidden: a resize while attached is not re-forwarded, because `SIGWINCH` is not
+re-emitted, and output produced while detached is appended to the session log rather than replayed.
 
-**The bindings and the `USER` story are measured inside a guest, not assumed.** #66 (`523ae58`) measured
+**The bindings and the `USER` story are measured inside a guest, not assumed.** #66 at `523ae58` measured
 what the documented paths actually are: `/sdcard`, `/storage/emulated/0` and `/storage/self/primary` exist
-inside a guest as its **own empty rootfs directories** (the device id matches `/`, and `/proc/mounts`
-carries no such bind), `/tmp` and `/dev/shm` are per-container, and the host home is not mounted at all -
+inside a guest as its **own empty rootfs directories**. The device id matches `/`, and `/proc/mounts`
+carries no such bind. The `/tmp` and `/dev/shm` paths are per-container, and the host home is not mounted at all -
 with a negative control that goes red when falsified. On `USER`: `build local` states the mapping,
 `run` and `login` now print it on stderr with stdout untouched, and both `run --user` and `login --user`
 refuse with the measurement - before this round `login --user 1000` was accepted and **silently ignored**,
-which the same department found by running it inside a guest.
+which the same department found when it ran that command inside a guest.
 
 The documented examples are executed too: `scripts/check_doc_examples.py` runs the 50 fenced blocks in
 `cli-reference.md` - 10 executed, 41 excluded with a printed reason - and it runs in CI, where it found
-two genuinely wrong examples (`dbus list --socket` and a `dbus call` missing a positional). #64.
+two genuinely wrong examples: `dbus list --socket`, and a `dbus call` that misses a positional. #64.
 
-Measuring fidelity found a **regression**, which is the useful part: a guest started with `login` had no prompt and could not read stdin, because `proot-core` gave the child its own process group while the tty foreground group was still the caller's, so the guest read stopped on `SIGTTIN` while writes and ioctls kept working. The installed v0.1.7 worked, which is what proved it was a regression rather than a mystery (#68). Fixed, with the harness as the oracle, and guarded by two pure functions and their unit tests in `crates/proot-core/src/lib.rs`. `TERM` was also hardcoded while `COLORTERM` passed through; it is now forwarded. One open question is recorded rather than claimed: the harness proves the guest sees the new winsize, not that `SIGWINCH` is delivered.
+The fidelity measurement found a **regression**, which is the useful part. A guest started with `login` had no prompt and was unable to read stdin. The reason is that `proot-core` gave the child its own process group while the tty foreground group was still the caller's. So the guest read stopped on `SIGTTIN` while writes and ioctls kept working. The installed v0.1.7 worked, and that is what proved it was a regression rather than a mystery, issue #68. The fix landed, with the harness as the oracle, and two pure functions and their unit tests in `crates/proot-core/src/lib.rs` guard it. `TERM` was also hardcoded while `COLORTERM` passed through. It is now forwarded. One open question is recorded rather than claimed: the harness proves that the guest sees the new winsize, not that the system delivers `SIGWINCH`.
 
-**Landed: real `--detach` plus `attach` (#57).** `run --detach` starts the guest under a supervised PTY and prints the supervisor pid; `attach <container>` reconnects to the same live shell (same guest pid across two attaches, a marker written while attached survives a detach, no orphan after the guest exits). Two simplifications are declared rather than hidden — a resize of the attaching terminal is not re-forwarded while attached, and output produced while detached is written to the session log but not replayed — and are recorded in `known-limitations.md`. The bindings and the `USER` story are documented (`/sdcard`, `/storage/emulated/0`, `/storage/self/primary` in `constants.rs`; `--user` refused with the mapped-root reason) but have never been measured **inside** a guest: that is **#66**. `known-limitations.md` lists the unmeasured items.
+**Landed: real `--detach` plus `attach`, issue #57.** `run --detach` starts the guest under a supervised PTY and prints the supervisor pid. `attach <container>` reconnects to the same live shell: the same guest pid across two attaches, a marker written while attached survives a detach, and no orphan after the guest exits. Two simplifications are declared rather than hidden. A resize of the attaching terminal is not re-forwarded while attached, and output produced while detached is written to the session log but not replayed. Both are recorded in `known-limitations.md`. The bindings and the `USER` story are documented in `constants.rs` for `/sdcard`, `/storage/emulated/0` and `/storage/self/primary`, and `--user` is refused with the mapped-root reason. The project has never measured them **inside** a guest. That is **#66**. `known-limitations.md` lists the unmeasured items.
 
-Being able to `login` is not the same as enjoying the shell daily. Ordered by what blocks people:
+The ability to `login` is not the same as daily use of the shell. Ordered by what blocks people:
 
 | Work item | Acceptance criterion |
 |---|---|
@@ -428,23 +428,23 @@ Being able to `login` is not the same as enjoying the shell daily. Ordered by wh
 
 ### 9.4 Explicit non-goals for v0.2.0
 
-**Status (5 Nov 2026): held.** Only `doctor` was added beyond the existing surface (the new top-level command required by section 9.3); `cluster`, `dbus`, `gitops` and `multiarch_build` were not expanded, and there is no TUI (`podnext --help` lists the same command set as before this round).
+**Status, 5 Nov 2026: held.** Only `doctor` was added beyond the existing surface, and section 9.3 requires that new top-level command. The `cluster`, `dbus`, `gitops` and `multiarch_build` commands were not expanded, and there is no TUI. `podnext --help` lists the same command set as before this round.
 
-- No expansion of `cluster`, `dbus`, `gitops` or `multiarch_build` (`crates/pn-next/src` is 22,664 lines, the figure `scripts/check_non_goals.py` records as a ceiling: `find crates/pn-next/src -name '*.rs' | xargs wc -l`. An earlier draft of this section said 23,760, which no command reproduced.)
+- No expansion of `cluster`, `dbus`, `gitops` or `multiarch_build`. `crates/pn-next/src` is 22,664 lines, the figure `scripts/check_non_goals.py` records as a ceiling: `find crates/pn-next/src -name '*.rs' | xargs wc -l`. An earlier draft of this section said 23,760, which no command reproduced.
   Complexity that is not exercised rots, and the project has the receipts: a benchmark target drifted
   through 26 compile errors behind a green check.
 - No new top-level commands beyond `doctor`, which section 9.3 requires: that is the 38th, and it is
-  already labelled and gated. Everything else new waits — v0.2.0 makes the existing 37 honest first.
-- No TUI until section 9.2 lands, no OCI store until the next major version (section 4.4).
+  already labelled and gated. Everything else new waits. v0.2.0 makes the existing 37 honest first.
+- No TUI until section 9.2 lands, and no OCI store until the next major version in section 4.4.
 
-The audit run that accompanies this section supplies the concrete defect list; its findings are
+The audit run that accompanies this section supplies the concrete defect list. Its findings are
 triaged into the issue tracker and folded back here as they are confirmed.
 
 ---
 
-## 10. v0.3.0 — the mobility target
+## 10. v0.3.0: the mobility target
 
-> **Numbering note (6 Nov 2026).** This section was written as the `v0.2.0` target. The release that
+> **Numbering note, 6 Nov 2026.** This section was written as the `v0.2.0` target. The release that
 > carried the section 9 stabilization - the audit, the module split, the detach/attach round trip, the
 > gates - took the `v0.2.0` number instead, because `v0.1.9` was tagged and withdrawn and a tag cannot be
 > reused. The mobility polygon below is therefore the NEXT release's target. Its acceptance tests are
@@ -468,7 +468,7 @@ of opinion. Measured against the reference implementation installed on this devi
 ### 10.2 Gap: living inside it
 
 podnext's `login` accepts exactly two things today: `--isolated` and a trailing command. `-u/--user`
-is refused — the guest runs as the mapped root (see [Known limitations](known-limitations.md)) — so it
+is refused, because the guest runs as the mapped root, see [Known limitations](known-limitations.md). It
 is no longer part of the accepted surface. The reference polygon is far wider, and this is where
 "mobility" is felt:
 
@@ -506,7 +506,7 @@ is no longer part of the accepted surface. The reference polygon is far wider, a
 ### 10.5 Recycling map — what to take from the reference, and how
 
 Reimplemented from the OCI/Docker specifications, **never transcribed**: the reference is GPL-3.0 and
-this project is `GPL-2.0-or-later`; the boundary is described in `research/IMAGE_STORE_AND_PUSH.md`
+this project is `GPL-2.0-or-later`. The boundary is described in `research/IMAGE_STORE_AND_PUSH.md`
 section 5. What is taken is the *architecture*, module by module:
 
 | Reference area | What it does | podnext counterpart to build |
@@ -523,10 +523,10 @@ section 5. What is taken is the *architecture*, module by module:
 
 ### 10.6 Sequencing
 
-- **v0.2.0** (shipped): stability, honesty, module split, cached index, env-var paths, and the crash
-  class filed as #41. No new top-level commands; no TUI.
-- **v0.3.0**: section 10.1–10.4. The image store (section 4.4) is the spine, because import/export, push/pull and
-  build-with-layers all sit on it; the `login` polygon is the other half and is independent of it, so
+- **v0.2.0**, shipped: stability, honesty, module split, cached index, env-var paths, and the crash
+  class filed as #41. No new top-level commands and no TUI.
+- **v0.3.0**: sections 10.1 to 10.4. The image store in section 4.4 is the spine, because import/export, push/pull and
+  build-with-layers all sit on it. The `login` polygon is the other half and is independent of it, so
   the two can proceed in parallel.
 - Performance is not a later phase: the cached container index and the daemon-owned state are v0.2.0
   work precisely because they make every v0.3.0 command cheaper by construction.

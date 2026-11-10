@@ -51,7 +51,7 @@ PDN implements a defense-in-depth security model with multiple layers of protect
 
 ### Default Profile
 
-Balanced security for general workloads. Allows ~200 syscalls, blocks dangerous ones.
+This profile gives balanced security for general workloads. It allows ~200 syscalls and blocks dangerous syscalls.
 
 ```toml
 [profile.seccomp]
@@ -70,7 +70,7 @@ blocked = [
 
 ### Restricted Profile
 
-Minimal syscall set for untrusted workloads. Only ~50 syscalls allowed.
+This profile gives a minimal syscall set for untrusted workloads. It allows only ~50 syscalls.
 
 ```toml
 [profile.seccomp]
@@ -98,7 +98,7 @@ allowed = [
 
 ### Unconfined Profile
 
-No seccomp filtering - for debugging only.
+This profile has no seccomp filtering. Use it for debugging only.
 
 ```toml
 [profile.seccomp]
@@ -108,7 +108,7 @@ architectures = ["SCMP_ARCH_AARCH64", "SCMP_ARCH_X86_64"]
 
 ### Custom Profiles
 
-Create custom profiles in `~/.config/pn-next/security/<name>.toml`:
+Create custom profiles in `~/.config/pn-next/security/<name>.toml`.
 
 ```toml
 [profile]
@@ -156,7 +156,7 @@ architectures = ["SCMP_ARCH_AARCH64", "SCMP_ARCH_X86_64"]
 
 ### Using Profiles
 
-Profiles are selected via the `PN_SECURITY_PROFILE` environment variable or container configuration:
+You select profiles with the `PN_SECURITY_PROFILE` environment variable or the container configuration.
 
 ```bash
 # Use default profile
@@ -177,7 +177,7 @@ PN_SECURITY_PROFILE=unconfined podnext run ubuntu -- cmd
 PDN uses a **drop-by-default** model:
 
 1. Start with all capabilities
-2. Drop dangerous capabilities (default profile drops 30+)
+2. Drop dangerous capabilities. The default profile drops 30+ capabilities.
 3. Add only required capabilities
 
 ### Default Dropped Capabilities
@@ -400,7 +400,7 @@ podnext run ubuntu --read-only -- cmd
 
 ### Masked Paths
 
-Paths hidden from container:
+PDN hides these paths from the container:
 
 ```toml
 [container.security.mask_paths]
@@ -415,7 +415,7 @@ paths = [
 
 ### Read-Only Paths
 
-Paths visible but not writable:
+PDN shows these paths to the container, but the container cannot write to them:
 
 ```toml
 [container.security.readonly_paths]
@@ -427,7 +427,7 @@ paths = [
 
 ### No New Privileges
 
-Prevents privilege escalation:
+This setting prevents privilege escalation.
 
 ```toml
 [container.security]
@@ -440,7 +440,7 @@ podnext run ubuntu --no-new-privileges -- cmd
 
 ### User Namespaces
 
-Map container UID/GID to unprivileged host UID/GID:
+Map the container UID/GID to an unprivileged host UID/GID:
 
 ```toml
 # planned: uid_map, gid_map, allowed, blocked, burst, requests_per_minute,
@@ -452,7 +452,7 @@ uid_map = "0:100000:65536"
 gid_map = "0:100000:65536"
 ```
 
-## Resource Limits (Cgroups v2)
+## Resource Limits with Cgroups v2
 
 ### Memory Limits
 

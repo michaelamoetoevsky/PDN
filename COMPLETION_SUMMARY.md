@@ -10,8 +10,8 @@
 - Six member crates use the centralized workspace metadata.
 - `podnext` and `podnext-daemon` compile via release profile and report `0.1.7`.
 - `cargo fmt --all -- --check` and `git diff --check` both pass with exit code `0`.
-- `cargo test --workspace` passed (`93 passed`, `1 ignored`).
-- `cargo test --package pn-next --features cri` passed (`49 passed`, `0 failed`, doctest passed).
+- `cargo test --workspace` passed. Results: `93 passed`, `1 ignored`.
+- `cargo test --package pn-next --features cri` passed. Results: `49 passed`, `0 failed`, doctest passed.
 - Daemon IPC smoke test confirmed Unix socket responses for `ping` and `list`.
 - No lingering build, test, or daemon processes remain active.
 

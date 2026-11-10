@@ -2,7 +2,7 @@
 
 ## Plugin System
 
-PDN supports dynamic plugins via `libloading` for extending functionality.
+PDN supports dynamic plugins with `libloading` to extend functionality.
 
 ### Plugin Architecture
 
@@ -141,7 +141,7 @@ podnext plugin disable my-network-plugin
 podnext network create --plugin my-network-plugin mynet
 ```
 
-## Checkpoint/Restore (CRIU)
+## Checkpoint and Restore CRIU
 
 ### Requirements
 
@@ -150,7 +150,7 @@ podnext network create --plugin my-network-plugin mynet
 
 ### Basic Usage
 
-Container state backups and snapshots in PDN are managed via the backup commands:
+PDN manages container state backups and snapshots with the backup commands:
 
 ```bash
 # Create container backup snapshot
@@ -203,10 +203,10 @@ let container = runtime.restore(RestoreOptions {
 ### Limitations
 
 - Requires `CAP_SYS_ADMIN` and `CAP_CHECKPOINT_RESTORE`
-- Not all syscalls supported (seccomp must allow checkpoint/restore)
-- GPU state not preserved
-- Network connections may not restore cleanly
-- File descriptors to host paths not preserved
+- Not all syscalls get support. Seccomp must allow checkpoint and restore.
+- PDN does not preserve GPU state.
+- Network connections can fail to restore cleanly.
+- PDN does not preserve file descriptors to host paths.
 
 ## GPU Acceleration
 
@@ -300,7 +300,7 @@ CMD ["vulkaninfo"]
 
 ### Manifest Lists
 
-PDN supports Docker manifest lists (multi-arch images):
+PDN supports Docker manifest lists for multi-arch images:
 
 ```bash
 # Pull multi-arch image (auto-selects host architecture)
@@ -421,9 +421,9 @@ chmod +x ~/.config/pn-next/cni/bin/my-cni-plugin
 - Circuit breaking
 - Retry policies
 - Rate limiting
-- Observability (metrics, traces, logs)
+- Observability: metrics, traces, logs
 
-### Envoy Integration (Planned)
+### Planned Envoy Integration
 
 ```toml
 # not-pdn-config: service-mesh sketch, no backing table in this crate.
@@ -546,7 +546,7 @@ podnext workflow logs <workflow-id>
 
 ### CRI gRPC API
 
-PDN implements the Kubernetes Container Runtime Interface (CRI) gRPC API:
+PDN implements the Kubernetes Container Runtime Interface CRI gRPC API:
 
 ```bash
 # Start CRI server

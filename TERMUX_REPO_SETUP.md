@@ -1,19 +1,19 @@
 # PDN Self-Hosted Termux Repository
 
-Since termux-packages requires established community adoption (PR #33069 closed), use this self-hosted approach.
+termux-packages requires established community adoption, and PR #33069 is closed. Use this self-hosted approach.
 
 ## Repository Setup
 
 The fork already exists at: **https://github.com/michaelamoetoevsky/termux-packages**
 
-### Option 1: GitHub Pages (Recommended)
+### Option 1: GitHub Pages, Recommended
 
 1. **Enable GitHub Pages** on the fork:
    - Go to https://github.com/michaelamoetoevsky/termux-packages/settings/pages
    - Source: "Deploy from a branch" → `gh-pages` branch → `/ (root)`
    - This creates: `https://michaelamoetoevsky.github.io/termux-packages/`
 
-2. **Build and publish packages** using GitHub Actions:
+2. **Build and publish packages** with GitHub Actions:
    ```yaml
    # .github/workflows/build.yml (add to fork)
    name: Build PDN Package
@@ -36,7 +36,7 @@ The fork already exists at: **https://github.com/michaelamoetoevsky/termux-packa
              publish_dir: ./packages
    ```
 
-### Option 2: Direct Package Distribution (Simpler)
+### Option 2: Direct Package Distribution, Simpler
 
 **Just use the built .deb from GitHub Actions artifacts:**
 
@@ -56,7 +56,7 @@ The fork already exists at: **https://github.com/michaelamoetoevsky/termux-packa
    apt install -f  # fix dependencies
    ```
 
-### Option 3: Custom Termux Repository (Best UX)
+### Option 3: Custom Termux Repository, Best User Experience
 
 **Create a simple repo index:**
 
@@ -97,8 +97,8 @@ apt install pdn
 ## Next Steps
 
 1. **Immediate**: Add PDN .deb to GitHub Releases v0.1.0
-2. **Short-term**: Set up GitHub Pages on fork for custom repo
-3. **Long-term**: Build community adoption, then resubmit to termux-packages
+2. **Short-term**: Set up GitHub Pages on the fork for a custom repo
+3. **Long-term**: Build community adoption, then resubmit the package to termux-packages
 
 ## Files Ready
 - `termux-package/recipe/build.sh` - Complete build script

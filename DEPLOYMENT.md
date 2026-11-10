@@ -1,24 +1,24 @@
 # PDN Deployment Guide
 
 ## Overview
-PDN (PRoot Distro Next) is a next-generation container platform for Termux/Android that unifies PRoot, PRoot-distro, and proot-compat into a single Rust codebase.
+PDN, or PRoot Distro Next, is a next-generation container platform for Termux and Android. PDN unifies PRoot, PRoot-distro and proot-compat into a single Rust codebase.
 
 ## Prerequisites
 
-### Host System (Build)
+### Host System for the Build
 - Ubuntu 22.04+ / Debian 12+ / Fedora 38+
-- Rust 1.75+ (stable)
-- Android NDK r27c (for Android cross-compilation)
+- Rust 1.75+ stable
+- Android NDK r27c for Android cross-compilation
 - Git
 - CMake, pkg-config
 - System dependencies: `libclang-dev libssl-dev libudev-dev libseccomp-dev libcap-dev`
 
-### Target System (Termux/Android)
-- Android 10+ (API 29+)
-- Termux (latest from F-Droid or GitHub)
-- PRoot (installed via Termux: `pkg install proot`)
-- proot-distro (installed via Termux: `pkg install proot-distro`)
-- aarch64 architecture (arm64)
+### Target System: Termux and Android
+- Android 10+ with API 29+
+- Termux, the latest version from F-Droid or GitHub
+- PRoot, installed in Termux with `pkg install proot`
+- proot-distro, installed in Termux with `pkg install proot-distro`
+- aarch64 architecture, also known as arm64
 
 ## Building from Source
 
@@ -28,7 +28,7 @@ git clone https://github.com/your-org/pdn.git
 cd pdn
 ```
 
-### 2. Build for Host (Linux x86_64)
+### 2. Build for the Host on Linux x86_64
 ```bash
 # Install Rust if not present
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -80,7 +80,7 @@ file target/aarch64-linux-android/release/pn-cli
 
 ## Installation on Termux
 
-### Method 1: Pre-built Binary (Recommended)
+### Method 1: Pre-built Binary, Recommended
 ```bash
 # Download latest release
 curl -L -o pn-cli https://github.com/your-org/pdn/releases/latest/download/pn-cli-android-aarch64
@@ -92,7 +92,7 @@ pn-cli --version
 pn-cli system info
 ```
 
-### Method 2: Build on Device (Termux)
+### Method 2: Build on the Device in Termux
 ```bash
 # Install build dependencies
 pkg install rust clang cmake libandroid-support libc++ openssl libseccomp
@@ -106,7 +106,7 @@ cargo build --workspace --release
 cp target/release/pn-cli $PREFIX/bin/
 ```
 
-### Method 3: Cargo Install (when published)
+### Method 3: Cargo Install After Publication
 ```bash
 cargo install --locked pn-cli
 ```
@@ -178,13 +178,13 @@ prometheus_port = 9090
 pn-cli init
 ```
 
-This creates:
+The command creates:
 - Configuration directory: `~/.config/pdn/`
 - Data directory: `~/.local/share/pdn/`
 - Default networks: `bridge`, `host`, `none`
 - Default storage pool: `default`
 
-### 2. Start Gateway (Background Service)
+### 2. Start the Gateway as a Background Service
 ```bash
 # Start gateway daemon
 pn-cli system start

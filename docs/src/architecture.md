@@ -2,7 +2,7 @@
 
 ## Overview
 
-PDN follows a layered architecture where each layer has a single responsibility and communicates with adjacent layers through well-defined interfaces.
+PDN uses a layered architecture. Each layer has a single responsibility. Each layer communicates with adjacent layers through well-defined interfaces.
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -79,12 +79,12 @@ PDN follows a layered architecture where each layer has a single responsibility 
 
 **Location:** `crates/proot-core`
 
-Core PRoot implementation providing:
+The core PRoot implementation provides:
 - **Ptrace Controller**: Process tracing and syscall interception
 - **Syscall Interception**: Handle guest syscalls, translate to host
 - **VFS Manager**: Virtual filesystem overlay for path translation
 - **Tracee Manager**: Manage traced processes lifecycle
-- **Syscall-gate pitfall (arm64)**: a ptrace/seccomp dispatch gate carries policy in `x9`, not `x7` — the kernel restores `x7` across an ARM64 syscall stop. See [the ARM64 syscall-gate trap](arm64-syscall-gate.md); PDN installs a deny-list BPF filter today, not a gate.
+- **Syscall-gate pitfall for arm64**: A ptrace/seccomp dispatch gate carries policy in `x9`, not `x7`. The kernel restores `x7` across an ARM64 syscall stop. See [the ARM64 syscall-gate trap](arm64-syscall-gate.md). PDN installs a deny-list BPF filter today, not a gate.
 
 Key types:
 ```rust
@@ -109,7 +109,7 @@ pub struct ProotConfig {
 
 **Location:** `crates/proot-distro-core`
 
-Container management layer providing:
+The container management layer provides:
 - **ContainerManager**: Create, start, stop, remove containers
 - **ImageManager**: Pull, push, list, remove OCI images
 - **NetworkManager**: CNI-based networking
@@ -123,12 +123,12 @@ Container management layer providing:
 
 **Location:** `crates/proot-compat`
 
-Termux/Android compatibility providing:
+The Termux/Android compatibility layer provides:
 - **Platform Shim**: Android personality, syscall translation
 - **Path Translation**: Symlink chain resolution, bind mount handling
 - **Seccomp Bypass**: Android-compatible seccomp filter
 - **Stub Filesystem**: Create /run/dbus, /tmp, /sys/fs/cgroup, etc.
-- **Mount Helper**: Essential filesystem mounts (/proc, /sys, /dev)
+- **Mount Helper**: Essential filesystem mounts such as /proc, /sys, and /dev
 - **Cgroup v2**: Resource controller setup
 - **CAP_SYS_ADMIN**: Detection and fallback handling
 - **Security Hardening**: Seccomp profiles, AppArmor, SELinux, capabilities
@@ -137,10 +137,9 @@ Termux/Android compatibility providing:
 
 **Location:** `crates/pn-gateway`
 
-Gateway layer providing:
-- **FailSafeManager**: Circuit breakers, fixed retries (no backoff/bulkhead yet &mdash; see #27)
-- **GuardrailsEngine**: Condition-string policy rules; numeric quotas and rate limiting
-  are not implemented yet (doc-drift round 2, issue #27)
+The gateway layer provides:
+- **FailSafeManager**: Circuit breakers, fixed retries. PDN does not have backoff or a bulkhead yet. See #27.
+- **GuardrailsEngine**: Condition-string policy rules. PDN does not implement numeric quotas or rate limiting yet. See doc-drift round 2, issue #27.
 - **HealthMonitor**: Liveness/readiness probes, dependency checks
 - **MetricsCollector**: Prometheus metrics, structured logging
 
@@ -154,15 +153,15 @@ Advanced orchestration providing:
 - **SecurityManager**: Security profiles, seccomp, capabilities
 - **NetworkManager**: CNI integration, service mesh
 - **StorageManager**: CSI integration, snapshot management
-- **PluginManager**: Dynamic plugin loading (libloading)
+- **PluginManager**: Dynamic plugin loading with libloading
 - **WorkflowEngine**: DAG-based workflow execution
 - **API Server**: gRPC + REST endpoints
 
-### podnext (CLI)
+### podnext CLI
 
 **Location:** `crates/podnext`
 
-Command-line interface providing:
+The command-line interface provides:
 - Container commands: install, list, login, run, ps, kill, remove
 - Image commands: search, pull, push, list, remove
 - Network commands: create, list, remove, inspect
@@ -172,7 +171,7 @@ Command-line interface providing:
 
 ## Gateway Layer
 
-The gateway (`pn-gateway`) sits between the CLI and the runtime, providing:
+The gateway `pn-gateway` sits between the CLI and the runtime. It provides:
 
 ### Fail-Safe Mechanisms
 
@@ -275,6 +274,6 @@ pub struct HealthCheck {
 3. **Fearless Concurrency**: Type system prevents data races in ptrace/seccomp handling
 4. **Cargo Workspace**: Unified build, shared dependencies, atomic changes
 5. **Gateway Pattern**: Single entry point for orchestration, observability, policy
-6. **Layered Security**: Defense in depth (seccomp + capabilities + AppArmor + SELinux)
+6. **Layered Security**: Defense in depth with seccomp, capabilities, AppArmor, and SELinux
 7. **Observability First**: Metrics, tracing, health checks built-in
 8. **Extensibility**: Plugin system for runtime extensions

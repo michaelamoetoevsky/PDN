@@ -3,37 +3,37 @@
 ## Current Status: Phase 5 Complete ✅
 
 All 10 Phase 5 tasks completed:
-- [x] Security hardening (seccomp, AppArmor, SELinux, capabilities)
-- [x] Comprehensive test coverage (57 tests passing)
-- [x] Fuzzing integration (cargo-fuzz, 3 targets)
-- [x] Release automation (GitHub Actions + cargo-release)
+- [x] Security hardening: seccomp, AppArmor, SELinux, and capabilities
+- [x] Comprehensive test coverage, with 57 tests passing
+- [x] Fuzzing integration with cargo-fuzz and 3 targets
+- [x] Release automation with GitHub Actions and cargo-release
 - [x] Migration guide from PRoot-distro
-- [x] Android NDK cross-compilation (aarch64 verified)
-- [x] Documentation website (mdBook, 12 chapters)
-- [x] Performance profiling (Criterion benchmarks)
-- [ ] Termux package build (APK) - binary works, needs termux-packages submission
+- [x] Android NDK cross-compilation, with aarch64 verified
+- [x] Documentation website with mdBook and 12 chapters
+- [x] Performance profiling with Criterion benchmarks
+- [ ] Termux package build as an APK. The binary works and needs a termux-packages submission.
 - [ ] Long-running stability tests - needs dedicated infra
 
 ---
 
-## Known Issues (v0.1.0)
+## Known Issues for v0.1.0
 
 ### 1. Output Capture / Stdio Inheritance
 **Severity**: Medium  
 **Location**: `crates/proot-core/src/lib.rs` - `execute()` method  
-**Description**: `podnext run <container> -- <cmd>` executes successfully (exit code 0) but stdout/stderr not visible in terminal.  
-**Root Cause**: The `execute()` method in `ProotEngine` uses `std::process::Stdio::inherit()` but the PTY/session management in `proot-distro-core` may not properly connect container stdio to host terminal.  
+**Description**: `podnext run <container> -- <cmd>` executes successfully with exit code 0, but stdout and stderr are not visible in the terminal.  
+**Root Cause**: The `execute()` method in `ProotEngine` uses `std::process::Stdio::inherit()`. The PTY and session management in `proot-distro-core` can fail to connect container stdio to the host terminal.  
 **Workaround**: Direct execution mode works: `podnext -r /path/to/rootfs -- echo "hello"`
 
 ### 2. Container Listing Default Behavior
 **Severity**: Low  
 **Location**: `crates/podnext/src/main.rs` - `list` command  
-**Description**: `podnext list` shows empty table by default; must use `--all` to see stopped containers.  
-**Expected**: Show all containers by default (like `docker ps -a`)
+**Description**: `podnext list` shows an empty table by default. You must use `--all` to see stopped containers.  
+**Expected**: Show all containers by default, like `docker ps -a`
 
 ### 3. Termux APK Package
 **Severity**: Low  
-**Status**: Binary installs and runs on device; needs formal termux-packages submission  
+**Status**: The binary installs and runs on the device. It needs a formal termux-packages submission.  
 **Blocker**: Requires termux-packages repo PR with proper build.sh, checksums, dependencies
 
 ### 4. Exit Code Propagation
@@ -44,31 +44,31 @@ All 10 Phase 5 tasks completed:
 ### 5. Container Metadata Persistence
 **Severity**: Low  
 **Location**: `crates/proot-distro-core/src/container.rs` - `load_containers()`  
-**Description**: Containers loaded from `metadata.json` but some fields (bind_mounts, env_vars, security config) not fully restored from metadata.
+**Description**: The code loads containers from `metadata.json`. But it does not fully restore some fields: bind_mounts, env_vars, and security config.
 
 ---
 
 ## Next Steps Priority
 
-### P0 - Critical (Before v1.0)
+### P0 - Critical, Before v1.0
 - [ ] Fix stdio capture in container execution
 - [ ] Submit Termux package to termux-packages
 - [ ] Fix `podnext list` default to show all containers
 
-### P1 - High (v1.1)
+### P1 - High, v1.1
 - [ ] Complete container metadata restoration
 - [ ] Improve exit code handling
 - [ ] Add `podnext logs` command for container output history
 - [ ] Add `podnext exec` for running commands in running containers
 
-### P2 - Medium (v1.2)
-- [ ] Long-running stability tests (72h soak)
+### P2 - Medium, v1.2
+- [ ] Long-running stability tests, with a 72h soak
 - [ ] GPU acceleration testing on physical devices
 - [ ] Multi-arch image build support
 - [ ] CRI/containerd integration testing
 
-### P3 - Future (v2.0+)
-- [ ] Service supervisor / daemon architecture (see below)
+### P3 - Future, v2.0+
+- [ ] Service supervisor and daemon architecture. See below.
 - [ ] Kubernetes CRI plugin
 - [ ] Web UI dashboard
 - [ ] Multi-node clustering
@@ -79,12 +79,12 @@ All 10 Phase 5 tasks completed:
 
 ### Proposal
 Add a **self-contained service supervisor** to PDN with:
-- **Service Supervisor** (like runit/s6/daemontools)
-- **Service Manager** (dependency resolution, ordering)
-- **D-Bus Broker** (inter-process communication)
-- **Socket Activation** (on-demand service start)
-- **Daemon Runtime** (independent of container runtime)
-- **Independent Lifecycle** (survives container restarts)
+- **Service Supervisor**, like runit/s6/daemontools
+- **Service Manager** for dependency resolution and ordering
+- **D-Bus Broker** for inter-process communication
+- **Socket Activation** for on-demand service start
+- **Daemon Runtime**, independent of the container runtime
+- **Independent Lifecycle** that survives container restarts
 
 ### Comparison: Current vs Proposed
 
@@ -100,10 +100,10 @@ Add a **self-contained service supervisor** to PDN with:
 | Resource Limits | cgroups v2 | cgroups + supervision |
 
 ### Benefits for Termux/Android
-1. **Boot-time services**: Start containers at Termux boot (via Termux:Boot)
+1. **Boot-time services**: Start containers at Termux boot with Termux:Boot
 2. **Background daemons**: Run databases, web servers, agents persistently
 3. **Inter-container communication**: D-Bus for service discovery
-4. **Socket activation**: Start container on incoming connection (saves resources)
+4. **Socket activation**: Start a container on an incoming connection to save resources
 5. **Watchdog integration**: Auto-restart failed containers
 6. **Log management**: Centralized, rotated, queryable logs
 7. **Resource isolation**: Supervisor enforces limits independently
@@ -134,7 +134,7 @@ PDN Architecture with Supervisor:
         └──────────┘    └──────────┘    └──────────┘
 ```
 
-### Service Definition Format (TOML)
+### Service Definition Format in TOML
 ```toml
 # ~/.config/pn-next/services/web-server.toml
 [service]
@@ -167,7 +167,7 @@ max_files = 5
 2. **Wake locks** - Keep supervisor alive during doze mode
 3. **PRoot integration** - Supervisor launches containers via existing runtime
 4. **cgroups v2** - Supervisor manages resource limits
-5. **D-Bus** - Use existing Termux D-Bus or embedded broker (dbus-broker)
+5. **D-Bus** - Use the existing Termux D-Bus or an embedded broker such as dbus-broker
 
 ### Risks & Mitigations
 | Risk | Mitigation |
@@ -178,7 +178,7 @@ max_files = 5
 | D-Bus on Android | Use dbus-broker (no system bus needed) |
 
 ### Recommendation
-**Add as Phase 6 (v2.0)** - This is a significant architectural change that transforms PDN from a "container CLI" to a "container platform with service orchestration." It aligns with the gateway pattern already in pn-next and enables production workloads on Android.
+**Add this work as Phase 6 for v2.0.** This is a significant architectural change. It transforms PDN from a "container CLI" into a "container platform with service orchestration." The change aligns with the gateway pattern already in pn-next. It enables production workloads on Android.
 
 ---
 

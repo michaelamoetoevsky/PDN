@@ -12,9 +12,9 @@
    - Correct TERMUX_PKG_* variables
    - Proper SHA256 from v0.1.0 release tarball
    - Rust build with termux_setup_rust
-   - Binary installation (podnext, podnext-daemon, pn-gateway)
+   - Binary installation of podnext, podnext-daemon, and pn-gateway
    - Service supervisor directories and config
-   - Shell completions (bash, zsh, fish)
+   - Shell completions for bash, zsh, and fish
    - Termux:Boot auto-start script
 3. **Submitted PR** with comprehensive description
 
@@ -41,7 +41,7 @@
 ### Verification:
 - ✅ `cargo check --package pn-next --features cri` - **PASSES**
 - ✅ `cargo test --package pn-next --features cri` - **49 tests PASSED**
-- ✅ `cargo test --workspace` - **ALL TESTS PASSED** (93 total)
+- ✅ `cargo test --workspace` - **ALL TESTS PASSED**, 93 total
 
 ### CRI Plugin Details:
 - Simplified to stub implementation to avoid protobuf complexity
