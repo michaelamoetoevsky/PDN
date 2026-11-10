@@ -3321,3 +3321,22 @@ translation took a different branch leaves the older cwd in place.
 
 Next: print the `chdir` stops of this exact command together with the stored cwd before and after each, which decides
 between "the update branch is not reached" and "the update stores the wrong value".
+
+### The cwd bookkeeping WORKS - it is stale per tracee, not broken (2026-11-10 06:45 WIB)
+
+The chdir probe, printing the stored cwd before each path call of one `mkdir -p /tmp/r2/a`, grouped:
+
+```text
+25x before="/"         the shell, which never moves
+ 2x before="/tmp"      a process that moved there
+ 1x before="/tmp/r2"   a process whose cwd DID reach the target
+```
+
+So the update mechanism is not dead: some tracee reaches `/tmp/r2` exactly as it should. What fails is that the process
+which creates the LEAF holds `/tmp` at that moment, so `a` is joined onto `/tmp` and the guest's `/tmp/r2/a` is never
+made. The defect is therefore per-tracee state that lags - a slot whose cwd was not carried over when the process moved
+or was forked - not a missing branch and not a wrong join.
+
+That is a precise enough place to stop tonight, and the next probe is narrow: which pid creates the leaf, what its
+slot's cwd was at fork, and which of its chdir stops did not update it. Everything measured is in this file with the
+command that produced it; nothing here is inferred from a passing suite.
