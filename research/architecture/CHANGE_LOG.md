@@ -2883,3 +2883,30 @@ unlinkat(AT_FDCWD,     path, 0x200)      <- the DIRECTORY removal, AT_REMOVEDIR
 
 Both forms reach the engine with the right arguments, and the engine writes a translation for both, which is why the
 remaining question is not "is the call translated" but "what does the tracee see when the call actually runs".
+
+### The branch IS taken, and the directory it carries is a HOST path (2026-11-10 20:05 WIB)
+
+One print inside the descriptor branch of `translate_path_remote`, for `SYS_unlinkat` only:
+
+```text
+BRANCH fd=Some(4) against_cwd=false dir=Some("<container>/tmp/zg") cwd=Some("/") raw="a"
+       binds=[... "/dev"=>"/dev", "/proc"=>"/proc", "/sys"=>"/sys", ...]
+```
+
+Three things are now facts, not readings:
+
+1. the descriptor branch IS reached (`fd=Some(4)`, `against_cwd=false`), so this is not a missing branch;
+2. the name the guest passes is the bare `"a"` with the directory coming from the descriptor, which is why the earlier
+   host-name mapping never applied to this call - the host-shaped string I saw was composed by the ENGINE from `dir`
+   plus `"a"`;
+3. `dir` is a HOST path (`<container>/tmp/zg`), not the guest form `/tmp/zg` that the bind-aware helper is supposed to
+   return. Whatever produced that value did not convert, and the print does not say which line produced it.
+
+That last point is where this session stopped, deliberately: four path-side attempts have not moved the behaviour, and
+the next one must start from the helper's actual text rather than from the intended text - `host_dir_for_fd_as_guest`
+is the only thing that assigns `fd_guest_dir`, and its bind branch was supposed to rewrite exactly this value.
+
+Measured state left behind: tree clean at 0393afa, no debug markers in the tree, `cargo check -p proot-core --tests`
+passes, battery 8 EQUAL / 1 DIFFERENT (`rm -rf`) / 1 SUSPECT, and the causal chain for the failing case is complete:
+the file removal is issued with a host-shaped directory joined to a bare name, the engine writes it without mapping it
+back, the kernel answers ENOENT, and the guest's own retry sees ENOTEMPTY and prints `Directory not empty`.
