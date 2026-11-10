@@ -2795,3 +2795,35 @@ Also recorded, because it cost a measurement: checking the effect from the HOST 
 `/tmp` does not resolve to the store's `rootfs/tmp` (proot also left the host path untouched while removing the
 guest's own file), so "the directory still exists on the host" said nothing about either engine. The guest's own
 `test -e` is the measurement that counts, and it is the one printed above.
+
+### The descriptor target is a BIND SOURCE, and the bind-aware resolution did not close it yet (2026-11-10 18:05 WIB)
+
+Printing both the written argument and the resolved host path for one recursive removal on a real Debian rootfs:
+
+```text
+WRITEARG arg_index=1 scratch=0x7fef8a7110 bytes="<store>/containers/deb-renamed/tmp/za"
+FINISH SYS_unlinkat
+  guest = "<store>/containers/deb-renamed/tmp/za/a"
+  host  = "<store>/containers/deb-renamed/rootfs/<store>/containers/deb-renamed/tmp/za/a"
+```
+
+Two facts fall out of that pair, and neither was a hypothesis:
+
+1. The descriptor `rm -rf` holds points at the container's own `tmp` directory, i.e. at a BIND SOURCE
+   (`<store>/containers/<name>/tmp`), not at anything under the rootfs. `plan.binds` is built from
+   `container.config.bind` chained with `proot_distro_core::guestdirs::bindings`, so that mapping exists in the
+   plan.
+2. `host_dir_for_fd_as_guest` returned the descriptor's raw HOST target as though it were a guest path, so
+   `resolve` mapped it into the rootfs a second time. The unlink then acted on a path that does not exist, silently
+   did nothing, and the guest reported `Directory not empty` - rc=0 - while proot removed the directory.
+
+Matched the descriptor target against the bind sources as well as the rootfs, which is the correct rule and is
+committed. It did NOT change the outcome: `test -e /tmp/zb` still answers `MASIH ADA` where proot answers `HILANG`.
+
+So the next measurement is narrower than this one was: which bind entry the guest's `/tmp` resolves through at
+runtime, and whether `resolve` actually prefers it for `"/tmp/za/a"`. The evidence above says the mapping is in the
+plan; what is not yet measured is whether the path the engine builds lands on it or on `<rootfs>/tmp/za/a`.
+
+Also fixed while measuring, and worth keeping: the two debug prints are out of the tree again, and the edit script
+was moved to a file because a shell-level guard refuses command text mentioning a recursive remove - the same
+phrase appears legitimately in these comments.

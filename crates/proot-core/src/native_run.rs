@@ -2297,7 +2297,12 @@ fn write_path_and_redirect_arg(pid: Pid, arg_index: usize, bytes: &[u8]) -> Resu
 /// `/proc/<pid>/fd/<fd>` answers the HOST path the descriptor was opened on; stripping the rootfs
 /// prefix maps it back into the guest, which is what a `dirfd`-relative name must be joined onto.
 /// A descriptor outside the rootfs answers `None` and the caller refuses, as before.
-fn host_dir_for_fd_as_guest(pid: Pid, fd: i32, rootfs: &Path) -> Option<String> {
+fn host_dir_for_fd_as_guest(
+    pid: Pid,
+    fd: i32,
+    rootfs: &Path,
+    binds: &[(String, PathBuf)],
+) -> Option<String> {
     let target = std::fs::read_link(format!("/proc/{}/fd/{}", pid.as_raw(), fd)).ok()?;
     // Compare every spelling of the two paths before declaring the descriptor to be OUTSIDE the rootfs
     // (2026-11-10). `rm -rf` unlinks a directory's children through a descriptor it opened, and the
@@ -2315,6 +2320,29 @@ fn host_dir_for_fd_as_guest(pid: Pid, fd: i32, rootfs: &Path) -> Option<String> 
         for t in target_forms.iter() {
             if let Ok(rel) = t.strip_prefix(root) {
                 return Some(format!("/{}", rel.display()));
+            }
+        }
+    }
+    // THE BINDS TOO, and this is the case that mattered (2026-11-10). The guest's `/tmp` is a BIND whose
+    // SOURCE is `<store>/containers/<name>/tmp`, i.e. outside the rootfs - so a descriptor held by a
+    // recursive removal, opened on that directory, has a target no rootfs prefix matches. The
+    // untranslated host path was then handed to `resolve` and mapped into the rootfs a SECOND time:
+    //   guest = "<store>/containers/deb-renamed/tmp/za/a"
+    //   host  = "<store>/containers/deb-renamed/rootfs/<store>/containers/deb-renamed/tmp/za/a"
+    // The call then acted on a path that does not exist, silently did nothing, and the guest reported
+    // `Directory not empty` while proot removed the directory. Matching the bind SOURCE recovers the
+    // guest form of that directory, which is what belongs in the tracee.
+    for (guest, host) in binds {
+        let host_forms = [
+            host.clone(),
+            std::fs::canonicalize(host).unwrap_or_else(|_| host.clone()),
+        ];
+        for h in host_forms.iter() {
+            for t in target_forms.iter() {
+                if let Ok(rel) = t.strip_prefix(h) {
+                    let joined = format!("{}/{}", guest.trim_end_matches('/'), rel.display());
+                    return Some(joined.trim_end_matches('/').to_string());
+                }
             }
         }
     }
@@ -2428,7 +2456,7 @@ fn translate_path_remote(
             Some(i) => match args.get(i).map(|v| *v as i32) {
                 Some(fd) if fd == nix::libc::AT_FDCWD => true,
                 Some(fd) if fd >= 0 => {
-                    fd_guest_dir = host_dir_for_fd_as_guest(pid, fd, rootfs);
+                    fd_guest_dir = host_dir_for_fd_as_guest(pid, fd, rootfs, &plan.binds);
                     false
                 }
                 _ => false,
