@@ -1,11 +1,11 @@
 ## Summary
 
 `dependency-updates.yml` referenced an action that **does not exist**:
-`peter-evans/update-github-actions@v1`. `gh api repos/peter-evans/update-github-actions`
-returns `404 Not Found`, and the owner's repository list contains no such project. The job
-`github-actions-dependencies` therefore could never have succeeded — and the broken pin went
-unnoticed because the scheduled trigger skips that job (`github.event.inputs.dependency-type`
-is empty on a `schedule` event), so it was never executed.
+`peter-evans/update-github-actions@v1`. The command `gh api repos/peter-evans/update-github-actions`
+returns `404 Not Found`. The repository list of the owner contains no such project. Thus the job
+`github-actions-dependencies` was never able to succeed. The broken pin went unnoticed because
+the scheduled trigger skips that job. The value `github.event.inputs.dependency-type` is empty on
+a `schedule` event. Thus the job never executed.
 
 ## Reproduction / evidence
 
@@ -24,39 +24,41 @@ gradle-auto-dependency-updates
 # no `update-github-actions`
 ```
 
-Recorded in `research/CI_CD_AUDIT.md` as an unresolvable third-party reference; confirmed
-independently by querying the REST API for every pin in every workflow (14 distinct pins).
+The audit recorded this action in `research/CI_CD_AUDIT.md` as an unresolvable third-party
+reference. A separate check confirmed it. The check queried the REST API for every pin in every
+workflow and covered 14 distinct pins.
 
 ## Root cause
 
-The pin was added when the workflow first landed (commit `950a927`) and never exercised,
-because the only automatic trigger (weekly `schedule`) leaves the input that gates the job
-unset, and the job is `skipped` on every scheduled run — see run `41424692889`, where
-`Update GitHub Actions Dependencies` shows `skipped` while `Update Rust Dependencies` failed.
+The pin arrived with the first version of the workflow, commit `950a927`. The job never
+exercised the pin. The only automatic trigger is the weekly `schedule`. That trigger leaves the
+input that gates the job unset. Thus the job is `skipped` on every scheduled run. See run
+`41424692889`. In that run, `Update GitHub Actions Dependencies` shows `skipped` and `Update
+Rust Dependencies` failed.
 
 ## Impact
 
-- The job is dead code: it cannot run, so GitHub Actions versions are never updated.
-- Worse, it is a *silent* failure mode: an unresolvable action in any job only surfaces when
-  that job runs, which may be never.
+- The job is dead code. It cannot run, so GitHub Actions versions never receive updates.
+- Worse, it is a *silent* failure mode. An unresolvable action in any job appears only when
+  that job runs, and such a job can stay dormant indefinitely.
 
 ## Fix
 
-Replaced the third-party updater with a self-contained audit step that depends on nothing
-but `gh` (already present on the runner):
+The fix replaces the third-party updater with a self-contained audit step. That step depends on
+`gh` only, which is already present on the runner:
 
-- enumerates every `uses:` pin across `.github/workflows/*.yml`;
-- resolves each via `gh api repos/<owner>/<repo>/releases/latest`, falling back to the tag
-  list for actions that publish no releases (branch-ref pins);
-- writes a summary table to `$GITHUB_STEP_SUMMARY`;
-- **fails the job when any pin cannot be resolved**, so a nonexistent action is caught here
-  rather than silently breaking whichever job references it.
+- It enumerates every `uses:` pin across `.github/workflows/*.yml`.
+- It resolves each pin with `gh api repos/<owner>/<repo>/releases/latest`. For actions that
+  publish no releases, it uses the tag list as a fallback. Such pins are branch-ref pins.
+- It writes a summary table to `$GITHUB_STEP_SUMMARY`.
+- **The step fails the job when it cannot resolve a pin.** Thus it catches a nonexistent action
+  here. The action does not silently break the job that references it.
 
-Resolving by exit status, not by output, matters: `gh api` prints its error body on stdout,
-so an emptiness check treats a 404 as a resolved version. (The first version of this step had
-exactly that bug; it was caught by running it against the previous revision.)
+The exit status must control the resolution, and not the output. `gh api` prints its error body
+on stdout. Thus an emptiness check treats a 404 as a resolved version. The first version of this
+step had exactly that bug. A run against the previous revision caught the bug.
 
-Verified both directions before committing:
+The author verified both directions before the commit:
 
 ```
 A) PREVIOUS revision:
@@ -69,7 +71,7 @@ B) CURRENT revision:
   -> VERDICT: pass (exit 0)
 ```
 
-All 14 remaining pins were verified to exist against the REST API; the pin bump to modern
-Node-24-compatible majors was done only where a release actually exists.
+The REST API confirmed the existence of all 14 remaining pins. The pin bump to modern
+Node-24-compatible majors occurred only where a release exists.
 
 Labels: bug, ci, github-actions

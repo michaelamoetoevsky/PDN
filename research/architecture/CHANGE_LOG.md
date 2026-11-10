@@ -48,9 +48,9 @@ fixed one, built 07:56, all against fixture stores selected with `PN_TEST_ROOT`:
 | `copy $F/src/payload.txt esc:esc/pwn.txt` | `rc=0`, `Copied …`, wrote `$F/outside/pwn.txt` | `rc=1`, `path 'esc/pwn.txt' resolves outside the container rootfs`, nothing written outside |
 | `sync $F/src/tree esc:esc/newdir` (subdirectory missing) | `Synced … 2 copied`, then 2 files landed outside (`outside/newdir/a.txt`, `outside/newdir/sub/b.txt`) | `rc=1`, same refusal message, nothing written outside |
 
-After the fix, all controls pass: `copy ... esc:plain/ok.txt` and `sync ... esc:inj/` still write inside the
+After the fix, all controls pass: `copy … esc:plain/ok.txt` and `sync … esc:inj/` still write inside the
 rootfs, and the latter reports `2 copied`. An in-rootfs relative symlink `good -> real` still resolves.
-`copy ... esc:esc/existing.txt` with a pre-created leaf is still refused. `copy ... esc:../pwn2.txt` is still
+`copy … esc:esc/existing.txt` with a pre-created leaf is still refused. `copy … esc:../pwn2.txt` is still
 refused for `..`. Note for the record: for `sync` the pre-fix hole only appeared when the destination
 **subdirectory did not exist yet**. A sync onto an existing directory such as `esc:esc/` was already
 refused, because that path canonicalized successfully. That is why the first sync attempt was not accepted
@@ -215,7 +215,7 @@ live session, and asserts that a completed ladder prints `Container 'x' killed.`
 probes, so the guard added in `6a9cd2a` saw a live session no matter what the ladder did. The CI log shows
 the same shape in the wild: `Terminate orphan process: pid (4638) (sleep)`.
 
-What this proves: the registry's descriptor rule answers "does a process still hold the session record",
+What this proves: the registry's descriptor rule answers `"is anything still holding the session record"`,
 which is **not** the same question as "is the guest still running". The change conflated the two, so it is
 withdrawn rather than patched in place. `crates/podnext/src/commands/container.rs` is restored to its
 `18523ea` state in the commit that carries this note.
@@ -253,7 +253,7 @@ so a monitor that reads this dashboard as fact is told the machine has 8 GiB and
 40 % and 30 % used, and a CPU percentage that is random. These values flow out through `/api/metrics`
 in `:744-746` and the JSON API, which is where the dishonesty stops being cosmetic.
 
-**Action.** Read the host and do not decorate it. Make a missing measurement a state the surface can
+**Action.** Read the host and do not decorate it. Make `"could not measure"` a state the surface can
 express: `SystemStats` gains `measured: bool`, and the metric lines are emitted only when it is true, with
 an explanatory comment line when it is not. A measured zero and "not measured here" are different
 statements, and only a flag can tell them apart.
@@ -284,8 +284,8 @@ answered rather than implying all three did.
 
 ## Media/UX 010 (wake lock) — the manager reported success for a lock that was never taken
 
-**Found.** `acquire_platform` in `crates/pn-next/src/wake_lock/mod.rs:224-247` logged `"Android: Will
-acquire … wake lock"` on Android and `"Non-Android: Simulated acquire …"` elsewhere, then returned `Ok(())`.
+**Found.** `acquire_platform` in `crates/pn-next/src/wake_lock/mod.rs:224-247` logged `"Android: Would`
+`acquire … wake lock"` on Android and `"Non-Android: Simulated acquire …"` elsewhere, then returned `Ok(())`.
 `acquire()` therefore set `held = true` and `podnext wakelock acquire <name> <type>` printed
 `Wake lock acquired for '<name>'` - for a lock nothing had taken.
 
@@ -513,7 +513,7 @@ had to be corrected once: deleting only the combined copy proved nothing at `rc=
 from the per-target directories - removing `install.sh` from **both** sources gives `rc=1` with the refusal
 message, and restoring it returns `rc=0` with four `OK`s. A detail stated rather than hidden: when it
 refuses, the two checksums written before the missing asset stay on disk. This is harmless because the step
-exits non-zero and nothing is published, but a reader does not have to infer that.
+exits non-zero and nothing is published, but the reader must not have to infer that.
 
 ---
 
@@ -600,8 +600,8 @@ predicate that runs tests - and `#42 every documented command and option exists 
 builds the binary. A workspace that does not compile fails all of them.
 
 **Diagnostic notes worth keeping.** The check-run annotations were empty apart from "Process completed with
-exit code 101/1". `gh run view <id> --log-failed` answered `run ... is still in progress; logs will be`
-`available when it is complete`, and the two-stage fetch read the `Location` from
+exit code 101/1". `gh run view <id> --log-failed` answered `"run ... is still in progress; logs will be`
+`available when it is complete"`, and the two-stage fetch read the `Location` from
 `gh api -i .../actions/jobs/<id>/logs`, then it ran `curl` on it with no auth header and returned no Location at all,
 because an unfinished job has no log blob. The ledger's own failure text is a `grep FAIL` over its step
 output, not the check summary.
@@ -900,7 +900,7 @@ by the new boundary arm. That arm held 64 silent connections and refused the 65t
 **Process note.** Both this change and the concurrent native-engine change were developed in the SAME
 tree, not in separate worktrees. The briefs did not require isolation. They stayed
 file-disjoint so nothing was lost, but that is a real protocol deviation: two children in one tree can
-observe each other's half-applied state, and the parent must require `git worktree add` per
+observe each other's half-applied state, and the parent had to require `git worktree add` per
 child as the delegation protocol says. ## p5 slice-2: a Dockerfile's WORKDIR is confined to the image rootfs, ASEc-001, ASEC1-A07-001, -C1
 
 **Findings.** `podnext build local` applied a Dockerfile's `WORKDIR` and did not confine it to the image
@@ -1000,7 +1000,7 @@ gzip-not-a-tar case - which is what the extractor can actually promise. (b) `arc
 `index.json` can allocate. That is outside this row family, the measured case used a different member
 name and was noted rather than widened into this diff. (c) `pn-next/src/backup_restore/mod.rs:1027`
 discards the report with `.map(|_| ())`. The refusals still happen, so the security property holds, but
-the restore path cannot see them - a follow-up must surface `!is_clean()` there.
+the restore path cannot see them - a follow-up is needed to surface `!is_clean()` there.
 
 **Isolation.** Own worktree and branch, `dept/untar` @ 8ff1a3c, never pushed, main checkout untouched by
 the child. The parent verified the branch, the commit, the four files and the test names before
@@ -1526,7 +1526,7 @@ this uid, host `test -r /sys` fails, `ls /sys` exits 2, host glob matches nothin
 the host denies. The native engine answers with the host's own answer - `EACCES` - which is the truthful
 result for a translating engine.
 
-**Decision.** Faking a successful `open` to make that line green will make the engine lie to buy a metric.
+**Decision.** Faking a successful `open` to make that line green makes the engine lie to buy a metric.
 Instead `scripts/engine_differential.py` now has an `INFORMATIONAL` set with the reason written beside each
 entry in the source: `cwd`, proot virtualises `getcwd` and the EFFECT is compared through `relmarker`,
 `sysfs`/`sysopen`, proot emulates and the native engine reports the host truth. stdout is compared with those
@@ -2041,9 +2041,9 @@ defined it that way. So an operator reading the proot documentation asked for **
 
 - `cli.rs`: `--link2symlink` loses `short = '0'`. A new `-0, --root-id` carries the reference's spelling and help.
 - `main.rs`: `-0` / `--root-id` refuse before any work, naming themselves and the measured reason:
-  the guest is already mapped to root by `--change-id=0:0:0`, so proot accepts the flag and never enforces it,
-  because the measured proot argv is byte-identical with and without it. A stale comment two blocks below, which
-  still said the engine default was `proot`, was corrected to `native` with its date.
+  `"the guest is already mapped to root by `--change-id=0:0:0`, so the flag would be accepted and never enforced: the measured`
+  `proot argv is byte-identical with and without it"`. A stale comment two blocks below still said the
+  engine default was `proot`, and the comment was corrected to `native` with its date.
 - The reference's `-l` for `--link2symlink` is deliberately NOT added: `daemon logs` already owns `-l` for
   `--lines`, and a global short makes clap panic for that one command - measured, `podnext daemon logs --help`
   exited 101 with "Short option names must be unique for each argument, but '-l' is in use by both 'lines' and
@@ -2540,7 +2540,7 @@ child's `HOME` was the fixture while the test expected `/home/runner`, and for t
 Fixed when the expectation became a function of the same fixture the child receives: the fixture sets `TERMUX__HOME`
 and `TERMUX__PREFIX` for the child, creates `<fixture>/usr/tmp`, and both assertions derive from the fixture root.
 
-**The control that had to exist from the first version** - run the target with the Termux variables UNSET,
+**The control absent from the first version** - run the target with the Termux variables UNSET,
 which is the runner's condition:
 
 ```text
@@ -2746,7 +2746,7 @@ The engine treated the NULL as a path it cannot read, recorded a refusal, and fa
 proot exits 0 - while the guest's own work had already succeeded, `UNLINK-OK` printed. An empty path is the same
 kind of non-event: the kernel answers ENOENT by itself.
 
-Both are now `Ok(true)` - "nothing to translate" - instead of `Ok(false)` - "cannot translate".
+Both are now `Ok(true)` - "nothing to translate" - instead of `Ok(false)` - `"could not translate"`.
 
 Measured after: `touch /tmp/f1 && rm -f /tmp/f1 && echo UNLINK-OK` is EQUAL on both engines, before and after, with
 no refusal line.

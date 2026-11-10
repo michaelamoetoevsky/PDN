@@ -1,18 +1,22 @@
 ## Summary
 
-Once the security job stopped swallowing failures (`cargo audit || true` removed in
-`13ea547`), the first honest run reported **35 advisories over the committed lockfile**:
-16 `vulnerability`-level entries (10 distinct IDs, 6 duplicated across two major versions),
-13 `unsound`, 6 `unmaintained`. CI run 41766259877, job `Security Audit`, step `Run cargo audit`.
+Commit `13ea547` removed `cargo audit || true` from the security job.
+That change stopped the job from hiding failures.
+The first honest run reported **35 advisories over the committed lockfile**.
+The set contains 16 `vulnerability`-level entries, 13 `unsound` entries and 6 `unmaintained` entries.
+The 16 entries cover 10 distinct IDs.
+Six IDs occur in two major versions.
+CI run 41766259877, job `Security Audit`, step `Run cargo audit`.
 
-This issue is the inventory and the remediation plan. The current set is **accepted with an
-exposure analysis** recorded in `deny.toml`, so the gate now fails on any *new* advisory
-rather than on everything.
+This issue contains the inventory and the remediation plan.
+The project **accepts the current set with an exposure analysis** recorded in `deny.toml`.
+The gate now fails on any *new* advisory and not on all advisories.
 
 ## Where the vulnerable code actually lives
 
-Determined with `cargo tree -i <crate> --locked` on this revision — not from the audit output,
-because an audit of the lockfile overstates reachability.
+Use `cargo tree -i <crate> --locked` on this revision to obtain these results.
+Do not use the audit output.
+An audit of the lockfile overstates reachability.
 
 | Crate | Pulled by | Reachable from |
 |---|---|---|
@@ -23,25 +27,26 @@ because an audit of the lockfile overstates reachability.
 | `ruzstd` 0.8.3 | — | **zero occurrences in the build graph** (`cargo tree` never lists it) |
 | `zstd` 0.12.4 → `zstd-safe` 6.0.6 | `proot-distro-core` (direct) | layer + backup compression |
 
-Two facts that change the remediation shape:
+Two facts change the shape of the remediation:
 
-1. **The fixed versions are already in the graph.** `rustls` 0.23.46, `rustls-webpki` 0.103.16
+1. **The graph already contains the fixed versions.** `rustls` 0.23.46, `rustls-webpki` 0.103.16
    and `h2` 0.4.20 are all present under newer parents. `cargo update` cannot remove the old
-   ones; they are required by `tonic` 0.11 / `hyper` 0.14 / `axum` 0.6. Removing them is a
-   **gRPC stack migration** (tonic, hyper, axum, tokio-rustls), not a version bump.
-2. **Not everything in the lock is compiled.** `ruzstd` 0.8.3 has a `vulnerability` entry
-   (decompression bomb) and is not in the build graph at all. Auditing `Cargo.lock` describes
-   the resolved graph, which is a superset of what ships.
+   versions. `tonic` 0.11, `hyper` 0.14 and `axum` 0.6 require the old versions. Their removal is
+   a **gRPC stack migration** of tonic, hyper, axum and tokio-rustls. It is not a version bump.
+2. **The build compiles only part of the lock.** `ruzstd` 0.8.3 has a `vulnerability` entry
+   for a decompression bomb. It is not in the build graph at all. An audit of `Cargo.lock`
+   describes the resolved graph. The resolved graph is a superset of the shipped code.
 
-Exposure summary: the vulnerable code is concentrated in the **daemon's gRPC/TLS surface**
-(`pn-next`), not in the `podnext` CLI path. Most entries require either a hostile peer
-(man-in-the-middle against the registry connection, a malicious HTTP/2 server, a crafted
-legacy zstd frame) or a code path nothing in the workspace exercises (Debug-formatting a TLS
-session value, CRL parsing — CRL checking is not enabled anywhere).
+Exposure summary: the vulnerable code is concentrated in the **daemon's gRPC/TLS surface** of
+`pn-next`. The `podnext` CLI path does not contain it. Most entries need a hostile peer.
+A hostile peer is a man-in-the-middle attack on the registry connection, a malicious HTTP/2
+server or a crafted legacy zstd frame. The other entries need a code path that nothing in the
+workspace exercises. Such a path is a Debug format call on a TLS session value, or CRL parsing.
+CRL checking is not enabled anywhere.
 
 ## Inventory
 
-### Vulnerabilities (16 entries, 10 distinct)
+### Vulnerabilities with 16 entries and 10 distinct IDs
 
 | Advisory | Crate | Title | Fix |
 |---|---|---|---|
@@ -56,7 +61,7 @@ session value, CRL parsing — CRL checking is not enabled anywhere).
 | RUSTSEC-2026-0344 | `ruzstd` 0.8.3 | decompression bomb (OOM) | ≥0.9.1 |
 | RUSTSEC-2026-0403 | `zstd-safe` 6.0.6 | uninitialized memory on failed legacy-frame streaming decompress | ^7.4.0 / ≥8.2.0 |
 
-### Unsound (13)
+### Unsound, 13 entries
 
 | Advisory | Crate | Title |
 |---|---|---|
@@ -74,35 +79,35 @@ session value, CRL parsing — CRL checking is not enabled anywhere).
 | RUSTSEC-2023-0086 | `lexical-core` 0.7.6 | multiple soundness issues |
 | RUSTSEC-2024-0408 | `pprof` 0.12.1 | unsound `slice::from_raw_parts` |
 
-### Unmaintained (6)
+### Unmaintained, 6 entries
 
 `number_prefix` 0.4.0, `proc-macro-error` 1.0.4, `rustls-pemfile` 2.2.0, `unsafe-libyaml` 0.2.11,
 `zvariant` 5.15.1, `zvariant_derive` 5.15.1.
 
 ## Remediation plan
 
-Ordered by exposure, not by count:
+The order is by exposure, not by count:
 
-1. **`zstd` 0.12 → 0.13+** (removes `zstd-safe` 6.0.6 entirely: 1 vulnerability + 7 unsound).
-   `zstd` is a *direct* dependency of `proot-distro-core` and the compression path is ours, so
-   this is the one advisory group we fully control. Bump `zstd = "0.13"` and re-run the layer /
-   backup round-trip tests.
-2. **`ruzstd`** — no action required beyond confirming it stays out of the build graph. If a
-   future change pulls it in, the decompression-bomb advisory becomes live and must be fixed
-   before landing.
-3. **gRPC/TLS stack migration** (`tonic` 0.11 → current, `hyper` 0.14 → 1.x, `axum` 0.6 →
-   current, `tokio-rustls` → current). This is what removes `rustls` 0.21/0.22, `rustls-webpki`
-   0.101/0.102 and `h2` 0.3.27 — the bulk of the vulnerability entries. It is a real migration
-   and deserves its own issue rather than being smuggled into this one.
-4. **`git2` 0.18 → 0.19+** (the three unsound entries) — affects the gitops path.
-5. Unmaintained crates: `zvariant`/`zvariant_derive` are pulled by the D-Bus expansion; the
-   others are transitive and disappear with the upgrades above.
+1. **`zstd` 0.12 → 0.13+** removes `zstd-safe` 6.0.6 completely, with 1 vulnerability and
+   7 unsound entries. `zstd` is a *direct* dependency of `proot-distro-core` and the project owns
+   the compression path. This advisory group is the one group that the project fully controls.
+   Bump `zstd = "0.13"` and re-run the layer and backup round-trip tests.
+2. **`ruzstd`** needs no action. Confirm only that it stays out of the build graph. If a
+   future change pulls it in, the decompression-bomb advisory becomes live. Fix the advisory
+   before that change lands.
+3. **gRPC/TLS stack migration** covers `tonic` 0.11 → current, `hyper` 0.14 → 1.x,
+   `axum` 0.6 → current and `tokio-rustls` → current. This migration removes `rustls` 0.21/0.22,
+   `rustls-webpki` 0.101/0.102 and `h2` 0.3.27, which are the bulk of the vulnerability entries.
+   It is a real migration. It needs its own issue and does not belong in this one.
+4. **`git2` 0.18 → 0.19+** removes the three unsound entries. It affects the gitops path.
+5. The unmaintained crates `zvariant` and `zvariant_derive` come from the D-Bus expansion.
+   The other unmaintained crates are transitive. They disappear with the upgrades above.
 
 ## Policy now in force
 
-`deny.toml` carries the accepted set with a per-entry justification, and `ci.yml` runs a single
-gate (`cargo deny check advisories licenses bans sources`) instead of two tools with two
-acceptance lists. A new advisory fails the job; unmaintained/unsound surface as warnings.
-Removing an entry from `deny.toml` is what tightens the gate.
+`deny.toml` carries the accepted set with a justification for each entry. `ci.yml` runs a
+single gate, `cargo deny check advisories licenses bans sources`, and not two tools with two
+acceptance lists. A new advisory fails the job. Unmaintained and unsound entries appear as
+warnings. Removal of an entry from `deny.toml` tightens the gate.
 
 Labels: security, ci, dependencies

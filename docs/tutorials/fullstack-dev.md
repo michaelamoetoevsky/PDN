@@ -1,16 +1,16 @@
 # Tutorial: Full-Stack Development Environment with PDN
 
-This tutorial walks you through setting up a complete full-stack development environment using PDN (PRoot Distro Next) on Termux/Android.
+This tutorial gives the steps to set up a complete full-stack development environment. The environment uses PDN, or PRoot Distro Next, on Termux/Android.
 
 ## Prerequisites
 
 - Termux installed on Android
-- PDN installed (`curl -fsSL https://raw.githubusercontent.com/michaelamoetoevsky/PDN/main/install.sh | bash`)
+- PDN installed. The installation command is `curl -fsSL https://raw.githubusercontent.com/michaelamoetoevsky/PDN/main/install.sh | bash`
 - Basic familiarity with Linux command line
 
 ## Overview
 
-We'll set up:
+This tutorial sets up:
 - **Node.js 20** - Application runtime
 - **PostgreSQL 16** - Primary database
 - **Redis 7** - Caching & sessions
@@ -116,7 +116,7 @@ podnext service stop nodejs postgres redis
 
 ## Troubleshooting
 
-### Service won't start
+### Service does not start
 ```bash
 # Check logs
 podnext service logs <service-name>

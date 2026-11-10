@@ -1,8 +1,6 @@
 ## Summary
 
-`podnext run <container> -- <cmd>` aborts whenever the **guest command itself** contains a
-`-r` or `--rootfs` token, because the CLI scans the whole argv for those flags *before*
-parsing subcommands, and concludes the invocation is a direct-execution call.
+`podnext run <container> -- <cmd>` aborts when the **guest command itself** contains a `-r` or `--rootfs` token. The CLI scans the whole argv for those flags *before* it parses subcommands. It then concludes that the invocation is a direct-execution call.
 
 ## Reproduction
 
@@ -12,10 +10,9 @@ podnext run alpine -- rm -r /tmp/dummy
 # exit 1
 ```
 
-The same happens for any guest command containing `-r`, e.g. `rm -r`, `grep -r`,
-`tar -r`, or a path literally named `--rootfs`.
+The same happens for any guest command containing `-r`, e.g. `rm -r`, `grep -r`, `tar -r`, or a path literally named `--rootfs`.
 
-## Evidence (observed log)
+## Evidence: observed log
 
 ```
 CRITICAL Syntax Hijack (`-r` inside guest command):
@@ -28,22 +25,15 @@ CRITICAL Syntax Hijack (`-r` inside guest command):
 
 ## Root cause
 
-`crates/podnext/src/main.rs` (the early direct-execution pre-scan) treated the mere
-presence of `-r`/`--rootfs` **anywhere** in argv as a direct-execution invocation. It ran
-before clap parsed anything, so a subcommand plus a `--`-separated guest command was
-misclassified, and the guest command's own flags were read as podnext's.
+The early direct-execution pre-scan in `crates/podnext/src/main.rs` treated the mere presence of `-r`/`--rootfs` **anywhere** in argv as a direct-execution invocation. It ran before clap parsed anything. The CLI then misclassified a subcommand plus a `--`-separated guest command. It read the guest command's own flags as podnext's.
 
 ## Impact
 
-- A large class of legitimate guest commands is unrunnable: anything using `-r`.
-- The failure message points at podnext's own flag rather than the guest command, so the
-  cause is not obvious to the user.
+- A large class of legitimate guest commands cannot run. This class includes anything that uses `-r`.
+- The failure message points at podnext's own flag rather than the guest command, so the cause is not obvious to the user.
 
 ## Proposed fix
 
-Only treat `-r`/`--rootfs` as direct-execution mode when it appears **before** any
-recognised subcommand and before the `--` separator. Anything after `--` belongs to the
-guest command and must be passed through untouched. Add a regression test covering
-`run <container> -- rm -r <path>`.
+Only treat `-r`/`--rootfs` as direct-execution mode when it appears **before** any recognised subcommand and before the `--` separator. Anything after `--` belongs to the guest command and must be passed through untouched. Add a regression test for `run <container> -- rm -r <path>`.
 
 Labels: bug, cli

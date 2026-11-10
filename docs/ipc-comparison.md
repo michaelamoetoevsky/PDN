@@ -39,21 +39,21 @@ This document compares Unix domain sockets and D-Bus as IPC mechanisms for inter
 3. **Simple Mental Model**: File descriptor + read/write = communication
 4. **Maximum Performance**: Lowest latency, highest throughput
 5. **No Dependencies**: Zero external dependencies
-6. **Flexible Serialization**: Use any format (JSON, MessagePack, Protobuf, bincode, raw bytes)
+6. **Flexible Serialization**: Use any format, for example JSON, MessagePack, Protobuf, bincode, or raw bytes
 
 #### Disadvantages
 
 1. **No Built-in Protocol**: Must implement framing, serialization, error handling
 2. **No Service Discovery**: Need external registry or well-known paths
 3. **No Introspection**: Cannot query API schema at runtime
-4. **Manual Security**: Only filesystem permissions (chmod/chown)
+4. **Manual Security**: Only filesystem permissions, for example chmod and chown
 5. **No Broadcasting**: Must implement pub/sub manually
 6. **Fragile Evolution**: Schema changes break compatibility silently
 7. **Debugging Difficulty**: Binary protocols hard to inspect without custom tools
 
 #### Best For
 
-- High-performance data planes (log streaming, metrics, file transfer)
+- High-performance data planes, for example log streaming, metrics, and file transfer
 - Simple request-response between known endpoints
 - When dependencies must be minimized
 - Legacy system integration
@@ -65,28 +65,28 @@ This document compares Unix domain sockets and D-Bus as IPC mechanisms for inter
 #### Advantages
 
 1. **Standardized Protocol**: Well-defined wire format, message types, errors
-2. **Rich Type System**: Native support for complex types (dicts, arrays, variants, structs)
+2. **Rich Type System**: Native support for complex types such as dicts, arrays, variants, and structs
 3. **Service Discovery**: Well-known names, activation, name ownership tracking
 4. **Introspection**: Runtime API discovery via `Introspect` method
 5. **Built-in Security**: Fine-grained policies, SELinux integration, container isolation
 6. **Signals & Match Rules**: Efficient pub/sub with filtering
 6. **Excellent Tooling**: `dbus-monitor`, `d-feet`, `busctl`, `gdbus`, `zbus` CLI
-7. **Language Bindings**: First-class support in Rust (`zbus`), Python (`dbus-python`), C (`libdbus`), Go (`godbus`), JavaScript (`dbus-js`)
+7. **Language Bindings**: First-class support in Rust with `zbus`, Python with `dbus-python`, C with `libdbus`, Go with `godbus`, and JavaScript with `dbus-js`
 8. **Daemon-Managed**: Connection lifecycle, authentication, routing handled by broker
-9. **Cross-Process**: Works across user sessions, containers, network (with tcp transport)
+9. **Cross-Process**: Works across user sessions, containers, and the network with tcp transport
 
 #### Disadvantages
 
-1. **Higher Overhead**: Daemon hop, serialization, validation (~5-10 μs vs ~1-2 μs)
-2. **Complexity**: More concepts to learn (bus types, interfaces, objects, paths, signals)
-3. **External Dependency**: Requires `dbus-daemon` or embedded broker (`zbus`)
-4. **Android Limitations**: No system `dbus-daemon` by default; session bus may not exist
+1. **Higher Overhead**: Daemon hop, serialization, and validation, at about 5-10 μs against about 1-2 μs
+2. **Complexity**: More concepts to learn, such as bus types, interfaces, objects, paths, and signals
+3. **External Dependency**: Requires `dbus-daemon` or an embedded broker such as `zbus`
+4. **Android Limitations**: No system `dbus-daemon` is present by default. A session bus can be absent.
 5. **Verbosity**: More boilerplate for simple use cases
 
 #### Best For
 
-- Control planes (service management, configuration, lifecycle)
-- Multi-party communication (broadcast, pub/sub)
+- Control planes, for example service management, configuration, and lifecycle
+- Multi-party communication, for example broadcast and pub/sub
 - When API stability and introspection matter
 - Integration with desktop/linux ecosystem tools
 - Complex structured data exchange
@@ -95,7 +95,7 @@ This document compares Unix domain sockets and D-Bus as IPC mechanisms for inter
 
 ## PN Next Architecture Recommendation
 
-### Hybrid Approach (Recommended)
+### Hybrid Approach, Recommended
 
 Use **both** mechanisms for different layers:
 
@@ -109,10 +109,10 @@ Use **both** mechanisms for different layers:
 
 ### Implementation Strategy
 
-1. **Embedded zbus Broker**: Run in-process broker in supervisor (no external `dbus-daemon` needed)
+1. **Embedded zbus Broker**: Run an in-process broker in the supervisor. No external `dbus-daemon` is necessary.
 2. **Per-Container Bus Isolation**: Each container gets isolated bus namespace
 3. **Unix Socket Fallback**: Raw sockets for high-volume data paths
-4. **Shared Schema**: Define D-Bus interfaces in `dbus/services.rs` (single source of truth)
+4. **Shared Schema**: Define D-Bus interfaces in `dbus/services.rs`. This file is the single source of truth.
 
 ---
 
@@ -120,10 +120,10 @@ Use **both** mechanisms for different layers:
 
 ### Constraints
 
-1. **No System D-Bus Daemon**: Android doesn't run `dbus-daemon --system` by default
+1. **No System D-Bus Daemon**: Android does not run `dbus-daemon --system` by default
 2. **No Session Bus**: No graphical session → no `dbus-daemon --session`
-3. **Filesystem Permissions**: `/run` may not be writable; use `$TMPDIR` or `$HOME/.local/run`
-4. **SELinux**: May restrict socket creation in certain paths
+3. **Filesystem Permissions**: `/run` can be read-only. Use `$TMPDIR` or `$HOME/.local/run`
+4. **SELinux**: SELinux can restrict socket creation in certain paths
 5. **Process Isolation**: Each Termux process has limited UID/GID visibility
 
 ### Solutions
@@ -136,7 +136,7 @@ Use **both** mechanisms for different layers:
 | SELinux restrictions | Set socket permissions 0666, use abstract namespace (`@pn-next/dbus`) |
 | UID visibility | Pass credentials via `SO_PEERCRED` (Linux) or abstract namespace |
 
-### Abstract Namespace Sockets (Linux-only)
+### Abstract Namespace Sockets, Linux Only
 
 ```rust
 // Use abstract namespace (Linux-specific, no filesystem entry)
@@ -149,7 +149,7 @@ let socket_path = "@pn-next/dbus/session";
 
 ---
 
-## Performance Benchmarks (Estimated)
+## Performance Benchmarks, Estimated
 
 | Operation | Unix Socket | D-Bus (zbus) | D-Bus (dbus-daemon) |
 |-----------|-------------|--------------|---------------------|
@@ -158,7 +158,7 @@ let socket_path = "@pn-next/dbus/session";
 | Memory (broker) | N/A | ~2 MB | ~5 MB |
 | Startup time | Instant | ~5 ms | ~50 ms |
 
-*Numbers are approximate for aarch64 Android; actual values vary by hardware.*
+*Numbers are approximate for aarch64 Android. Actual values vary by hardware.*
 
 ---
 
@@ -172,7 +172,7 @@ std::fs::set_permissions(socket_path, Permissions::from_mode(0o660))?;
 // Container processes run in group
 ```
 
-### D-Bus (zbus broker)
+### D-Bus with the zbus Broker
 ```rust
 // Policy-based
 let policy = r#"
@@ -196,27 +196,27 @@ let policy = r#"
 
 ## Migration Path
 
-### Phase 1: Current State (Unix Sockets Only)
+### Phase 1: Current State with Unix Sockets Only
 - Daemon IPC via Unix socket at `/run/pn-next/daemon.sock`
 - JSON-RPC style messages
 - Custom protocol
 
-### Phase 2: Add D-Bus Broker (This Implementation)
+### Phase 2: Add D-Bus Broker, This Implementation
 - Embed zbus broker in supervisor
 - Define service interfaces in `dbus/services.rs`
 - Expose supervisor, container manager, network, storage via D-Bus
 - Keep Unix socket for high-volume data paths
 
 ### Phase 3: Container Integration
-- Each container gets D-Bus client (`ContainerDBusClient`)
+- Each container gets a D-Bus client with the name `ContainerDBusClient`
 - Containers register as `org.pnnext.Container.<name>`
 - Inter-container communication via D-Bus signals/methods
 - Event bus for decoupled messaging
 
 ### Phase 4: Full D-Bus Ecosystem
-- Introspection-enabled tools (`d-feet`, `busctl`)
+- Introspection-enabled tools such as `d-feet` and `busctl`
 - Policy-based security
-- Network-transparent D-Bus (TCP transport for remote clusters)
+- Network-transparent D-Bus with TCP transport for remote clusters
 
 ---
 
@@ -244,12 +244,12 @@ let policy = r#"
 - ✅ Structured, introspectable APIs for management operations
 - ✅ Service discovery and signal-based eventing
 - ✅ High-performance raw sockets for streaming data
-- ✅ No external `dbus-daemon` dependency (embedded broker)
-- ✅ Android/Termux compatible (abstract namespace sockets)
+- ✅ No external `dbus-daemon` dependency, because the broker is embedded
+- ✅ Android/Termux compatible through abstract namespace sockets
 - ✅ Future-proof for cluster/remote communication
 
 The implementation in `crates/pn-next/src/dbus/` provides:
-- `mod.rs` - Custom lightweight broker (fallback/embedded)
+- `mod.rs` - Custom lightweight broker for fallback or embedded use
 - `services.rs` - Service definitions & introspection XML
 - `zbus_client.rs` - Full zbus client for containers & tools
 
