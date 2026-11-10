@@ -3038,3 +3038,25 @@ Two changes to the instrument itself are part of the result and are stated so th
 verdict now requires an engine-level "Error:" line from BOTH arms (a probe that legitimately exits non-zero is EQUAL),
 and the battery must not be run while a cargo build is in flight - two cases failed earlier purely because the binary
 was being relinked (`Text file busy`).
+
+### A test of mine encoded the defect I had just fixed (2026-11-10 23:55 WIB)
+
+`cargo test -p proot-core` came back exit=101 on `the_engine_chdirs_the_guest_into_the_plans_cwd`:
+
+```text
+[cwd] cwd=Some("/") exit=0 guest_getcwd=/ expected_rootfs=/data/.../p4-3a-run-31657-cwd/rootfs-cwd
+assertion `left == right` failed: with cwd: Some("/") the guest's own getcwd() must be the translated host path
+```
+
+The guest now answers `/` and the test demanded the host rootfs path - i.e. the assertion had been written to lock in
+exactly the behaviour the getcwd fix removed (`PWD=/data/.../rootfs` instead of `PWD=/`). Rewritten to assert the guest
+path with the measurement that justifies it, and the target is green again:
+
+```text
+cargo test -p proot-core --test native_exec_translation  -> 14 passed, 0 failed
+cargo test -p proot-core                                 -> exit 0, 10 targets green, 0 failed
+```
+
+The lesson is the one this repository keeps re-learning: a test written against a defect is a defect with a green
+check next to it. The rewrite keeps the surrounding assertion that distinguishes the ENGINE's own pre-exec chdir (a
+host path, which is correct) from the GUEST's view (a guest path), so the original intent survives.

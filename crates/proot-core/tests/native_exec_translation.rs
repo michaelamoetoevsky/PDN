@@ -753,10 +753,11 @@ int main(void) {
         "the fixture must run to completion; a 126 means the engine's own chdir failed"
     );
     assert_eq!(
-        canon(Path::new(&guest_cwd)),
-        canon(&rootfs),
-        "with cwd: Some(\"/\") the guest's own getcwd() must be the translated host path of \"/\" \
-         (the rootfs root); got {} - a HOST cwd means the child was never chdir'd",
+        guest_cwd, "/",
+        "with cwd: Some(\"/\") the guest's own getcwd() must report the GUEST path \"/\", not the host rootfs \
+         path: the engine now rewrites getcwd's result (measured 2026-11-10: `env | grep PWD` gave \
+         PWD=/data/.../rootfs under the native engine against PWD=/ under proot, which leaked the host \
+         layout to every guest that printed its directory). Got {}",
         guest_cwd
     );
     // The engine's OWN pre-exec chdir is setup on an already-translated host path, NOT a guest path:
