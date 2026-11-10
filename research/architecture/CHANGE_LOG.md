@@ -2702,3 +2702,32 @@ Also noted while measuring: `unlinkat` on an absolute path translates correctly 
 the write-side table works; the failure is specific to the calls that land in the catch-all arm.
 
 State of the end-to-end battery against a real Debian rootfs: 8 EQUAL, 1 DIFFERENT (`write_read`), 1 SUSPECT.
+
+### The refused `utimensat` path is UNREADABLE at its entry stop (2026-11-10 16:00 WIB)
+
+Two prints, each at a site confirmed by measurement rather than by reading the code:
+
+```text
+SITE line1504 number=88        <- the non-strict push in translate_path_remote's Ok(false) arm
+```
+
+and the marker placed INSIDE that same function does not appear for this call, which means the function returns before
+it. Its early returns are: no plan rootfs; `args.get(arg_index)` is None; and `peek_cstr` returning None. The plan has a
+rootfs and `arg_index` for `utimensat` is 1 with six arguments present, so the remaining one is the measured
+conclusion:
+
+**`peek_cstr` cannot read the path of `utimensat` at its entry stop.** The refused call is therefore not a missing
+table arm (the arm exists, `table_has` would be true for 88) and not a labelling problem (the stop is an entry,
+`entry=true` in every recorded line): the engine is being handed a call whose path it cannot read, and it fails the run
+for it - while the guest's own work succeeded (`UNLINK-OK` prints) and proot exits 0.
+
+That is a fact about a specific syscall on a specific kernel, and the next step is the one line that was being written
+when the session stopped: print the argument POINTER and the argument index at the failed peek, for `utimensat` and
+for a neighbouring call that reads fine (`unlinkat`, whose path printed as `"/tmp/f1"`). Comparing the two pointers
+decides between "the guest passes a pointer we cannot follow" and "the engine reads the wrong register for this
+syscall".
+
+Housekeeping: the marker for that print was inserted with a line filter that removed a brace along with it, so the file
+did not compile (heavy exit_code=101, 1 output line) and the run printed against the PREVIOUS binary. That output was
+discarded as invalid, the file was restored to 129a269, `git status` is clean, and `cargo check -p proot-core` passes.
+The evidence above is from the build that DID compile.
