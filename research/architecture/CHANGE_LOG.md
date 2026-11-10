@@ -3211,3 +3211,29 @@ Also consistent with tonight's family: `mkdir -p`'s calls are descriptor-relativ
 recursive removal and the `wait` on a background job - three defects, one shape.
 
 State left behind: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, everything pushed.
+
+### The leaf is fine; the PARENT is the one that never gets made (2026-11-10 04:00 WIB)
+
+Two checks, neither needing a build, settle where this belongs.
+
+**Hypothesis falsified:** `write_path_and_redirect_arg` might write the path but never commit the register. It does
+commit - `set_regs(pid, raw)?` at the end of the function - so the register the kernel reads has the translated path.
+
+**Evidence that places the defect:** when the parent already exists, the nested create works.
+
+```text
+mkdir /tmp/m1; mkdir /tmp/m1/a        -> both created          (parent made by the same engine)
+mkdir -p /tmp/n2/a                    -> /tmp/n2 exists, /tmp/n2/a missing
+```
+
+So `mkdirat` is not broken in general and its absolute-path translation is correct - what is missing is the PARENT
+directory, which `mkdir -p` creates through a descriptor it opened rather than by absolute path, and that form produces
+no translated write at all (measured: exactly one WRITEPATH for the two components).
+
+That is the same shape as the other two open defects, and it is now a single piece of work rather than three guesses:
+the descriptor-relative form must translate its name against the directory the descriptor refers to, map that back to
+the guest form, and let the kernel act on the result - for `mkdirat` here, for `wait4` it is the reaping race, and for
+`unlinkat` it is the same mechanism that was closed earlier tonight by enforcing that the directory handed to the guest
+is a guest path.
+
+State: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, everything pushed.
