@@ -1,16 +1,18 @@
 ## Context
 
-PR #26 (@gabm0932) adds `ServiceConfig::export_to_compose` to
-`crates/pn-next/src/supervisor.rs`. The shape is right and the direction is wanted — issue #6
-asked for exactly this. It is being merged as a first cut; the items below are the review
-follow-ups, filed so they are tracked rather than carried in a review thread.
+PR #26 by @gabm0932 adds `ServiceConfig::export_to_compose` to
+`crates/pn-next/src/supervisor.rs`. The shape is correct and the project wants this direction.
+Issue #6 asked for exactly this. The maintainers merge it as a first cut. The items below are
+the review follow-ups. The project files them here for tracking and does not carry them in a
+review thread.
 
 ## Confirmed defect
 
-An empty `process.command` emits a service with a **null body**, which Compose rejects
-(`services.idle must be a mapping`).
+An empty `process.command` emits a service with a **null body**. Compose rejects that service
+with `services.idle must be a mapping`.
 
-Verified by extracting the function body from the PR verbatim and running it standalone:
+A standalone run of the function body from the PR verifies this defect. The extraction was
+verbatim:
 
 ```yaml
 --- empty command ---
@@ -20,30 +22,31 @@ services:
   idle:
 ```
 
-The `if !self.process.command.is_empty()` guard correctly avoids printing `command: []`, but the
-`  {}:` service header is written unconditionally. Fix: skip the service entirely, emit
-`idle: {}`, or require at least an `image`.
+The guard `if !self.process.command.is_empty()` correctly prevents the print of `command: []`.
+But the service header `  {}:` is written without a condition. The fix has three options. Skip
+the service entirely. Emit `idle: {}`. Require at least an `image`.
 
 ## Items carried over from the review
 
-1. **No test.** The PR description states "Includes unit test coverage"; `gh pr diff 26` is
-   `+11 -0`, all implementation. A test asserting the emitted string for a known `ServiceConfig`
-   would have caught the empty-command case.
-2. **`version: '3.8'` is deprecated** by the Compose Specification; Compose V2 warns and ignores
-   it. Modern generated files start at `services:`.
-3. **Hand-rolled YAML where a serialiser is already available.** `serde_yaml = "0.9"` is a
-   dependency of this same crate (`crates/pn-next/Cargo.toml:67`). `#[derive(Serialize)]` plus
-   `serde_yaml::to_string` removes a real divergence: `{:?}` and YAML agree on quotes and
-   backslashes, but a control character makes `{:?}` emit `\u{1}` where YAML needs `\x01`, so an
-   argument like that would produce a file that does not parse.
-4. **Only `command` is mapped.** `ServiceConfig` also carries `env`, `working_dir`, `user`,
-   `dependencies`, `restart`, `health` and `resources`. `env` → `environment` and
-   `working_dir` → `working_dir` are the two small, high-value additions.
-5. **Placement.** The `impl` block is appended after the closing brace of `mod tests` at end of
-   file. It compiles, but it belongs next to the other `ServiceConfig` impls.
+1. **The PR has no test.** The PR description states "Includes unit test coverage". The output
+   of `gh pr diff 26` is `+11 -0`, which is all implementation. A test that checks the emitted string
+   for a known `ServiceConfig` catches the empty-command case.
+2. **The Compose Specification deprecates `version: '3.8'`.** Compose V2 warns about it and
+   ignores it. Modern generated files start at `services:`.
+3. **The code writes YAML by hand while a serialiser is available.** `serde_yaml = "0.9"` is a
+   dependency of this same crate, `crates/pn-next/Cargo.toml:67`. `#[derive(Serialize)]` plus
+   `serde_yaml::to_string` removes a real divergence. `{:?}` and YAML agree on quotes and
+   backslashes. But a control character makes `{:?}` emit `\u{1}` where YAML needs `\x01`. Thus
+   an argument of that kind produces a file that does not parse.
+4. **The code maps only `command`.** `ServiceConfig` also carries `env`, `working_dir`, `user`,
+   `dependencies`, `restart`, `health` and `resources`. The two small additions with high value
+   are `env` → `environment` and `working_dir` → `working_dir`.
+5. **The placement is wrong.** The code appends the `impl` block after the closing brace of
+   `mod tests` at the end of the file. It compiles, but it belongs next to the other
+   `ServiceConfig` impls.
 
 ## Not verified by machine
 
-The three workflow runs on the PR head were `action_required` until a maintainer approved them
-(GitHub does not run fork-PR workflows without approval), so nothing was machine-validated when
+The three workflow runs on the PR head were `action_required` until a maintainer approved them.
+GitHub does not run fork-PR workflows without approval. Thus no machine validated anything when
 the review was written.

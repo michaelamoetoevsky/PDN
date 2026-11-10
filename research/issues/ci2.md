@@ -33,8 +33,8 @@ workflow and covered 14 distinct pins.
 The pin arrived with the first version of the workflow, commit `950a927`. The job never
 exercised the pin. The only automatic trigger is the weekly `schedule`. That trigger leaves the
 input that gates the job unset. Thus the job is `skipped` on every scheduled run. See run
-`41424692889`. In that run, `Update GitHub Actions Dependencies` shows `skipped` and `Update
-Rust Dependencies` failed.
+`41424692889`. In that run, `Update GitHub Actions Dependencies` shows `skipped` and
+`Update Rust Dependencies` failed.
 
 ## Impact
 

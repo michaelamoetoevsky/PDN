@@ -171,9 +171,10 @@ that work:
   structure equals the original blob from git: the same count of fenced blocks, headings and table rows, with
   the fenced text byte-identical.
 
-The coverage is the tracked documentation: the repository root, `docs/`, `docs/src/`, `docs/tutorials/`,
-`research/` and `research/architecture/`. The directory `.omh/` holds a tool's own state file and is not
-documentation of this project. The directory `workbench/` is ignored by git and is not part of the archive.
+The coverage is every tracked Markdown document of this project: the repository root, `docs/`, `docs/src/`,
+`docs/tutorials/`, `research/`, `research/architecture/` and `research/issues/`. The measured result is 114
+files with 0 violations. The directory `.omh/` holds a tool's own state file and is not documentation of this
+project. The directory `workbench/` is ignored by git and is not part of the archive.
 
 Two limits are stated here rather than hidden. The gate measures the mechanical part of the standard only, so
 the vocabulary part is unverified. A table cell keeps its original words, because a table carries identifiers

@@ -50,8 +50,8 @@ The fix bounds the suite in both benchmark steps:
 ```
 
 `--bench benchmarks` is necessary for the criterion flags to reach the criterion harness.
-Without it, `cargo bench -- <args>` also sends the flags to the libtest harness of `lib`/`lib
-test`. That harness rejects the flags with `error: Unrecognized option: 'warm-up-time'`. The fix
+Without it, `cargo bench -- <args>` also sends the flags to the libtest harness of `lib`/`lib test`.
+That harness rejects the flags with `error: Unrecognized option: 'warm-up-time'`. The fix
 was verified on the device against the compiled bench binary. The run had zero "Unrecognized
 option" output and emitted a real measurement:
 `guardrails_evaluation/evaluate_request  time: [216.60 ns 219.34 ns 222.02 ns]`. The peak was
