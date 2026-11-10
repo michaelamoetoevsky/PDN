@@ -1,12 +1,12 @@
-# Filesystem Fault Injection & Resilience Report: podnext (v0.1.7)
+# Filesystem Fault Injection & Resilience Report for podnext v0.1.7
 
 Target binary: `/data/data/com.termux/files/usr/bin/podnext`
-Platform: Termux Android 16 (API 36), aarch64, Linux 6.1.157
+Platform: Termux Android 16, API 36, aarch64, Linux 6.1.157
 Harness script: `fs_fault_injection.py`
 
 ---
 
-## 1. Corrupted Container Metadata (`metadata.json`)
+## 1. Corrupted Container Metadata in `metadata.json`
 
 | Fault Injected | CLI Operation | Exit Code | Result / Error Output | Analysis |
 |---|---|---|---|---|
@@ -68,10 +68,10 @@ Harness script: `fs_fault_injection.py`
 
 ## 4. Diagnosis & Recovery Assessment
 
-1. **Crash Immunity**: 0 unhandled panics, 0 segfaults, 0 infinite recursion loops detected across 40+ injected faults. All errors handled via `anyhow::Result` or proot child exit status.
+1. **Crash Immunity**: 0 unhandled panics, 0 segfaults, and 0 infinite recursion loops across 40+ injected faults. Every error goes through `anyhow::Result` or the proot child exit status.
 2. **Diagnostic Quality**:
-   - `metadata.json` errors surface raw Serde errors (`EOF while parsing...`, `invalid UTF-8`) rather than identifying file corruption.
-   - `chmod 0000 rootfs` triggers false "Container not found" because loader silently ignores directories where rootfs validation fails.
+   - Errors in `metadata.json` surface raw Serde errors such as `EOF while parsing...` or `invalid UTF-8`. They do not identify the file corruption.
+   - The command `chmod 0000 rootfs` triggers a false "Container not found" error. The loader ignores a directory in silence when rootfs validation fails.
 3. **Recovery Capabilities**:
-   - `podnext reset`: Successfully recovers containers with missing binaries or broken guest rootfs symlinks. Fails completely when `metadata.json` is corrupt or rootfs is unreadable (`0000`), causing recovery deadlock.
-   - `podnext remove -f`: Successfully removes containers with corrupt `metadata.json`, but fails on `chmod 0000 rootfs` ("Container not found"), creating unmanaged zombie directories in `~/.podnext/containers/`.
+   - `podnext reset`: It recovers a container with a missing binary or a broken guest rootfs symlink. It fails completely when `metadata.json` is corrupt or the rootfs is unreadable at mode `0000`. The failure causes a recovery deadlock.
+   - `podnext remove -f`: It removes a container with a corrupt `metadata.json`. It fails on `chmod 0000 rootfs` with the error "Container not found" and then leaves an unmanaged zombie directory in `~/.podnext/containers/`.

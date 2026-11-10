@@ -903,7 +903,7 @@ created_at,completed_at,size_bytes,compressed_size,checksum,manifest,labels,anno
 
 Restore stubs: `restore_backup` unpacks the tar, `mod.rs:904–925`, but `restore_container` returns a
 random UUID and creates nothing, **stub**, `mod.rs:950–959`. `load_backups` is a no-op
-**stub**, `mod.rs:1129–1149`, a simplified version that plans to load the actual metadata files, so `backup list`
+**stub**, `mod.rs:1129–1149`, `"Simplified - would load actual metadata files"`, so `backup list`
 on a fresh process sees nothing. `start_scheduled_backups` just logs a tick, **stub**,
 `mod.rs:1002–1017`. `get_container_info` hardcodes `image: "alpine"`, **stub**, `mod.rs:655–674`.
 `cmd_backup_create` passes `container` for both id and name, `commands/mod.rs:1485`.
@@ -919,7 +919,7 @@ on a fresh process sees nothing. `start_scheduled_backups` just logs a tick, **s
    `cargo build --release`. See section 1/section 1a.
 2. **`-r` short-flag collision in `run`**, `run --help` lists both `-r, --rm` and `-r, --rootfs`.
    Potential clap conflict, section 2. **UNVERIFIED** whether it constructs the expected arg.
-3. **Help text ≠ real command tree**, top-level long_about advertises `podnext watchdog policy set ...`
+3. **Help text ≠ real command tree**, top-level long_about advertises `podnext watchdog policy set …`
    but the real subcommand is `watchdog setpolicy`, section 3. long_about examples are not validated against Clap.
 4. **`list` misreports distro/version**, every container shows `DISTRO=ubuntu VERSION=22.04`
    This includes `alpine`, whose `metadata.json` says `image: "alpine", tag: "latest"`:
@@ -938,8 +938,8 @@ on a fresh process sees nothing. `start_scheduled_backups` just logs a tick, **s
 7. **`ContainerPaths` defines dirs that are never created**, `images/`, `cache/`, `logs/`,
    `config/` under `~/.podnext` are absent. Container config path is `config.json`/`state.json`
    in code but the on-disk file is `metadata.json`, section 4.
-8. **Debug logging always on**, every command prints `DEBUG main: Executing command: ...` and
-   `DEBUG execute_command: START ...`. Backup prints extensive `DEBUG:` lines to stderr
+8. **Debug logging always on**, every command prints `DEBUG main: Executing command: …` and
+   `DEBUG execute_command: START …`. Backup prints extensive `DEBUG:` lines to stderr
    observed in all live runs, non-toggleable via `-v`.
 9. **Stub commands**, build all 6, gitops all 5, dashboard start/stop/status, daemon stop/reload/logs/status,
    log tail, dbus call/monitor, policy eval/load, socket unregister/list. Backup restore does not

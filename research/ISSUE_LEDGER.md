@@ -1,10 +1,10 @@
-# PDN issue ledger — fixes re-verified against HEAD
+# PDN issue ledger: fixes re-verified against HEAD
 
-Generated 2026-11-05 21:43:36Z from `d982e59` (docs(release): the shape row closes, and the two documents a reader ac).
+Generated 2026-11-05 21:43:36Z from `d982e59`, commit subject `docs(release): the shape row closes, and the two documents a reader ac`.
 
 ## Why this exists
 
-Closing an issue records an intention. It does not prove the fix is still in the tree: a later
+An issue close records an intention. It does not prove the fix is still in the tree. A later
 refactor, a revert, or a merge that resolved a conflict the wrong way can quietly undo it. This
 ledger pairs every issue with a command that must still succeed against the current code, so a
 silently-regressed fix shows up as a FAIL in a document rather than as a surprise in production.
@@ -13,40 +13,40 @@ silently-regressed fix shows up as a FAIL in a document rather than as a surpris
 
 | verdict | meaning | effect on exit status |
 |---|---|---|
-| **PASS** | the exact symbol the fix introduces was found; the fix is present | none |
-| **FAIL** | the symbol is absent or the check could not hold: a regression, or a fix that is gone | **exit 1** |
-| **SKIPPED** | no automated check exists (open issue), or a gated `--cargo` check was not enabled | none, and **never** a pass |
+| **PASS** | the exact symbol the fix introduces was found, and the fix is present | none |
+| **FAIL** | the symbol is absent or the check fails: a regression, or a fix that is gone | **exit 1** |
+| **SKIPPED** | no automated check exists for an open issue, or a gated `--cargo` check was not enabled | none, and **never** a pass |
 
-**Coverage: 111 checks PASS by direct observation · 0 FAIL · 18 SKIPPED**, across 129 checks covering 45 of 70 issues (13 issues have no automated check).
+**Coverage: 111 checks PASS by direct observation · 0 FAIL · 18 SKIPPED**, across 129 checks covering 45 of 70 issues. A further 13 issues have no automated check.
 
 **A SKIPPED check is not evidence the fix works.** It means no verdict was produced. Here the 18 SKIPPED are cargo-gated behaviour checks: they are not enabled by default, and on this
-device the memory guard refuses the bench build (RSS exceeds the budget), so the behaviour behind
+device the memory guard refuses the bench build, because RSS exceeds the budget, so the behaviour behind
 them was not observed in the committed run. Do not read the PASS count as full verification.
 
-## Checks that FAIL (a fix that is no longer present)
+## Checks that FAIL, a fix that is no longer present
 
 None.
 
-## Checks SKIPPED (no verdict was produced)
+## Checks SKIPPED, with no verdict produced
 
-- **#41 — both regression tests pass** — _cargo check gated; re-run with --cargo_
-- **#25 — the benchmark targets compile (the false-green defect)** — _cargo check gated; re-run with --cargo_
-- **#18 — the sparse-copy unit test passes** — _cargo check gated; re-run with --cargo_
-- **#16 — the deep-recursion test passes** — _cargo check gated; re-run with --cargo_
-- **#31 — the abnormal-restart test passes** — _cargo check gated; re-run with --cargo_
-- **#42 — every documented command and option exists in the real CLI** — _cargo check gated; re-run with --cargo_
-- **#60 — the guard is unit tested** — _cargo check gated; re-run with --cargo_
-- **#68 — both decisions are unit tested** — _cargo check gated; re-run with --cargo_
-- **#62 — the refusal is asserted against the real binary** — _cargo check gated; re-run with --cargo_
-- **#47 — every refusal class behaves as documented** — _cargo check gated; re-run with --cargo_
-- **#42 — a stub must refuse with a reason, not exit 0** — _cargo check gated; re-run with --cargo_
-- **#43 — the rendered bind form is exactly host:target, pinned by a test** — _cargo check gated; re-run with --cargo_
-- **#43 — a malformed or read-only mount spec is refused** — _cargo check gated; re-run with --cargo_
-- **#44 — a failed measurement is reported as a bound, never as a bare number** — _cargo check gated; re-run with --cargo_
-- **#45 — the command itself is exercised end to end** — _cargo check gated; re-run with --cargo_
-- **#46 — the resolution order is unit tested** — _cargo check gated; re-run with --cargo_
-- **#46 — the binary follows a relocated home and the XDG variables** — _cargo check gated; re-run with --cargo_
-- **#47 — each refused option exits 1 without running the command** — _cargo check gated; re-run with --cargo_
+- **#41: both regression tests pass**. _cargo check gated, re-run with --cargo_
+- **#25: the benchmark targets compile, the false-green defect**. _cargo check gated, re-run with --cargo_
+- **#18: the sparse-copy unit test passes**. _cargo check gated, re-run with --cargo_
+- **#16: the deep-recursion test passes**. _cargo check gated, re-run with --cargo_
+- **#31: the abnormal-restart test passes**. _cargo check gated, re-run with --cargo_
+- **#42: every documented command and option exists in the real CLI**. _cargo check gated, re-run with --cargo_
+- **#60: the guard is unit tested**. _cargo check gated, re-run with --cargo_
+- **#68: both decisions are unit tested**. _cargo check gated, re-run with --cargo_
+- **#62: the refusal is asserted against the real binary**. _cargo check gated, re-run with --cargo_
+- **#47: every refusal class behaves as documented**. _cargo check gated, re-run with --cargo_
+- **#42: a stub must refuse with a reason, not exit 0**. _cargo check gated, re-run with --cargo_
+- **#43: the rendered bind form is exactly host:target, pinned by a test**. _cargo check gated, re-run with --cargo_
+- **#43: a malformed or read-only mount spec is refused**. _cargo check gated, re-run with --cargo_
+- **#44: a failed measurement is reported as a bound, never as a bare number**. _cargo check gated, re-run with --cargo_
+- **#45: the command itself is exercised end to end**. _cargo check gated, re-run with --cargo_
+- **#46: the resolution order is unit tested**. _cargo check gated, re-run with --cargo_
+- **#46: the binary follows a relocated home and the XDG variables**. _cargo check gated, re-run with --cargo_
+- **#47: each refused option exits 1 and does not run the command**. _cargo check gated, re-run with --cargo_
 
 ## Per-issue detail
 
@@ -76,24 +76,24 @@ _state_: CLOSED  ·  _labels_: enhancement, good first issue, benchmark, ci, per
 **#11 [BUG-C1] install accepts empty container name and creates an unremovable orphan**  
 _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:23:37Z
 
-- [PASS] install validates the container name before creating anything
+- [PASS] install validates the container name before it creates anything
   - `grep -rnF 'validate_container_name' crates/podnext/src`
   - → `crates/podnext/src/commands/image.rs:360:            .validate_container_name(&candidate) | crates/podnext/src/commands/sync.rs:20:    proot_distro_core::NameValidator::new().validate_container_name(&newname)?; | crates/podnext/src/commands/con`
 
-**#12 [BUG-C2] backup delete deadlocks permanently (tokio RwLock read guard held across write)**  
+**#12 [BUG-C2] backup delete deadlocks permanently, tokio RwLock read guard held across write**
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T04:23:41Z
 
-- [PASS] delete_backup drops its read guard before taking the write lock
+- [PASS] delete_backup drops its read guard before it takes the write lock
   - `grep -rnF 'contains_key' crates/pn-next/src/backup_restore/mod.rs`
   - → `1115:        let exists = backups.contains_key(backup_id);`
 - [PASS] the deadlock regression test exists
   - `grep -rnF 'test_delete_backup_does_not_deadlock' crates/pn-next/src/backup_restore/mod.rs`
   - → `1487:    async fn test_delete_backup_does_not_deadlock() {`
 
-**#13 [BUG-C3] reset destroys the container before verifying the image is downloadable**  
+**#13 [BUG-C3] reset destroys the container before it verifies the image is downloadable**
 _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T10:12:19Z
 
-- [PASS] reset verifies the image BEFORE destroying the container
+- [PASS] reset verifies the image BEFORE it destroys the container
   - `grep -rnA 40 'fn cmd_reset' crates/podnext/src | grep -nE 'verify_image_available|remove_dir_all' | head -2`
   - → `37:crates/podnext/src/commands/sync.rs-271-    verify_image_available(&image_ref).await?; | 39:crates/podnext/src/commands/sync.rs-273-    std::fs::remove_dir_all(&container_dir)?;`
 
@@ -104,13 +104,13 @@ _state_: CLOSED  ·  _labels_: bug, cli, monitoring  ·  _closed_: 2026-11-04T04
   - `grep -rnF 'register_session' crates/proot-distro-core/src/runtime.rs crates/podnext/src/native.rs`
   - → `crates/proot-distro-core/src/runtime.rs:185:        let _session = crate::session::register_session(`
 
-**#15 [BUG-M2] concurrent guest writes to one file clobber each other (4/5)**  
+**#15 [BUG-M2] concurrent guest writes to one file clobber each other, 4 of 5 runs**
 _state_: CLOSED  ·  _labels_: bug, documentation  ·  _closed_: 2026-11-04T11:08:08Z
 
 - [PASS] the concurrent-write contract is documented for users
   - `grep -rnF 'no atomicity guarantee' docs/src/troubleshooting.md`
   - → `394:with no atomicity guarantee, and any synchronisation is the workload's own responsibility.`
-- [PASS] the #15 verdict (not a PDN defect, with control) is recorded
+- [PASS] the #15 verdict, not a PDN defect and with a control, is recorded
   - `grep -rnF 'not a PDN defect' research/issues/concurrency_verdict.md`
   - → `1:## Verdict: not a PDN defect`
 
@@ -133,7 +133,7 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T11:04:52Z
 - [PASS] build local consumes ARG before the parser rejects it
   - `grep -rnF 'fn preprocess_build_args' crates/podnext/src/commands`
   - → `crates/podnext/src/commands/build.rs:582:pub fn preprocess_build_args(content: &str) -> (String, Vec<(String, String)>) {`
-- [PASS] build local matches a RUN instruction instead of printing it
+- [PASS] build local matches a RUN instruction and does not print it
   - `grep -rnF 'Instr::Run(run_cmd)' crates/podnext/src/commands`
   - → `crates/podnext/src/commands/build.rs:254:            Instr::Run(run_cmd) => {`
 - [PASS] build local delegates RUN to the container engine
@@ -163,7 +163,7 @@ _state_: CLOSED  ·  _labels_: bug, ci  ·  _closed_: 2026-11-04T04:23:51Z
   - `grep -rnF 'user_stopped' crates/pn-next/src/supervisor.rs | head -8`
   - → `728:    user_stopped: bool, | 850:                            user_stopped: false, | 992:                                if managed.process.is_none() && !managed.user_stopped && matches!(managed.status.state, ServiceState::Restarting | ServiceS`
 
-**#20 [BUG-C4] FileLock::lock flocks fd 0 (stdin) and then panics on a None field**  
+**#20 [BUG-C4] FileLock::lock flocks fd 0, stdin, and then panics on a None field**
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T04:23:55Z
 
 - [PASS] FileLock no longer flocks fd 0
@@ -177,7 +177,7 @@ _state_: CLOSED  ·  _labels_: bug, cli  ·  _closed_: 2026-11-04T04:24:00Z
   - `grep -rnF 'pre_dashdash_args' crates/podnext/src | head -4`
   - → `crates/podnext/src/main.rs:93:    let pre_dashdash_args = &raw_args[..dashdash_idx]; | crates/podnext/src/main.rs:131:    let has_subcommand = pre_dashdash_args | crates/podnext/src/main.rs:136:        && pre_dashdash_args`
 
-**#22 [CI-2] dependency-updates workflow references a nonexistent action (peter-evans/update-github-actions 404s)**  
+**#22 [CI-2] dependency-updates workflow references a nonexistent action, peter-evans/update-github-actions 404s**
 _state_: CLOSED  ·  _labels_: bug, github-actions, ci  ·  _closed_: 2026-11-04T04:24:05Z
 
 - [PASS] the self-audit job that replaces the nonexistent action exists
@@ -194,7 +194,7 @@ _state_: CLOSED  ·  _labels_: bug, ci  ·  _closed_: 2026-11-04T04:24:09Z
 **#24 [SEC-1] 35 advisories in the dependency tree: inventory, exposure analysis and remediation plan**  
 _state_: CLOSED  ·  _labels_: security, ci  ·  _closed_: 2026-11-04T10:12:17Z
 
-- [PASS] deny.toml encodes the advisory acceptance list (string form)
+- [PASS] deny.toml encodes the advisory acceptance list in string form
   - `grep -rnF '"RUSTSEC-' deny.toml | head -3`
   - → `70:    "RUSTSEC-2026-0258", # h2: unbounded empty DATA frames | 71:    "RUSTSEC-2026-0346", # rustls: Debug impls expose TLS secrets | 72:    "RUSTSEC-2026-0349", # rustls: unauthenticated ServerHello downgrade`
 
@@ -204,7 +204,7 @@ _state_: CLOSED  ·  _labels_: bug, ci, performance  ·  _closed_: 2026-11-04T10
 - [PASS] benchmark workflow enforces the exit status and builds the targets
   - `grep -nF -- '--bench benchmarks' .github/workflows/benchmark.yml | head -4`
   - → `103:          # `--bench benchmarks` is REQUIRED for the criterion flags to land on the | 108:          cargo bench --workspace --bench benchmarks --locked -- \ | 130:          cargo bench --workspace --bench benchmarks --locked -- \`
-- [SKIPPED] the benchmark targets compile (the false-green defect)
+- [SKIPPED] the benchmark targets compile, the false-green defect
   - `cargo bench -p pn-next --no-run --locked`
   - → ``
 
@@ -237,7 +237,7 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:18Z
 - [PASS] spawned proot gets its own process group
   - `grep -rnF 'process_group(0)' crates/proot-core/src/lib.rs`
   - → `308:        cmd.process_group(0); | 492:                c.process_group(0);`
-- [PASS] container stop signals the group and reaps (zombie-aware)
+- [PASS] container stop signals the group and reaps, with zombie awareness
   - `grep -rnF 'async fn terminate_group' crates/proot-distro-core/src/container.rs`
   - → `613:async fn terminate_group(pgid: u32, timeout: u64) -> Result<()> {`
 - [PASS] podnext run forwards signals to the guest group
@@ -247,7 +247,7 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:18Z
   - `grep -rnF 'SignalKind::terminate' crates/podnext/src/daemon.rs`
   - → `77:    if kind == SignalKind::terminate() || kind == SignalKind::interrupt() { | 183:    let mut sigterm = signal(SignalKind::terminate()).context("install SIGTERM handler")?; | 190:                _ = sigterm.recv() => SignalKind::terminate(),`
 
-**#33 Session files and service logs grow without bound (46 dead session files measured)**  
+**#33 Session files and service logs grow without bound, with 46 dead session files measured**
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:39Z
 
 - [PASS] the session record is unlinked on exit via a guard
@@ -257,10 +257,10 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-04T13:12:39Z
   - `grep -rnF 'fn rotate_log_if_needed' crates/pn-next/src/supervisor.rs`
   - → `478:fn rotate_log_if_needed(path: &Path, cfg: &LogRotationConfig) -> std::io::Result<()> {`
 
-**#34 pn-gateway: documented duration form ("60s") cannot be loaded by the new TOML loader**  
+**#34 pn-gateway: the documented duration form "60s" cannot be loaded by the new TOML loader**
 _state_: CLOSED  ·  _labels_: bug, documentation  ·  _closed_: 2026-11-04T21:44:02Z
 
-- [PASS] documented durations ("60s", "500ms", "2m") parse
+- [PASS] the documented durations "60s", "500ms" and "2m" parse
   - `grep -rnF 'pub fn parse_duration' crates/pn-gateway/src/duration_fmt.rs`
   - → `42:pub fn parse_duration(input: &str) -> Result<Duration, String> {`
 - [PASS] every Duration field uses the documented-form serde adapter
@@ -327,7 +327,7 @@ _state_: CLOSED  ·  _labels_: documentation  ·  _closed_: 2026-11-05T00:19:42Z
   - `grep -rnF 'GPL-2.0-or-later' README.md`
   - → `329:SPDX-License-Identifier: `GPL-2.0-or-later`. The full text is in [LICENSE](LICENSE).`
 
-**#41 A non-UTF-8 byte in any argument aborts podnext with SIGABRT (std::env::args panic)**  
+**#41 A non-UTF-8 byte in any argument aborts podnext with SIGABRT, a std::env::args panic**
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-05T15:17:31Z
 
 - [PASS] the regression test for an invalid-UTF-8 argument exists
@@ -343,17 +343,17 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-05T15:17:31Z
   - `cargo test -p podnext --test argv_nonutf8 --locked`
   - → ``
 
-**#42 [BUG-DOC] CLI reference documented options that do not exist (exit codes 3-12, 8 inert PN_* vars, --short/--json, ps --all, kill --signal/--timeout, network --ip-range, volume --size/--storage)**  
-_state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:35Z
+**#42 [BUG-DOC] CLI reference documented options that do not exist. Exit codes 3-12, 8 inert PN_* vars, --short/--json, ps --all, kill --signal/--timeout, network --ip-range, volume --size/--storage**
+_state_: CLOSED  ·  _labels_: none  ·  _closed_: 2026-11-05T15:17:35Z
 
 - [PASS] no exit code outside 0/1/2 is documented
   - `! sed -n '/## Exit Codes/,/## Environment Variables/p' docs/src/cli-reference.md | grep -qE '^\| (3|4|5|6|7|8|9|1[0-2]) \| '`
   - → ``
 - [PASS] no environment variable is documented that no crate reads
-  - `! grep -qE '^\| `(PN_CONFIG_DIR|PN_DATA_DIR|PN_CACHE_DIR|PN_LOG_LEVEL|PN_GATEWAY_ADDR|PN_RUNTIME|PN_SECURITY_PROFILE|PN_NO_COLOR)`' docs/src/cli-reference.md`
+  - `! grep -qE '^\| `PN_CONFIG_DIR`|^\| `PN_DATA_DIR`|^\| `PN_CACHE_DIR`|^\| `PN_LOG_LEVEL`|^\| `PN_GATEWAY_ADDR`|^\| `PN_RUNTIME`|^\| `PN_SECURITY_PROFILE`|^\| `PN_NO_COLOR`' docs/src/cli-reference.md`
   - → ``
 - [PASS] the version section does not document --short/--json
-  - `! sed -n '/### `podnext version`/,/^## /p' docs/src/cli-reference.md | grep -qE '^\| `--(short|json)`'`
+  - `! sed -n '/### `podnext version`/,/^## /p' docs/src/cli-reference.md | grep -qE '^\| `--short`|^\| `--json`'`
   - → ``
 - [PASS] known-limitations.md is registered in the book summary
   - `grep -rqF 'known-limitations.md' docs/src/SUMMARY.md`
@@ -369,7 +369,7 @@ _state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:35Z
   - → ``
 
 **#43 [BUG] --bind/--volume were no-ops: the flag was discarded and the rendered bind used a suffix proot 5.1.107.101 turns into part of the target path**  
-_state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:39Z
+_state_: CLOSED  ·  _labels_: none  ·  _closed_: 2026-11-05T15:17:39Z
 
 - [PASS] the run flag is no longer discarded
   - `! grep -rqF '_volume: Vec<String>,' crates/podnext/src`
@@ -391,7 +391,7 @@ _state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:39Z
   - → ``
 
 **#44 [BUG] image ls printed a size that was never measured and called the container name an IMAGE ID**  
-_state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T14:48:42Z
+_state_: CLOSED  ·  _labels_: none  ·  _closed_: 2026-11-05T14:48:42Z
 
 - [PASS] no column claims to be an image ID
   - `! grep -qF 'rename = "IMAGE ID"' crates/podnext/src`
@@ -407,7 +407,7 @@ _state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T14:48:42Z
   - → ``
 
 **#45 [GAP §9.3] podnext doctor did not exist: no host/guest diagnostic report**  
-_state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:43Z
+_state_: CLOSED  ·  _labels_: none  ·  _closed_: 2026-11-05T15:17:43Z
 
 - [PASS] the doctor command is dispatched
   - `grep -rqF 'Commands::Doctor' crates/podnext/src`
@@ -429,7 +429,7 @@ _state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:43Z
   - → ``
 
 **#46 [GAP §9.2] Path defaults were hard-coded to one machine's Termux home**  
-_state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:47Z
+_state_: CLOSED  ·  _labels_: none  ·  _closed_: 2026-11-05T15:17:47Z
 
 - [PASS] the daemon binary carries no hard-coded home path
   - `! grep -rqF '/data/data/com.termux/files/home' crates/podnext/src/daemon.rs`
@@ -454,7 +454,7 @@ _state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:47Z
   - → ``
 
 **#47 [BUG] run accepted nine options and dropped all of them, while --help advertised each**  
-_state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:51Z
+_state_: CLOSED  ·  _labels_: none  ·  _closed_: 2026-11-05T15:17:51Z
 
 - [PASS] the exit-code taxonomy is asserted against the real binary
   - `grep -rnF 'a_documented_refusal_is_one_with_a_reason' crates/podnext/tests/exit_codes.rs`
@@ -471,31 +471,31 @@ _state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T15:17:51Z
 - [PASS] every unhonoured option is marked refused in the reference
   - `[ $(grep -c 'Refused:' docs/src/cli-reference.md) -ge 7 ]`
   - → ``
-- [SKIPPED] each refused option exits 1 without running the command
+- [SKIPPED] each refused option exits 1 and does not run the command
   - `cargo test -p podnext --test stub_refusals`
   - → ``
 
-**#56 [shell] Measure terminal fidelity: resize, TERM, PS1, UTF-8 locale (roadmap 9.3)**  
+**#56 [shell] Measure terminal fidelity: resize, TERM, PS1, UTF-8 locale, roadmap 9.3**
 _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T16:28:20Z
 
 - [PASS] the fidelity harness exists and drives the real binary in a PTY
   - `grep -rnF 'PDNEXT_BIN' scripts/shell_fidelity.py`
   - → `22:Env overrides: PDNEXT_BIN (path to podnext), PDN_CONTAINER (container name). | 44:    b = os.environ.get("PDNEXT_BIN") | 165:        skip("podnext binary not found (set PDNEXT_BIN or install it on PATH)")`
 
-**#57 [shell] detach/attach round trip and session hygiene (roadmap 9.3)**  
+**#57 [shell] detach/attach round trip and session hygiene, roadmap 9.3**
 _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T18:20:13Z
 
 - [PASS] a detached run is spawned as its own session host
   - `grep -rnF 'fn spawn_detached_session' crates/podnext/src`
   - → `crates/podnext/src/native/session.rs:326:pub async fn spawn_detached_session(`
-- [PASS] attach reconnects through the session host, instead of creating a session
+- [PASS] attach reconnects through the session host and does not create a session
   - `grep -rnF 'fn run_session_host' crates/podnext/src`
   - → `crates/podnext/src/native/session.rs:478:pub async fn run_session_host(container: &str) -> Result<()> {`
 - [PASS] the refusal that a detached session cannot be re-entered is gone
   - `grep -rnF 'a detached session cannot be re-entered' crates/podnext/src || echo GONE`
   - → `GONE`
 
-**#58 [shell] Soak: repeated start/stop leaves nothing behind (roadmap 9.3)**  
+**#58 [shell] Soak: repeated start/stop leaves nothing behind, roadmap 9.3**
 _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T16:28:24Z
 
 - [PASS] the soak harness exists and can inject the leak it must catch
@@ -515,7 +515,7 @@ _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T16:28:32
 **#62 [BUG] run --seccomp is accepted and never applied**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-05T14:50:05Z
 
-- [PASS] --seccomp refuses instead of being silently dropped
+- [PASS] --seccomp refuses and is not silently dropped
   - `grep -rnF -- '--seccomp is not implemented' crates/podnext/src`
   - → `crates/podnext/src/main.rs:170:            "--seccomp is not implemented: this PRoot build applies no seccomp filter, so the flag \ | crates/podnext/src/direct.rs:274:    // being parsed and dropped. The string `--seccomp is not implemented` `
 - [SKIPPED] the refusal is asserted against the real binary
@@ -526,9 +526,9 @@ _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-05T14:50:05Z
   - → `156:- **Seccomp filtering is not available, and `--seccomp` says so instead of pretending.** Measured:`
 
 **#63 [BUG] direct-execution argv scanner parses --no-kill-on-exit and never uses it**  
-_state_: CLOSED  ·  _labels_: (none)  ·  _closed_: 2026-11-05T16:28:36Z
+_state_: CLOSED  ·  _labels_: none  ·  _closed_: 2026-11-05T16:28:36Z
 
-- [PASS] --no-kill-on-exit refuses instead of being silently dropped
+- [PASS] --no-kill-on-exit refuses and is not silently dropped
   - `grep -rnF -- '--no-kill-on-exit is not implemented' crates/podnext/src`
   - → `crates/podnext/src/main.rs:180:            "--no-kill-on-exit is not implemented: proot-core passes `--kill-on-exit` to proot \ | crates/podnext/src/direct.rs:286:            "--no-kill-on-exit is not implemented: proot-core passes `--kill-on`
 - [PASS] the manual direct path refuses it too, not only the parsed path
@@ -561,7 +561,7 @@ _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T18:20:21
 **#67 [BUG] the direct-execution scanner drops every flag it parses except rootfs/cmd/verbose**  
 _state_: CLOSED  ·  _labels_: bug  ·  _closed_: 2026-11-05T18:20:25Z
 
-- [PASS] --trace refuses on the direct-execution path instead of being dropped
+- [PASS] --trace refuses on the direct-execution path and is not dropped
   - `grep -rnF -- '--trace is not implemented on the direct-execution path' crates/podnext/src`
   - → `crates/podnext/src/direct.rs:325:            "--trace is not implemented on the direct-execution path: proot-core never reads \`
 - [PASS] --qemu refuses for the same reason, naming the missing engine field
@@ -617,7 +617,7 @@ _state_: CLOSED  ·  _labels_: wayfinder:task  ·  _closed_: 2026-11-05T18:33:31
   - `python3 scripts/temp_base.py`
   - → `self-check: ok - the doubled /tmp segment is unreachable in all three host shapes`
 
-## Issues with no automated check (the honest gap)
+## Issues with no automated check, the honest gap
 
 Listed rather than omitted, so the coverage gap is visible. Each has a reason. These are open
 feature requests, open defects with no landed fix, or anything whose verification needs a live
@@ -625,23 +625,23 @@ container and therefore belongs in CI.
 
 | # | state | reason | title |
 |---|---|---|---|
-| 1 | OPEN | feature request (PowerShell completion) — nothing on the tree to verify. | Add shell completion for PowerShell |
-| 2 | OPEN | documentation task (example service configs) — no code fix to assert. | Add example service configurations for common applications |
-| 3 | OPEN | documentation task (tutorial) — no code fix to assert. | Create tutorial: Running a full-stack development environment in PDN |
-| 4 | OPEN | feature request (VS Code Dev Container) — no landed implementation. | Add VS Code Dev Container support |
-| 5 | OPEN | feature request (systemd unit generator) — no landed implementation. | Add systemd service unit generator for Linux hosts |
-| 6 | CLOSED | feature request (Docker Compose export) — partially landed via PR #26; see #28. | Add Docker Compose export for PDN services |
-| 9 | OPEN | feature request (Prometheus exporter) — no landed implementation. | Add Prometheus metrics exporter for PDN services |
-| 10 | OPEN | feature request (WebSocket events) — no landed implementation. | Add WebSocket support for real-time service events |
-| 27 | CLOSED | defect: documented [gateway.fail_safe] (bulkhead/retry_policy) absent from pn-gateway; no fix landed, so a fix-present predicate has nothing to assert. | [BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy |
-| 28 | CLOSED | defect: empty command yields a null Compose service in export_to_compose; no fix landed. | Compose export: empty command emits an invalid service; follow-ups fro |
-| 29 | CLOSED | defect: podnext build local reports success without an image; no fix landed. | podnext build local computes a layer diff but produces no image |
-| 37 | OPEN | defect: image ls/push said they could not see any image because ImageManager read only the store. image ls is fixed (#44), but a real image store does not exist until v0.2.0 (roadmap section 4.4), so the remaining push/tag/rm/history behaviour has nothing to assert. | image push/tag/rm/history cannot see any image: ImageManager never loa |
-| 39 | OPEN | defect: push cannot work because the store holds no layer blobs. The CLI now refuses honestly instead of pretending (#42), and the blobs themselves are v0.2.0 work (roadmap section 4.4): the honest refusal is asserted by the stub checks, not here. | push: the store holds no layer blobs, so push cannot work even once th |
+| 1 | OPEN | feature request for PowerShell completion. Nothing on the tree to verify. | Add shell completion for PowerShell |
+| 2 | OPEN | documentation task for example service configs. No code fix to assert. | Add example service configurations for common applications |
+| 3 | OPEN | documentation task for a tutorial. No code fix to assert. | Create tutorial: Running a full-stack development environment in PDN |
+| 4 | OPEN | feature request for a VS Code Dev Container. No landed implementation. | Add VS Code Dev Container support |
+| 5 | OPEN | feature request for a systemd unit generator. No landed implementation. | Add systemd service unit generator for Linux hosts |
+| 6 | CLOSED | feature request for a Docker Compose export. Partially landed via PR #26. See #28. | Add Docker Compose export for PDN services |
+| 9 | OPEN | feature request for a Prometheus exporter. No landed implementation. | Add Prometheus metrics exporter for PDN services |
+| 10 | OPEN | feature request for WebSocket events. No landed implementation. | Add WebSocket support for real-time service events |
+| 27 | CLOSED | defect: the documented [gateway.fail_safe] config for bulkhead and retry_policy is absent from pn-gateway. No fix landed, so a fix-present predicate has nothing to assert. | [BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy |
+| 28 | CLOSED | defect: an empty command yields a null Compose service in export_to_compose. No fix landed. | Compose export: empty command emits an invalid service; follow-ups fro |
+| 29 | CLOSED | defect: podnext build local reports success without an image. No fix landed. | podnext build local computes a layer diff but produces no image |
+| 37 | OPEN | defect: image ls/push said they could not see any image because ImageManager read only the store. image ls is fixed by #44, but a real image store does not exist until v0.2.0, roadmap section 4.4, so the remaining push/tag/rm/history behaviour has nothing to assert. | image push/tag/rm/history cannot see any image: ImageManager never loa |
+| 39 | OPEN | defect: push cannot work because the store holds no layer blobs. The CLI now refuses honestly and does not pretend, per #42. The blobs themselves are v0.2.0 work, roadmap section 4.4. The honest refusal is asserted by the stub checks, not here. | push: the store holds no layer blobs, so push cannot work even once th |
 
-The 12 issues labelled `wayfinder:*` (#48, #49, #50, #51, #52, #53, #54, #55, #59, #61, #65, #72) are work items, not findings: the map issue holds their acceptance criteria, and they are not subject to this triage list.
+The 12 issues labelled `wayfinder:*` are work items, not findings: #48, #49, #50, #51, #52, #53, #54, #55, #59, #61, #65 and #72. The map issue holds their acceptance criteria. They are not subject to this triage list.
 
-## How to re-run this (CI-friendly)
+## How to re-run this, in a CI-friendly way
 
 ```sh
 export PATH="$HOME/.hermes/bin:$PATH"
@@ -655,4 +655,4 @@ env -u LD_LIBRARY_PATH python3 scripts/build_issue_ledger.py --cargo
 
 Exit status is **0** when no check FAILs and **1** when any check FAILs, so the ledger doubles as
 a regression gate. `--json` prints `{"checks":{"pass":N,"fail":N,"skipped":N,"total":N}}`.
-This file is regenerated by every run — it cannot drift from the code.
+Every run regenerates this file. It cannot drift from the code.

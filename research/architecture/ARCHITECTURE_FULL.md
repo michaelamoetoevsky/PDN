@@ -1,9 +1,9 @@
-# PDN (podnext) — full architecture, components and mechanisms
+# PDN, also named podnext: full architecture, components and mechanisms
 
 Purpose: a complete map of the system as it *is*, so that no layer, module or mechanism can be
-forgotten or mistaken for absent. Every number here is counted and every claim carries a file path or a
-measured command; where something is a stub, unreachable or unverified, this document says so instead of
-implying it works.
+Every number here is counted, and every claim carries a file path or a measured command.
+Where something is a stub, unreachable or unverified, this document says so. It does not claim that the
+item works.
 
 Companion artifacts, all generated from source rather than written from memory:
 
@@ -15,18 +15,18 @@ Companion artifacts, all generated from source rather than written from memory:
 
 Measured state at commit `48e86b7`: **6 crates + a root test crate, 188 `.rs` files, 72,257 lines**,
 
-Re-measured at `ac9198f` (2026-11-09): **190 `.rs` files, 78,257 lines**, from
+Re-measured at `ac9198f` on 2026-11-09: **190 `.rs` files, 78,257 lines**, from
 `find crates -name '*.rs' | wc -l` and `find crates -name '*.rs' -exec cat {} + | wc -l`. The difference is the
-native engine and CLI work landed since `48e86b7`; the commit-anchored figures above are kept because they are
-the reading that commit was written at, and a number that silently follows the tree cannot be checked.
-1,877 public items, 3 files with no module doc (§8).
+native engine and CLI work that landed since `48e86b7`. This document keeps the commit-anchored figures
+above, because they are the reading that commit was written at. A number that silently follows the tree cannot
+be checked. This commit has 1,877 public items and 3 files with no module doc (§8).
 
 ---
 
 ## 1. The layer model
 
-PDN is a stack, and each layer has exactly one job. Read top-down: each row may call the rows below it,
-and nothing may call upward.
+PDN is a stack, and each layer has exactly one job. Read this list from the top down. Each row can call
+the rows below it, and nothing can call upward.
 
 | # | layer | crate / binary | job | why the layer exists |
 |---|---|---|---|---|
@@ -38,7 +38,7 @@ and nothing may call upward.
 | 1 | execution engine | `proot-core` | ptrace controller, tracee state, syscall table, VFS, path translation, identity table, seccomp, selective interception | must make a foreign rootfs run |
 | 0 | host kernel | Termux `proot` binary (external) | actual syscall interception today | see §7 — PDN *orchestrates* this binary rather than replacing it |
 
-Dependency edges, read from each `Cargo.toml` (no crate depends on a crate above it):
+Dependency edges from each `Cargo.toml`. No crate depends on a crate above it:
 
 ```
 proot-core          -> (no internal dependencies)
@@ -49,14 +49,14 @@ pn-next             -> proot-core, proot-distro-core, proot-compat, pn-gateway
 podnext             -> pn-gateway, pn-next, proot-distro-core, proot-core, proot-compat
 ```
 
-Two binaries come out of `crates/podnext`: `podnext` (`src/main.rs`) and `podnext-daemon`
-(`src/daemon.rs`).
+Two binaries come out of `crates/podnext`: `podnext` from `src/main.rs` and `podnext-daemon` from
+`src/daemon.rs`.
 
 ---
 
 ## 2. `proot-core` — the execution engine (18 files, 4,598 lines)
 
-Module docs (verbatim first line) and what each one is for:
+Module docs, verbatim first line, and what each one is for:
 
 | file | lines | role |
 |---|---|---|
@@ -75,10 +75,10 @@ Module docs (verbatim first line) and what each one is for:
 | `identity.rs` | 84 | "The identity and credential syscall table (adoption S2)" |
 | `path.rs` | 69 | "Path translation for PRoot" |
 
-Tests that pin its facts: `tests/argv_facts.rs` (what actually reaches the `proot` argv),
-`tests/identity_table.rs` (the identity table is "countable, complete and honest"),
-`tests/seccomp_filter.rs` (A21: `install()` must deny syscalls or tell the caller it did not),
-`tests/selective_seccomp.rs` (S1 backend measured against the PRoot path).
+Tests that pin its facts are `tests/argv_facts.rs`, which records what reaches the `proot` argv.
+`tests/identity_table.rs` shows that the identity table is "countable, complete and honest". `tests/seccomp_filter.rs`
+covers A21, where `install()` must deny syscalls or tell the caller it did not. `tests/selective_seccomp.rs`
+measures the S1 backend against the PRoot path.
 
 ---
 
@@ -145,15 +145,15 @@ Grouped by responsibility, with the file's own description:
 | `l2s.rs` | 167 | "Link2Symlink Tree Rewriter for PRoot containers" |
 | `gpu.rs` | 312 | GPU device detection and passthrough |
 
-**Declared stubs inside this crate** (their own words):
-`network.rs` (349) "Network module - Stub for future implementation",
-`storage.rs` (317) "Storage/Volume module - Stub for future implementation",
-`security.rs` (208) "re-export from proot-compat".
-`message.rs` (81) and `progress.rs` (140) are support utilities.
+**Declared stubs inside this crate**, in their own words:
+`network.rs` at 349 lines, "Network module - Stub for future implementation".
+`storage.rs` at 317 lines, "Storage/Volume module - Stub for future implementation".
+`security.rs` at 208 lines, "re-export from proot-compat".
+`message.rs` at 81 lines and `progress.rs` at 140 lines are support utilities.
 
-Tests: `tests/atomic_identity.rs` (B11), `tests/blob_store_dedup.rs`, `tests/deep_fs_recursion.rs`,
-`tests/single_writer_races.rs` (A29), `tests/store_fifo_is_metadata.rs` (S3), `tests/store_integrity.rs`
-(A1/A3a/A4).
+Tests: `tests/atomic_identity.rs` for B11, `tests/blob_store_dedup.rs`, `tests/deep_fs_recursion.rs`,
+`tests/single_writer_races.rs` for A29, `tests/store_fifo_is_metadata.rs` for S3, `tests/store_integrity.rs`
+for A1/A3a/A4.
 
 ---
 
@@ -171,16 +171,16 @@ Tests: `tests/atomic_identity.rs` (B11), `tests/blob_store_dedup.rs`, `tests/dee
 | `config_loader.rs` | 96 | TOML loading |
 | `lib.rs` | 37 | "Bridge layer between PRoot, PRoot-distro, and proot-compat" |
 
-Tests: `tests/config_loader.rs` (issue #27 follow-up) and `tests/doc_key_drift.rs` — a whole-file
-documentation ↔ configuration drift guard, i.e. this project already treats doc/code drift as a defect
-class worth a test.
+Tests: `tests/config_loader.rs` for the issue #27 follow-up, and `tests/doc_key_drift.rs`. The second test
+is a whole-file guard against drift between documentation and configuration. This project already treats
+doc/code drift as a defect class worth a test.
 
 ---
 
-## 6. `pn-next` — orchestration (39 files, 26,123 lines)
+## 6. `pn-next`: orchestration, 39 files, 26,123 lines
 
 This is the largest crate and the one with the most hidden depth: **17 subsystem directories plus 12
-top-level modules**. Nothing below is inferred from the specification — each row is the file's own
+top-level modules**. Nothing below is inferred from the specification. Each row is the file's own
 module doc.
 
 ### 6.1 Subsystem directories
@@ -219,9 +219,10 @@ module doc.
 
 ### 6.2 pn-next test surface
 
-`tests/supervisor_e2e.rs` (821), `tests/cgroup_view.rs` (336), `tests/runtime_cgroup_honesty.rs` (A27),
-`tests/cgroup_honesty.rs` (A20), `tests/cgroup_throttle_honesty.rs` (A20 negative control),
-`tests/readiness_handshake.rs` (C10), `tests/restart_policy.rs` (B14), plus two benchmarks.
+`tests/supervisor_e2e.rs` at 821 lines, `tests/cgroup_view.rs` at 336 lines, and
+`tests/runtime_cgroup_honesty.rs` for A27. `tests/cgroup_honesty.rs` covers A20, and
+`tests/cgroup_throttle_honesty.rs` covers A20 as a negative control. `tests/readiness_handshake.rs`
+covers C10, and `tests/restart_policy.rs` covers B14, plus two benchmarks.
 
 ---
 
@@ -245,7 +246,7 @@ module doc.
 | `subcommands.rs` | 208 | "commands that print rather than orchestrate: host diagnostics, the version table, shell completions" |
 | `utils.rs` | 69 | utility functions |
 
-### 7.2 Command implementations (`commands/`)
+### 7.2 Command implementations in `commands/`
 
 | file | lines | role |
 |---|---|---|
@@ -267,7 +268,7 @@ module doc.
 | `socket.rs` | 44 | "Socket-activation commands: register, unregister, list" |
 | `compose.rs` | 36 | "export PDN service configuration to a Docker Compose file" |
 
-### 7.3 Native execution path (`native/`)
+### 7.3 Native execution path in `native/`
 
 | file | lines | role |
 |---|---|---|
@@ -289,21 +290,22 @@ module doc.
 
 The crate carries a contract suite, not just unit tests. Most relevant here:
 
-- `cli_reference_contract.rs` (328) — every command and documented option in `docs/src/cli-reference.md` must exist.
-- `exit_codes.rs` (229) and `quoting_table.rs` (165) — the exit-code and argv-quoting contracts.
-- `stub_refusals.rs` (157) — "a command that cannot do its job must refuse, name the reason, and exit non-zero".
-- `stdout_discipline.rs` (396) — "stdout is the data channel, and a page belongs to the command that owns it".
-- `session_registry.rs` (768), `session_reattach_parity.rs` (279) — the session model and containerd-shim parity.
-- `install_interrupt.rs` (865), `install_lock.rs` (176), `install_sources.rs` (511), `remove_atomic.rs` (290) — lifecycle and atomicity.
-- `orphan_reaping.rs` (262) — "PDN is a real subreaper, so the descendants of a dead guest are adopted and reaped".
-- `image_config_env.rs` (608) — the image's own config applied at `login` (issue #76) and the kill ladder (B8).
-- `daemon_honesty.rs` (220) — "`daemon status` must not claim a running daemon when there is none".
-- `pull_hygiene.rs` (234), `refcount_eviction.rs` (212), `relocated_paths.rs` (93), `doctor_capabilities.rs` (185), `doctor_contract.rs` (129), `inspect_missing.rs` (64), `argv_nonutf8.rs` (58), `build_copy_escape.rs` (149), `guest_identity_probe.rs` (49), `automation_contract.rs` (142, no module doc).
-- Root crate `tests/`: `daemon_integration_test.rs` (375), `daemon_client_e2e.rs` (48), `integration/common.rs` (664), `integration/v2_criteria.rs` (616) — the v2.0 success criteria.
+- `cli_reference_contract.rs` covers 328 lines. Every command and documented option in `docs/src/cli-reference.md` must exist.
+- `exit_codes.rs` covers 229 lines and `quoting_table.rs` covers 165 lines. They hold the exit-code and argv-quoting contracts.
+- `stub_refusals.rs` covers 157 lines: "a command that cannot do its job must refuse, name the reason, and exit non-zero".
+- `stdout_discipline.rs` covers 396 lines: "stdout is the data channel, and a page belongs to the command that owns it".
+- `session_registry.rs` covers 768 lines and `session_reattach_parity.rs` covers 279 lines. They hold the session model and containerd-shim parity.
+- `install_interrupt.rs` covers 865 lines, `install_lock.rs` covers 176, `install_sources.rs` covers 511, and `remove_atomic.rs` covers 290. They hold lifecycle and atomicity.
+- `orphan_reaping.rs` covers 262 lines: "PDN is a real subreaper, so the descendants of a dead guest are adopted and reaped".
+- `image_config_env.rs` covers 608 lines. It holds the image's own config applied at `login` for issue #76, and the kill ladder for B8.
+- `daemon_honesty.rs` covers 220 lines: "`daemon status` must not claim a running daemon when there is none".
+- Also `pull_hygiene.rs` at 234 lines, `refcount_eviction.rs` at 212, `relocated_paths.rs` at 93, `doctor_capabilities.rs` at 185, `doctor_contract.rs` at 129, and `inspect_missing.rs` at 64.
+  `argv_nonutf8.rs` at 58 lines, `build_copy_escape.rs` at 149, `guest_identity_probe.rs` at 49, and `automation_contract.rs` at 142 with no module doc.
+- Root crate `tests/`: `daemon_integration_test.rs` at 375 lines, `daemon_client_e2e.rs` at 48, `integration/common.rs` at 664, and `integration/v2_criteria.rs` at 616. Those four hold the v2.0 success criteria.
 
 ---
 
-## 8. Cross-cutting mechanisms (what actually happens at runtime)
+## 8. Cross-cutting mechanisms: what happens at runtime
 
 Each mechanism below names the file and line that implements it, plus the measurement that proved it.
 Where a mechanism is declared but not reachable, that is stated here and again in §9.2.
@@ -316,74 +318,74 @@ This is the single most consequential architectural fact, and it is invisible fr
   `$dir/proot` next to the current executable → the literal name `proot` resolved from `PATH`.
 * Spawn sites: `crates/proot-core/src/lib.rs:195` and `:337`, and `crates/podnext/src/native/image.rs:131`.
 * The host binary at `/data/data/com.termux/files/usr/bin/proot` is 259,784 bytes, mode `0700`.
-  `proot --version` prints only ASCII art and a 2015 copyright — **it prints no version number**; the
-  version `5.1.107.101` appears only in a source comment at `crates/proot-core/src/lib.rs:187-195`.
-* Measured process tree for `podnext run`: pid 4169 (`podnext`) → pid 4188
-  (`/data/data/com.termux/files/usr/bin/proot --kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=. --cwd=/`).
+  `proot --version` prints only ASCII art and a 2015 copyright. **It prints no version number.**
+  The version `5.1.107.101` appears only in a source comment at `crates/proot-core/src/lib.rs:187-195`.
+* Measured process tree for `podnext run`: pid 4169 is `podnext` and pid 4188 is
+  `/data/data/com.termux/files/usr/bin/proot --kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=. --cwd=/`.
 * Measured failure mode: `PROOT_BIN=/nonexistent/proot` → `os error 2`, no fallback to the internal engine.
 * Consequence: `pkg install proot` is a hard prerequisite that cannot be pinned in any `Cargo.toml`.
   `podnext doctor` is the only place that reports the binary it found.
 
-The six argv features PDN borrows from the external binary rather than implementing: `--rootfs`/`--cwd`,
+The six argv features PDN borrows from the external binary and does not implement: `--rootfs`/`--cwd`,
 `--bind`, `--change-id`, `--kill-on-exit`, `--link2symlink`, `--sysvipc`.
 
 ### 8.2 Guest environment construction
 
 `LANG`, `LC_ALL` and `COLORTERM` are forwarded from the host unconditionally in both execution paths
-(`crates/proot-core/src/lib.rs:260` in `start`, `:411` in `execute` — the same three-variable list in both). Measured consequence: host
-`LANG=en_US.UTF-8` with an empty host `locale -a`; the guest rootfs ships only `C`, `C.utf8` and `POSIX`;
-inside the guest every Perl-based tool prints `perl: warning: Setting locale failed … Falling back to the
-standard locale ("C")` — reproduced under both `podnext login ubuntu` and `podnext login ubuntu --isolated`.
+in `crates/proot-core/src/lib.rs:260` for `start` and `:411` for `execute`. Both paths use the same three-variable list. Measured consequence: host
+The host has `LANG=en_US.UTF-8` and an empty `locale -a`. The guest rootfs ships only `C`, `C.utf8` and `POSIX`.
+Inside the guest every Perl-based tool prints this warning:
+`perl: warning: Setting locale failed ... Falling back to the standard locale ("C")`. It appears under both `podnext login ubuntu` and `podnext login ubuntu --isolated`.
 Negative control: `LANG=C.UTF-8` produces no warning, so the variable is the cause and not the guest image.
 `--isolated` warns identically, i.e. the flag does not isolate the environment.
 
-### 8.3 First entry (`login`) and identity
+### 8.3 First entry with `login`, and identity
 
-Measured: `login` lands in `/` because the argv carries `--cwd=/`; `USER` and `SHELL` are empty inside;
-`PS1` is `"# "`; the argv has no `-l`, so `/etc/profile` is never read. The reference implementation
-resolves the user from `/etc/passwd` and sets `login_wd = login_home`
-(`/data/data/com.termux/files/usr/lib/python3.14/site-packages/proot_distro/commands/login/__init__.py:388`),
-exporting `HOME`/`USER` per session and the identity variables `PD_CONTAINER`, `PD_IMAGE`, `PD_IMAGE_ID`
-and `container=proot-distro` — none of which PDN sets.
+Measured: `login` lands in `/` because the argv carries `--cwd=/`. `USER` and `SHELL` are empty inside.
+`PS1` is `"# "`. The argv has no `-l`, so nothing reads `/etc/profile`. The reference implementation
+resolves the user from `/etc/passwd` and sets `login_wd = login_home`, as shown by
+`/data/data/com.termux/files/usr/lib/python3.14/site-packages/proot_distro/commands/login/__init__.py:388`.
+It exports `HOME`/`USER` per session and the identity variables `PD_CONTAINER`, `PD_IMAGE`, `PD_IMAGE_ID`
+and `container=proot-distro`, and PDN sets none of them.
 
 ### 8.4 Store layout, index cache, refcount and blob store
 
-* Container rootfs: `~/.podnext/containers/<name>/rootfs`; per-container metadata `metadata.json`;
-  runtime directories beside the rootfs are computed by `crates/proot-distro-core/src/guestdirs.rs`;
-  the whole layout is centralised in `paths.rs`.
+* Container rootfs: `~/.podnext/containers/<name>/rootfs`. Per-container metadata: `metadata.json`.
+  `crates/proot-distro-core/src/guestdirs.rs` computes the runtime directories beside the rootfs, and
+  `paths.rs` centralises the whole layout.
 * `container_index.rs` is an on-disk cache of the store listing that makes `list` cheap
-  (roadmap 9.2). Measured: `list` median 23.2–25.3 ms, while `podnext --version` alone costs 17–24 ms —
-  i.e. the listing work itself is only ~1–3 ms.
-* `refcount.rs` implements reference-counted eviction (WORKLIST C6) over the blob store
-  `blobstore.rs`; `layer_diff.rs` computes OCI layer differences for the builder.
+  for roadmap 9.2. Measured: `list` median 23.2 to 25.3 ms, while `podnext --version` alone costs 17 to 24 ms.
+  The listing work itself is only ~1 to 3 ms.
+* `refcount.rs` implements reference-counted eviction for WORKLIST C6 over the blob store
+  `blobstore.rs`. `layer_diff.rs` computes OCI layer differences for the builder.
 * Measured integrity behaviour: a FIFO planted at a container's `metadata.json` is classified as
-  *metadata* (S3) and freezes `list`/`remove` (`rc=124` at the 20 s timeout, leaving orphan processes).
+  *metadata* for S3 and freezes `list`/`remove`, with `rc=124` at the 20 s timeout. Orphan processes stay behind.
 
 ### 8.5 Locking
 
 `crates/proot-distro-core/src/locking.rs` provides shared and exclusive container locks. Measured: an
 exclusive `flock` attempt while another holder exists is refused with
-`EX_REFUSED_shared_lock_is_held`; and `remove` deletes the container while leaving `fs-lock5.lock`
+`EX_REFUSED_shared_lock_is_held`. In addition, `remove` deletes the container and leaves `fs-lock5.lock`
 behind in the store.
 
 ### 8.6 Sessions
 
-`crates/proot-distro-core/src/session.rs` holds the session record; `crates/podnext/src/native/session.rs`
+`crates/proot-distro-core/src/session.rs` holds the session record. `crates/podnext/src/native/session.rs`
 implements foreground login/run, signal forwarding into the guest, and the detached-session path. One
-reader feeds three renderings (`ps`, `sessions`, `ps -f json`) — covered by
-`crates/podnext/tests/session_registry.rs`. Measured: a guest killed by a signal reports exit code
+reader feeds three renderings, `ps`, `sessions` and `ps -f json`, which `crates/podnext/tests/session_registry.rs`
+covers. Measured: a guest killed by a signal reports exit code
 **255**, not 128+signal.
 
 ### 8.7 IPC surfaces and their scoping
 
-* The daemon socket is `~/.local/run/pn-next/daemon.sock` **regardless of which store is in use** —
-  a store relocation does not relocate the socket (finding `ASEC3-ORCH-005`).
-* `PN_TEST_ROOT` selects the store but leaks into the parent shell's environment without warning
-  (finding `ASEC3-UX-02`), which is how a test fixture can appear to have deleted a real container.
-* D-Bus support is a broker plus service definitions plus a zbus client (`pn-next/src/dbus/`), with the
-  CLI surface in `crates/podnext/src/commands/dbus.rs`; the CLI reports it as `[experimental]`.
-* Socket activation exists twice: `pn-next/src/socket_activation/` (systemd-style) and
-  `pn-next/src/container_socket_activation/` (on-demand *container* start).
+* The daemon socket is `~/.local/run/pn-next/daemon.sock` **regardless of which store is in use**.
+  A store relocation does not relocate the socket, finding `ASEC3-ORCH-005`.
+* `PN_TEST_ROOT` selects the store, and it then leaks into the parent shell's environment with no warning
+  Recorded as finding `ASEC3-UX-02`. In this way a test fixture can appear to delete a real container.
+* D-Bus support is a broker plus service definitions plus a zbus client in `pn-next/src/dbus/`. The CLI
+  surface is in `crates/podnext/src/commands/dbus.rs`, and the CLI reports D-Bus as `[experimental]`.
+* Socket activation exists twice. `pn-next/src/socket_activation/` is systemd-style, and
+  `pn-next/src/container_socket_activation/` starts a *container* on demand.
 
 ### 8.8 The native engine: what exists, what does not
 
@@ -398,29 +400,29 @@ reader feeds three renderings (`ps`, `sessions`, `ps -f json`) — covered by
 | selective seccomp backend | **real and tested** | `crates/proot-core/src/selective.rs`, `crates/proot-core/tests/selective_seccomp.rs` |
 | identity/credential table | real, countable | `crates/proot-core/src/identity.rs`, `crates/proot-core/tests/identity_table.rs` |
 
-So the crate named `proot-core` is today a *library of intent* plus one working interception backend;
-execution in production goes through the external binary in §8.1.
+So the crate named `proot-core` is today a *library of intent* plus one working interception backend.
+Execution in production goes through the external binary in §8.1.
 
 ### 8.9 Guest `/proc`, binds and shared memory
 
-`crates/proot-distro-core/src/sysdata.rs` synthesises `/proc` entries (stat, loadavg, uptime, mounts) for
-the guest. Measured: the synthetic `/proc/mounts` advertises a store bind as `tmpfs` although it is not.
-`android_binds.rs` defines the Android bind set and the `termux-type` exclusion. `shm.rs` provides
+`crates/proot-distro-core/src/sysdata.rs` synthesises `/proc` entries for stat, loadavg, uptime and
+mounts for the guest. Measured: the synthetic `/proc/mounts` advertises a store bind as `tmpfs`, although
+it is not. `android_binds.rs` defines the Android bind set and the `termux-type` exclusion. `shm.rs` provides
 `/dev/shm` at mode 1777, which passes the V8/Chromium requirement.
 
 ### 8.10 Extraction and copy rules
 
-* `untar.rs` ("extraction that survives Android"): hard links are materialised as independent copies
-  (measured: distinct inode, `nlink=1`), and unsupported special files are skipped rather than failing
-  the install. A *missing* link source is silently swallowed, which is a defect, not a feature
-  (`ASEC3-FS2-*`).
-* `l2s.rs` is the link2symlink tree rewriter; a `.proot.l2s` marker is **absent** in the Ubuntu rootfs,
+* `untar.rs`, "extraction that survives Android": hard links are materialised as independent copies
+  Measured evidence: a distinct inode with `nlink=1`. Unsupported special files are skipped, and the
+  install does not fail. A *missing* link source is silently swallowed, which is a defect, not a feature.
+  This is defect `ASEC3-FS2-*`.
+* `l2s.rs` is the link2symlink tree rewriter. A `.proot.l2s` marker is **absent** in the Ubuntu rootfs,
   so the rewriter is not what produces the copy behaviour above.
-* `crates/podnext/src/commands/sync.rs:350` (`copy_preserving_holes`) opens the destination without
-  `O_NONBLOCK`, which is why a FIFO planted in the copy path hangs the command (`rc=124` at exactly 20 s
-  with a 20 s timeout).
-* Measured: `cp -a` of a container rootfs fails (`exit 1`) on bind-target directories that are mode `000`;
-  `tar -cf - . | tar -xf -` succeeds (`rc=0`) — the recipe the fixture builder must use.
+* `crates/podnext/src/commands/sync.rs:350`, `copy_preserving_holes`, opens the destination without
+  `O_NONBLOCK`. That is why a FIFO planted in the copy path hangs the command, with `rc=124` at exactly 20 s
+  and a 20 s timeout.
+* Measured: `cp -a` of a container rootfs fails with `exit 1` on bind-target directories that are mode `000`.
+  `tar -cf - . | tar -xf -` succeeds with `rc=0`. That is the recipe the fixture builder must use.
 
 ### 8.11 Enforcement subsystems, measured
 
@@ -435,34 +437,34 @@ the guest. Measured: the synthetic `/proc/mounts` advertises a store bind as `tm
 
 ### 8.12 Observability
 
-`structured_logging/` (872) is journald-style with rotation, query and filtering, surfaced by
-`crates/podnext/src/commands/log.rs`. The dashboard (`pn-next/src/web_dashboard/mod.rs`, 829) serves
-`/api/metrics` at `:275` and defaults to `bind_addr: "0.0.0.0"` with `auth_enabled: false` (`:50`, `:55`).
-At `:801` the reported CPU percentage is `25.0 + rand::random::<f64>() * 30.0` — a fabricated figure
-(§9.2). `pn-gateway/src/metrics.rs` is a separate collector.
+`structured_logging/` at 872 lines is journald-style with rotation, query and filtering. It appears in
+`crates/podnext/src/commands/log.rs`. The dashboard `pn-next/src/web_dashboard/mod.rs` at 829 lines serves
+`/api/metrics` at `:275` and defaults to `bind_addr: "0.0.0.0"` with `auth_enabled: false` at `:50` and `:55`.
+At `:801` the reported CPU percentage is `25.0 + rand::random::<f64>() * 30.0`, a fabricated figure
+for §9.2. `pn-gateway/src/metrics.rs` is a separate collector.
 
 ### 8.13 Daemon and service supervision
 
-`crates/podnext/src/daemon.rs` (595) is the `podnext-daemon` binary: a persistent supervisor over a Unix
-socket. `pn-next/src/daemon_runtime/` (1139) is the independent lifecycle manager, and
-`pn-next/src/supervisor.rs` (2989) is the runit/s6-style supervisor. `readiness.rs` (186) implements start
-coordination as one byte on a pipe (the runc `fifoFile` pattern, WORKLIST C10) and
-`restart_policy.rs` (133) isolates the restart decision as a pure function (B14).
+`crates/podnext/src/daemon.rs` at 595 lines is the `podnext-daemon` binary, a persistent supervisor over a
+Unix socket. `pn-next/src/daemon_runtime/` at 1139 lines is the independent lifecycle manager, and
+`pn-next/src/supervisor.rs` at 2989 lines is the runit/s6-style supervisor. `readiness.rs` at 186 lines
+implements start coordination as one byte on a pipe, the runc `fifoFile` pattern for WORKLIST C10, and
+`restart_policy.rs` at 133 lines isolates the restart decision as a pure function for B14.
 Default state on a fresh install, measured: daemon `RUNNING=false`, 0 services, empty watchdog, one
-policy (`quarantine-unhealthy`), no socket present, `service status`/`quota usage` demanding a name.
+policy named `quarantine-unhealthy`, no socket present, and `service status`/`quota usage` demanding a name.
 
 ### 8.14 Boot integration
 
-`pn-next/src/termux_boot/` (278) plus `crates/podnext/src/commands/power.rs` (153) implement Termux:Boot
-auto-start; measured working entry: `~/.termux/boot/podnext-boot.sh` executing `podnext-daemon`.
+`pn-next/src/termux_boot/` at 278 lines plus `crates/podnext/src/commands/power.rs` at 153 lines implement
+Termux:Boot auto-start. Measured working entry: `~/.termux/boot/podnext-boot.sh` runs `podnext-daemon`.
 
 ### 8.15 Supply chain
 
-`digest.rs` (B1) validates a digest before it becomes a path component; `retry.rs` (B2/B3) is the
-transfer policy; `signature.rs` defaults to `enabled: false` (`:33`) and `verify_image` returns early
-(`:132`), so signature verification is off unless explicitly enabled. Measured gap: the installer path
-pipes `curl` output into `dpkg -i` with no checksum verification (`TC-SUPPLY-01`, issue #74), and the
-release workflow's `sha256` step tolerates failure.
+`digest.rs` for B1 validates a digest before it becomes a path component. `retry.rs` for B2/B3 is the
+transfer policy. `signature.rs` defaults to `enabled: false` at `:33`, and `verify_image` returns early
+at `:132`, so signature verification is off unless an operator enables it. Measured gap: the installer path
+pipes `curl` output into `dpkg -i` with no checksum verification, reported as `TC-SUPPLY-01` and issue #74.
+The release workflow's `sha256` step tolerates failure.
 
 ---
 
@@ -480,11 +482,10 @@ section therefore separates what the system *does* from what it *says*.
 - The CLI reference itself: `podnext/tests/cli_reference_contract.rs` requires every command and option in
   `docs/src/cli-reference.md` to exist, and `pn-gateway/tests/doc_key_drift.rs` guards the configuration
   ↔ document mapping. This project already treats documentation drift as a defect class.
-- Orphan reaping (`podnext/tests/orphan_reaping.rs`), session reattach parity, ref-counted eviction
-  against the real binary, `/dev/shm` mode 1777, the selective-seccomp interception backend.
-- Start coordination and restart decisions as isolated, testable units (`readiness.rs`, `restart_policy.rs`).
+- `podnext/tests/orphan_reaping.rs` covers orphan reaping, session reattach parity, ref-counted eviction against the real binary, `/dev/shm` mode 1777, and the selective-seccomp interception backend.
+- Start coordination and restart decisions are isolated, testable units in `readiness.rs` and `restart_policy.rs`.
 - `proot` guest facts: the argv, the version comment, the locale leak, identity variables, the process
-  tree (§8.1–8.3), all reproduced on this device.
+  tree, sections §8.1 to §8.3, all reproduced on this device.
 
 ### 9.2 Declared, documented, and yet not real — with evidence
 
@@ -519,18 +520,18 @@ command path, and whether the eval of `policy presets` reaches an enforcement si
 
 ## 10. Limits of this document, and how to keep it true
 
-What this document *is*: a counted inventory (§2–§7), a mechanism map with file:line anchors (§8), and an
-evidence-backed honesty register (§9). What it is *not*: a line-by-line reading of all 72,257 lines. The
-mechanism chapters cover the paths that were executed or read during the architectural assessment; the
-per-file tables and `MODULE_MAP.md` cover every file, so an unread mechanism shows up as an
-undocumented-in-prose file rather than as a silent gap.
+What this document *is*: a counted inventory from §2 to §7, a mechanism map with file:line anchors from
+§8, and an evidence-backed honesty register from §9. What it is *not*: a line-by-line reading of all
+72,257 lines. The mechanism chapters cover the paths that were executed or read during the architectural
+assessment. The per-file tables and `MODULE_MAP.md` cover every file, so an unread mechanism appears as an
+undocumented-in-prose file and not as a silent gap.
 
 The three files with no module doc, listed so they cannot hide:
 `crates/podnext/examples/test_daemon_client.rs`, `crates/podnext/tests/automation_contract.rs`,
 `crates/proot-distro-core/tests/deep_fs_recursion.rs`.
 
-Regeneration (run from the repository root; the walker prints the tree it counted, so a stale figure is
-visible rather than inherited):
+Regeneration, run from the repository root. The walker prints the tree it counted, so a stale figure is
+visible and not inherited:
 
 ```sh
 python3 - <<'PY'
@@ -552,6 +553,6 @@ Every number in this document can be re-derived with that walker plus the `grep`
 §8 and §9. When a number and the walker disagree, the walker is right and this document is the defect.
 
 To publish it as part of the manual, move this file to `docs/src/architecture.md` and add the chapter to
-`docs/src/SUMMARY.md`; it is kept under `research/architecture/` for now because it documents
-unflattering facts (§9.2) that the release notes have not yet been reconciled with.
+`docs/src/SUMMARY.md`. The file stays under `research/architecture/` for now, because the release notes have
+not yet been reconciled with the unflattering facts from §9.2.
 

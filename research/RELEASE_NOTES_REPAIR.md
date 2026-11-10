@@ -1,8 +1,8 @@
 # Release notes repair: v0.1.5 onward, and the withdrawal of v0.1.7
 
-6 Nov 2026. Every number here was measured with `gh release view <tag> --json body` plus a byte-level
-count of real newlines (`0x0a`) and literal backslash-n tokens (`0x5c 0x6e`) - not read off the rendered
-release page, because the rendered page is what hid the defect in the first place.
+6 Nov 2026. Every number here comes from `gh release view <tag> --json body` plus a byte-level
+count. The count covers real newlines, `0x0a`, and literal backslash-n tokens, `0x5c 0x6e`. No number
+comes from the rendered release page. The rendered page is what hid the defect in the first place.
 
 ## What was wrong, measured
 
@@ -19,12 +19,12 @@ release page, because the rendered page is what hid the defect in the first plac
 | **v0.1.8** | 4,021 | **1** | 49 | `release.yml` | escaped commit list |
 | v0.2.0 | 8,153 | 108 | 0 | `release.yml` | **repaired earlier today** (same defect) |
 
-So the "mess from v0.1.5 onward" is exactly right, and the contrast with v0.1.3 and v0.1.4 is not an
-accident of writing style: **two publishers existed.** `ci.yml` had a release job whose body was a YAML
-literal block (`body: |`), so its newlines survived - and at `v0.1.3` its heading was
-`## PDN (PRoot Distro Next) v0.1.3`, which is the boilerplate since deleted (#77). `release.yml` built its
-body from an Actions output, which is line-oriented, and rewrote every newline to the two characters `\` `n`
-before handing the text over.
+The phrase "mess from v0.1.5 onward" is exactly right. The contrast with v0.1.3 and v0.1.4 is not an
+accident of style. **Two publishers existed.** The file `ci.yml` had a release job whose body was a YAML
+literal block, `body: |`, so its newlines survived. At `v0.1.3` its heading was
+`## PDN (PRoot Distro Next) v0.1.3`, which is the boilerplate since deleted in #77. The file `release.yml` built its
+body from an Actions output. That output is line-oriented. The job rewrote every newline to the two characters `\` `n`
+before it handed the text over.
 
 Evidence for the mechanism, from the workflow as it stood at `v0.1.3`:
 
@@ -33,16 +33,16 @@ $ git show v0.1.3:.github/workflows/release.yml | grep -n "changelog="
 187:  echo "changelog=$(cat CHANGELOG.md | sed 's/"/\\"/g' | sed ':a;N;s/\n/\\n/g;ta')" >> $GITHUB_OUTPUT
 ```
 
-and from v0.1.5's body itself, whose first line was the first subject of the range
-`v0.1.4..v0.1.5` - i.e. the no-changelog-section fallback fired:
+Further evidence comes from the body of v0.1.5 itself. Its first line was the first subject of the range
+`v0.1.4..v0.1.5`. The fallback for a missing changelog section fired:
 
 ```
 - Skip tests/clippy/fmt for Android targets (cannot run on x86_64 runner) (9e77874) ...
 ```
 
 An earlier version of this project's own research recorded the fix as "the release body used to be
-`git log -n 50` (fixed this release)". That was half the defect: the *content* was wrong where the changelog
-had no section, and the *shape* was wrong wherever the body travelled through the Actions output.
+`git log -n 50`" and "fixed this release". That was half the defect. The *content* was wrong where the changelog
+had no section. The *shape* was wrong wherever the body travelled through the Actions output.
 
 ## What was done
 
@@ -52,31 +52,31 @@ had no section, and the *shape* was wrong wherever the body travelled through th
 | `gh release edit v0.1.8 --notes-file` (the `[0.1.8]` CHANGELOG section, which exists - 31 lines) | 1 line, 4,021 B, 49 escapes | **32 lines, 1,435 B, 0 escapes** |
 | `gh release delete v0.1.7 --yes` | 285 B claiming "Complete roadmap ... all quality gates pass" | **absent from `gh release list`** |
 
-v0.1.7 was withdrawn because its body does not describe what it tags. Measured:
+v0.1.7 was withdrawn because its body does not describe what it tags. The measurement:
 `git log -1 --format='%h %ad %s' --date=short a86aee2` is *Fix release workflow: revert to
-nttld/setup-ndk@v1 for NDK setup* (2026-10-31) - a CI repair commit, with no roadmap completion in it. The
-**tag remains** (verified: `git ls-remote --tags origin` still lists `refs/tags/v0.1.7`), so the pointer is
-kept and only the misleading release object is gone. To remove the tag as well:
+nttld/setup-ndk@v1 for NDK setup*, dated 2026-10-31. That is a CI repair commit with no roadmap completion in it. The
+**tag remains**. A check with `git ls-remote --tags origin` still lists `refs/tags/v0.1.7`. The pointer is therefore
+kept, and only the misleading release object is gone. To remove the tag as well:
 
 ```sh
 git push origin :refs/tags/v0.1.7 && git tag -d v0.1.7
 ```
 
-The workflow fix that prevents recurrence landed earlier today and is not repeated here: the notes are
-written to `release-notes.md` and read with `body_path:`, and `scripts/check_release_notes.sh` refuses a
-flattened or escaped body - with `--self-test` proving that it refuses.
+The workflow fix that prevents a repeat landed earlier today and is not repeated here. The notes go
+to `release-notes.md` and are read with `body_path:`. The script `scripts/check_release_notes.sh` refuses a
+flattened or escaped body. Its `--self-test` mode proves that it refuses.
 
 ## What remains, deliberately untouched
 
-- **v0.1.0, v0.1.1, v0.1.2** carry the same escape (1 line, 39-42 tokens). They are outside the range this
-  round was asked for, and repairing them means the same one command each:
+- **v0.1.0, v0.1.1, v0.1.2** carry the same escape: 1 line, 39-42 tokens. They are outside the range of this
+  round. Each repair needs the same single command:
   `gh release edit <tag> --notes-file <file>`.
-- **A stray draft release object for v0.1.3** (`gh release list` shows `v0.1.3 draft=true` beside the public
-  one). It is invisible to visitors, and it is a duplicate of a tag that already has a published release, so
-  it was left alone rather than deleted unasked. `gh release delete v0.1.3 --yes` removes the *published*
-  one, not the draft, so anyone clearing it must target the draft by its id
-  (`gh api repos/<owner>/<repo>/releases --jq '.[]|select(.draft)|.id'`).
-- **v0.1.6 has a tag and no release object.** A release for it would have to say that its whole delta is
-  the CI fixes in the range, which is true and dull; it is recorded here instead of published.
-- The two releases whose tags share a commit (**v0.1.3 and v0.1.4 both point at `71df242`**) are left as
-  they are: v0.1.4's body says so explicitly ("Features (same as v0.1.3)"), so it is honest.
+- **A stray draft release object for v0.1.3**. The command `gh release list` shows `v0.1.3 draft=true` beside the public
+  one. Visitors cannot see it. It is a duplicate of a tag that already has a published release. Nobody asked for its
+  removal, so it stays. The command `gh release delete v0.1.3 --yes` removes the *published*
+  release, not the draft. To clear the draft, target it by id with
+  `gh api repos/<owner>/<repo>/releases --jq '.[]|select(.draft)|.id'`.
+- **v0.1.6 has a tag and no release object.** A release for it must say that its whole delta is
+  the CI fixes in the range. That is true and dull. The fact is recorded here instead of published.
+- Two releases share a commit: **v0.1.3 and v0.1.4 both point at `71df242`**. They stay as
+  they are. The body of v0.1.4 says so explicitly, with the words "Features" and "same as v0.1.3". That statement is honest.

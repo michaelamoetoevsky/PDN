@@ -2,7 +2,7 @@
 
 Condition 2 of the working brief requires delegated work to run under a *different* profile per role.
 This note records what was measured on 8 Nov 2026, why the obvious route does not work here, and the
-three paths that do — so the next session does not repeat the investigation.
+three paths that do. The next session therefore does not repeat the investigation.
 
 ## What was measured
 
@@ -20,30 +20,30 @@ three paths that do — so the next session does not repeat the investigation.
 | `hermes api --help` | `'api' is not a hermes command. Did you mean: acp?` |
 | `hermes -p verifier gateway run` (foreground, 25 s) | the host gateway already serves the profile; nothing starts |
 
-Interpretation, stated as inference rather than fact: the host gateway is running and claims the profile,
-but the CLI's client side cannot obtain a model connection for a *named* profile from it, and it never
-falls back to an in-process run. Both sides therefore agree the profile is served, while the connection
-that matters is never established. The header line `[MULTIPLEX] Re-scanned profile 'verifier' after
-config/.env change (0 adapter(s) connected)` shows the multiplexer re-reads a profile after its config
-changes, so config staleness is not the cause either.
+Interpretation, stated as inference rather than fact: the host gateway runs and claims the profile.
+The CLI's client side cannot obtain a model connection for a *named* profile from it, and it never falls
+back to an in-process run. Both sides therefore agree the profile is served, while the connection that
+matters is never established. The header line
+`[MULTIPLEX] Re-scanned profile 'verifier' after config/.env change (0 adapter(s) connected)` shows the
+multiplexer re-reads a profile after its config changes. Config staleness is not the cause either.
 
-What the official documentation says about this exact behaviour (`~/workspace/hermes-docs/multi-profile-gateways.txt`):
+The official documentation describes this exact behaviour in `~/workspace/hermes-docs/multi-profile-gateways.txt`:
 
-> `hermes -p <name> gateway run` while it is live attaches instead of starting a second process: it prints
+> `hermes -p <name> gateway run` while it is live attaches, and it does not start a second process. It prints
 > the host gateway's PID and served set and exits 0. If `<name>` is not served yet, it asks the host
-> gateway to re-scan `profiles/` and attaches once the answer includes it; it refuses (non-zero) only when
+> gateway to re-scan `profiles/` and attaches once the answer includes it. It refuses with a non-zero status
 > the host gateway cannot be made to serve it.
 >
-> `hermes gateway run --force` starts a separate gateway without asking the host process at all (the escape
-> hatch when it is wedged or answering wrongly).
+> `hermes gateway run --force` starts a separate gateway and does not ask the host process at all. It is the escape
+> hatch for a host gateway that is wedged or answers wrongly.
 >
 > `hermes gateway start --all` / `restart --all` mean the one host multiplexer.
 
-Also relevant, on how a profile's secrets and references resolve
-(`~/workspace/hermes-docs/configuration.txt`):
+The documentation also states how a profile's secrets and references resolve, in
+`~/workspace/hermes-docs/configuration.txt`:
 
 > Under a multiplexed multi-profile gateway, references in a profile's `config.yaml` resolve against that
-> profile's `.env` (its secret scope), not the shared process environment.
+> profile's `.env`, which is its secret scope, and not the shared process environment.
 >
 > A local `hermes chat` / TUI session served by the gateway resolves these references, `provider_routing`
 > and `prefill_messages_file` when the gateway creates the session, from its profile's current
@@ -53,9 +53,9 @@ Also relevant, on how a profile's secrets and references resolve
 
 The profile was repaired and re-tested in steps, each verified from a file rather than from intent:
 
-1. `model.provider custom:9router` was rejected as `Unknown provider 'custom:9router'` — the lookup
+1. `model.provider custom:9router` was rejected as `Unknown provider 'custom:9router'`. The lookup
    lower-cases the name and searches the profile's **own** config, which had no `custom_providers` block.
-2. The 29 variables of the main profile's `.env` were copied into the profile's `.env` (mode `600`), with
+2. The 29 variables of the main profile's `.env` were copied into the profile's `.env` with mode `600`, and
    the 20128 key among them. The earlier copy attempt had silently missed it because the comparison used
    the pattern `[A-Z_]+`, which excludes digits, so `HERMES_CUSTOM_LOCALHOST_20128_API_KEY` matched nothing
    in either list.
@@ -63,7 +63,7 @@ The profile was repaired and re-tested in steps, each verified from a file rathe
    `key_env HERMES_CUSTOM_LOCALHOST_20128_API_KEY`) was appended to the profile's `config.yaml`, and
    `model.provider` was set back to the named form `custom:9Router`.
 4. `hermes -p verifier doctor` then reported the provider and key as configured, and the 9router endpoint
-   answered `HTTP 200` — while `chat` still failed with the same deadline.
+   answered `HTTP 200`. At the same time `chat` still failed with the same deadline.
 
 ## The three ways to satisfy condition 2
 
@@ -74,7 +74,7 @@ The profile was repaired and re-tested in steps, each verified from a file rathe
 | C | keep delegation in-process (`delegate_task`) and inject the target role's skill into each child, stating plainly that profile isolation is not achieved | none | none, but it does not literally satisfy condition 2 |
 
 Path C is what the work has used so far, and it is labelled as such rather than passed off as profile
-isolation. Paths A and B both require restarting or duplicating the gateway that carries the live TUI
+isolation. Both path A and path B disturb the gateway that carries the live TUI session, which is why
 session, which is why neither was done unilaterally: that is a side effect on the user's own runtime,
 not a source change in the repository.
 
@@ -83,7 +83,7 @@ not a source change in the repository.
 - It is not claimed that the gateway is broken in general: it serves the default profile, and the TUI
   session it carries is unaffected.
 - It is not claimed that the profile config is wrong: `doctor` is green and the router answers.
-- It is not claimed that any of A, B or C has been executed beyond C, which is running.
+- It is not claimed that any of A, B or C has been executed beyond C, which is in use.
 
 ---
 
@@ -100,17 +100,17 @@ proved:
 | positive control of the matching rule | with the real state file: the `verifier` client's home matches in the NEW list and **not** in the OLD one |
 
 Replace-the-gateway mechanics, measured: `hermes gateway restart`, `hermes -p default gateway restart` and
-`hermes gateway run -p <name>` all **attach** instead of restarting; `hermes gateway stop` answers
-*"No gateway running for this profile"*; `sv status hermes-gateway` reports the service directory does not
-exist. The old gateway (pid 5382) was idle — `platforms={}`, `active_agents=0` — so it was stopped with
-`TERM` and a fresh `hermes gateway run --quiet` took its place. The live TUI session was unaffected, which
-is itself evidence that this gateway was not carrying the interactive turn.
+`hermes gateway run -p <name>` all **attach**. They do not restart the gateway. `hermes gateway stop` answers
+*"No gateway running for this profile"*. `sv status hermes-gateway` reports that the service directory does
+not exist. The old gateway at pid 5382 was idle, with `platforms={}` and `active_agents=0`, so it was stopped
+with `TERM`, and a fresh `hermes gateway run --quiet` took its place. The live TUI session was unaffected,
+and that is evidence that this gateway did not carry the interactive turn.
 
 ### The remaining blocker is a port collision, not configuration
 
 `build_identify_payload` hardcodes `"api_origin": "http://127.0.0.1:9119"`, and the chat client dials
-`api_origin` + `/api/ws` (`hermes_cli/gateway_client.py::gateway_ws_target`). On this host port 9119 belongs
-to a **different** process:
+`api_origin` + `/api/ws`, which is `hermes_cli/gateway_client.py::gateway_ws_target`. On this host port 9119
+belongs to a **different** process:
 
 ```
 4808  … from hermes_cli.main import main; sys.exit(main()) dashboard --host 0.0.0.0
@@ -131,9 +131,9 @@ Measured against that port:
 
 So the client reaches the **dashboard's** gate rather than the gateway's own endpoint and every credential
 form is refused. Consequence: `hermes -p <name> chat` now fails in 7 s with
-*"Gateway connection failed; no local fallback (InvalidStatus)"* instead of a 66 s deadline — faster and
-further along, still not working — and the default profile fails the same way, which is why this is a host
-port conflict rather than a profile defect.
+`"Gateway connection failed; no local fallback (InvalidStatus)"` in place of a 66 s deadline. That is faster
+and further along, but it still does not work. The default profile fails the same way, which is why this is a
+host port conflict rather than a profile defect.
 
 ### Ways to finish it
 

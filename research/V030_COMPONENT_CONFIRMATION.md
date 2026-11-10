@@ -1,11 +1,11 @@
 # v0.3.0 component confirmation - second dissection round
 
-Sources re-read raw: proot (Termux fork, 32.638 lines C), proot-distro v5.10.3 (29.015 lines Python), moby/dockerd
-(289.273 Go), containerd + shim (531.855 Go), runc (348.020 Go), shroot (86.018 lines C). Evidence files:
-`research/R2-REFERENCE.md` (664 lines, ~180 file:line citations), `research/R2-ENGINE.md` (427), and
-`research/R2-EXECUTION.md` (554). Every verdict below uses one competitive test, stated in the briefs and applied
-without exception: **would PDN lose to Termux's proot-distro without this?** The answer "no" appears as often as the
-answer "yes", and that is the finding.
+Sources re-read raw: proot, the Termux fork, with 32.638 lines of C. proot-distro v5.10.3, with 29.015 lines of Python. moby/dockerd,
+with 289.273 lines of Go. containerd plus the shim, with 531.855 lines of Go. runc, with 348.020 lines of Go. shroot, with 86.018 lines of C. The evidence
+files are `research/R2-REFERENCE.md` with 664 lines and about 180 file:line citations, `research/R2-ENGINE.md` with 427 lines, and
+`research/R2-EXECUTION.md` with 554 lines. Every verdict below uses one competitive test. The briefs state the test and this document applies it
+to every item: **can PDN lose to Termux's proot-distro without this?** The answer "no" appears as often as the
+answer "yes". That result is the finding.
 
 ## The answer in one table
 
@@ -40,16 +40,16 @@ answer "yes", and that is the finding.
 
 ## What stays exactly as it was
 
-The seven `S` items stand, with one refinement: **S8 (the cgroupfs view) is now confirmed as one of only two YES
-verdicts on the stability axis**, and **S9 (enforcement) is confirmed as correctly deferred** - the round-2 evidence
-is stronger than round 1's (`grep sys/fs/cgroup src/` in shroot returns zero; its own README lines 214-216 state the
-limits). The `B` group stays closed: B15's dockerd citation is unaffected. `C1-C10` need re-wording against this
-table rather than replacement, and the two roadmap cells above must be corrected in the same commit.
+The seven `S` items stand, with one refinement. **S8, the cgroupfs view, is now confirmed as one of only two YES
+verdicts on the stability axis**. **S9, enforcement, is confirmed as correctly deferred**. The round-2 evidence
+is stronger than the evidence of round 1. In shroot, `grep sys/fs/cgroup src/` returns zero. The README of shroot
+states the limits at lines 214-216. The `B` group stays closed. The dockerd citation in B15 is unaffected. `C1-C10` need new wording against this
+table, not replacement. The two roadmap cells above must change in the same commit.
 
 ## Unknowns carried forward, deliberately
 
-`src/syscall/*` and `src/tracee/*` of proot were read at surface level only; proot's `proot.h` is generated and its
-`doc/` was not diffed; help-page rendering was not exercised; containerd-src is a pruned subset, so shim internals
-including ttrpc fd-passing are UNVERIFIED; whether a read-only `/sys/fs/cgroup` alone blocks an already-writable
-`cgroup.procs` remains unproven; go-digest's grammar is not vendored. Each is labelled UNVERIFIED in its own file
-rather than smoothed over.
+`src/syscall/*` and `src/tracee/*` of proot were read at surface level only. The file `proot.h` of proot is generated, and its
+`doc/` was not diffed. Help-page rendering was not exercised. The containerd source is a pruned subset. The shim internals,
+and with them ttrpc fd-passing, are UNVERIFIED. One question remains unproven: does a read-only `/sys/fs/cgroup` alone block an already-writable
+`cgroup.procs`? The grammar of go-digest is not vendored. Each item is labelled UNVERIFIED in its own file,
+not smoothed over.
