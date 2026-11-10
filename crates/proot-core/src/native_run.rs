@@ -948,6 +948,8 @@ fn parent_loop(
     pipe_w: nix::libc::c_int,
     interpreter: Option<&str>,
 ) -> Result<NativeRunReport> {
+    // Statuses of descendants the tracer reaped, waiting to be handed to the guest's own wait4 (2026-11-10).
+    let mut reaped: Vec<(i32, i32)> = Vec::new();
     let mut report = NativeRunReport {
         exit_code: -1,
         stops: 0,
@@ -1264,6 +1266,59 @@ fn parent_loop(
                         (slots[idx].getcwd_buffer.take(), plan.rootfs.as_deref())
                     {
                         let _ = translate_getcwd_result(pid, buf, cap, rootfs, &plan.binds);
+                    }
+                }
+
+                // THE GUEST'S OWN wait4 (2026-11-10). The tracer reaps descendants to follow them, so the guest's
+                // call answers ECHILD although the child it waits for has already exited - measured:
+                // `sh -c '(echo bg) & wait; echo waited'` printed `bg` and then NOTHING under this engine, against
+                // `bg` and `waited` under proot, because the shell never returned from `wait`. The recorded status
+                // is handed back here: the pid becomes the result and the status word goes to the guest's pointer,
+                // which is exactly what the shell's `wait` builtin consumes.
+                if !slots[idx].at_entry
+                    && number == nix::libc::SYS_wait4 as i64
+                    && matches!(syscall_result(pid), Ok(r) if r < 0)
+                {
+                    let wanted = args.first().copied().unwrap_or(u64::MAX) as i32;
+                    let entry = reaped
+                        .iter()
+                        .position(|(p, _)| wanted == *p || wanted <= -1);
+                    if let Some(pos) = entry {
+                        let (done_pid, status) = reaped.remove(pos);
+                        let status_ptr = args.get(1).copied().unwrap_or(0);
+                        if status_ptr != 0 {
+                            let _ = poke_bytes(pid, status_ptr, &status.to_ne_bytes());
+                        }
+                        let mut regs = get_regs(pid)?;
+                        #[cfg(target_arch = "aarch64")]
+                        {
+                            regs.regs[0] = done_pid as u64;
+                        }
+                        #[cfg(target_arch = "x86_64")]
+                        {
+                            regs.rax = done_pid as u64;
+                        }
+                        set_regs(pid, regs)?;
+                    } else if slots.iter().any(|s| s.pid != child) {
+                        // NOTHING REAPED YET, but descendants are still alive (2026-11-10). The guest asked to wait
+                        // for a child that has not exited, and the kernel answered ECHILD because the tracer owns
+                        // the reaping. Returning that to the shell is what dropped every command after `wait`. The
+                        // call is therefore REPLAYED: the original pid is put back in x0 (the exit stop clobbered it
+                        // with the return value) and the pc is rewound to the `svc`, so the guest retries; the engine
+                        // keeps reaping in the meantime and the retry is answered by the branch above as soon as one
+                        // exits. Each retry is a ptrace stop, so this cannot spin without the engine observing it.
+                        let mut regs = get_regs(pid)?;
+                        #[cfg(target_arch = "aarch64")]
+                        {
+                            regs.regs[0] = args.first().copied().unwrap_or(0);
+                            regs.pc = regs.pc.wrapping_sub(4);
+                        }
+                        #[cfg(target_arch = "x86_64")]
+                        {
+                            regs.rax = args.first().copied().unwrap_or(0);
+                            regs.rip = regs.rip.wrapping_sub(2);
+                        }
+                        set_regs(pid, regs)?;
                     }
                 }
 
@@ -1668,12 +1723,21 @@ fn parent_loop(
                 // reaped by whoever forked it and is not this report's verdict.
                 if pid == child {
                     original_exit = Some(code);
+                } else {
+                    // KEEP the descendant's status for the guest (2026-11-10). The tracer MUST reap it to follow
+                    // the tracee, which leaves the guest's own wait4 answering ECHILD - measured:
+                    // `sh -c '(echo bg) & wait; echo waited'` printed `bg` and then nothing under this engine
+                    // against `bg` and `waited` under proot. The status is recorded here and handed back to the
+                    // guest by `complete_guest_wait`.
+                    reaped.push((pid.as_raw(), (code & 0xff) << 8));
                 }
                 slots.retain(|s| s.pid != pid);
             }
             WaitStatus::Signaled(_, sig, _) => {
                 if pid == child {
                     original_exit = Some(128 + sig as i32);
+                } else {
+                    reaped.push((pid.as_raw(), sig as i32 & 0x7f));
                 }
                 slots.retain(|s| s.pid != pid);
             }

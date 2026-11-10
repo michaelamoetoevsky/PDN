@@ -3101,3 +3101,30 @@ observes the exit, the shell must still continue.
 Also fixed in the instrument, because it bit during this measurement: the battery now gives every case a 30 second
 ceiling. Without one, a guest that blocks under one engine stalls the whole battery instead of being reported as that
 case's difference - which is exactly what happened when this case hung.
+
+### wait4 groundwork, and the battery's breadth finds `mkdir -p` (2026-11-10 02:20 WIB)
+
+Two pieces of engineering, one of them incomplete and stated as such.
+
+**Incomplete: `wait`.** The tracer must reap descendants to follow them, so the guest's own `wait4` answers ECHILD
+whether or not its child has exited. The engine now records every descendant's status word (`(code & 0xff) << 8` for an
+exit, `sig & 0x7f` for a signal), hands it back when the guest asks for a pid it already holds, and REPLAYS the call -
+restoring the original pid into x0 and rewinding the pc to the `svc` - while descendants are still alive, so the guest
+retries instead of receiving a false ECHILD. Measured: `sh -c 'echo start; (echo bg) & wait; echo "wait-rc=$?"; echo
+after'` still prints only `start | bg` where proot prints `start | bg | wait-rc=0 | after`, so the case stays
+DIFFERENT and the next measurement is which call the shell actually makes (`waitid` is a separate syscall from
+`wait4`, and dash may use either).
+
+**New, from the wider battery: `mkdir -p` of a nested path fails.**
+
+```text
+sh -c 'mkdir -p /tmp/ct/a/b && echo x > /tmp/ct/a/b/f && ...'
+  native: /bin/sh: 1: cannot create /tmp/ct/a/b/f: Directory nonexistent
+  proot : copied-same
+```
+
+`mkdir -p` creates the components one at a time and the nested one does not survive, so a recursive copy - and anything
+else that prepares a directory tree - fails under the native engine.
+
+Battery after both: 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job`, `cp_tree`), 0 SUSPECT. The wait4 work did not
+regress anything: the 28 include every case that was EQUAL before it.
