@@ -2512,3 +2512,42 @@ already keeps is the identity of its own call.
 The lesson is older than this file and worth repeating anyway: when a rule derived from one host fails on another,
 measure the quantity the rule is about before inventing a second rule to cover the gap - and read WHICH syscall a
 refusal came from before concluding anything about the syscall you were working on.
+
+### The two login tests measured this host's environment, not the flag (2026-11-10 03:05 WIB)
+
+`Rust Host Build` failed on the runner in `crates/podnext/tests/login_shares.rs`:
+
+```text
+login_binds_the_host_home_at_root_the_way_the_reference_does
+  --shared-home must produce --bind=/home/runner:/root; argv was ["--bind=/tmp/.tmpC1JHgo:/root"]
+login_binds_the_host_tmp_at_tmp_the_way_the_reference_does
+  --shared-tmp must produce --bind=/data/data/com.termux/files/usr/tmp:/tmp; argv was []
+```
+
+Both tests computed their expectation from the PARENT process's environment while the child they spawn gets a
+pinned fixture environment, and the two resolvers disagree whenever the hosts differ:
+
+```text
+paths::host::home()   = TERMUX__HOME, then HOME
+paths::host::prefix() = TERMUX__PREFIX, then PREFIX
+```
+
+On this device `TERMUX__HOME`/`TERMUX__PREFIX` are set and both processes agree; on the runner they are unset, the
+child's `HOME` was the fixture while the test expected `/home/runner`, and for the tmp arm the bind SOURCE
+(`<prefix>/tmp`) did not exist, so the runtime refused by name and the argv was empty - which the assertion read as
+"the flag produced no bind".
+
+Fixed by making the expectation a function of the same fixture the child receives: the fixture sets `TERMUX__HOME`
+and `TERMUX__PREFIX` for the child, creates `<fixture>/usr/tmp`, and both assertions derive from the fixture root.
+
+**The control that should have existed from the first version** - run the target with the Termux variables UNSET,
+which is the runner's condition:
+
+```text
+env -u TERMUX__HOME -u TERMUX__PREFIX -u PREFIX cargo test -p podnext --test login_shares
+    -> test result: ok. 2 passed; 0 failed
+```
+
+A test whose pass depends on which environment variables happen to be set on the host is measuring the host. The
+rule applied here is the same one this file already carries for the differential harness: assert the RELATIONSHIP
+(the flag adds a bind whose source is the resolver's own answer), never the host fact.

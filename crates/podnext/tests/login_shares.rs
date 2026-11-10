@@ -29,6 +29,9 @@ impl Store {
         let containers = tmp.path().join(".podnext").join("containers");
         std::fs::create_dir_all(&containers).expect("containers");
         std::fs::create_dir_all(tmp.path().join(".podnext").join("sessions")).expect("sessions");
+        // The `--shared-tmp` bind source must exist or the runtime refuses by name (that refusal is what the
+        // runner saw as an empty argv), so the fixture provides `<fixture>/usr/tmp`.
+        std::fs::create_dir_all(tmp.path().join("usr").join("tmp")).expect("fixture prefix tmp");
         let dir = containers.join("shared");
         std::fs::create_dir_all(dir.join("rootfs")).expect("rootfs");
         std::fs::write(
@@ -52,10 +55,19 @@ impl Store {
     }
 
     fn env(&self) -> Vec<(String, String)> {
+        // The RESOLVERS are `paths::host::home()` = TERMUX__HOME then HOME, and `paths::host::prefix()` =
+        // TERMUX__PREFIX then PREFIX. Asserting a host path while the child inherits a different environment is
+        // how these two tests passed here (where TERMUX__HOME/TERMUX__PREFIX are set) and failed on the CI
+        // runner (`--shared-home` expected `/home/runner`, argv carried the fixture; `--shared-tmp` got no bind
+        // at all). Pinning both variables in the child makes the expected value a function of THIS fixture, so
+        // it is the same string on every host - and the test still measures the flag, because the no-flag arm
+        // asserts the bind's absence.
         let root = self.tmp.path().to_string_lossy().into_owned();
         vec![
             ("PN_TEST_ROOT".to_string(), root.clone()),
-            ("HOME".to_string(), root),
+            ("HOME".to_string(), root.clone()),
+            ("TERMUX__HOME".to_string(), root.clone()),
+            ("TERMUX__PREFIX".to_string(), format!("{root}/usr")),
         ]
     }
 
@@ -110,12 +122,8 @@ fn login_binds_the_host_home_at_root_the_way_the_reference_does() {
     // (`--bind=/data/data/com.termux/files/home:/root`), because `paths::host::home()` prefers
     // TERMUX__HOME over HOME. Asserting the resolver keeps the test honest about the contract - "the
     // flag uses the same resolver as everything else" - without pretending the fixture can move it.
-    let expected = format!(
-        "--bind={}:/root",
-        proot_distro_core::paths::host::home()
-            .expect("a host home on this device")
-            .display()
-    );
+    // Derived from the environment the CHILD is given (see `env()`), not from this process's own.
+    let expected = format!("--bind={}:/root", store.home().display());
 
     for flag in ["--shared-home", "--termux-home"] {
         let argv = store.proot_argv(&[flag]);
@@ -139,9 +147,7 @@ fn login_binds_the_host_home_at_root_the_way_the_reference_does() {
 #[test]
 fn login_binds_the_host_tmp_at_tmp_the_way_the_reference_does() {
     let store = Store::new();
-    let prefix =
-        std::env::var("PREFIX").unwrap_or_else(|_| "/data/data/com.termux/files/usr".into());
-    let expected = format!("--bind={prefix}/tmp:/tmp");
+    let expected = format!("--bind={}/usr/tmp:/tmp", store.home().display());
 
     let argv = store.proot_argv(&["--shared-tmp"]);
     assert!(
