@@ -3440,3 +3440,28 @@ Where this leaves the defect: the exemption is keyed on a flag that is provably 
 where the engine's own child is asking to move. The next probe is the same one-line print plus the flag's value at the
 execve ENTRY stop and at the exec event for that pid - which of the two paths sets it, and whether the slot the chdir
 reads is the same slot the exec event wrote.
+
+### The exec-event fix could not work: no EXEC stop reaches the engine's own child (2026-11-10 09:35 WIB)
+
+Re-measuring the exemption's state AFTER setting the flag in the exec-event arm:
+
+```text
+CH4 pid=22923 child=true  entry=true  execve_handled=false bootstrap=true    <- engine's own child, unchanged
+CH4 pid=22927 child=false entry=true  execve_handled=true  bootstrap=false   <- mkdir child, normal
+```
+
+Still false, and the flag is written in three places - the engine-child execve entry, the remote execve translation,
+and (as of the previous commit) the PTRACE_EVENT_EXEC arm. None of them runs for that pid, so the conclusion is not
+"the flag is reset" but "**no EXEC stop is delivered for the engine's own child**". That is why setting the flag there
+changed nothing, and it is a stronger fact than the one it replaced.
+
+It also explains the whole `mkdir -p` behaviour without any further speculation: the engine's own child never gets the
+mark that says its bootstrap is behind it, so every `chdir` it makes is exempted, its stored cwd never moves, and the
+processes it spawns inherit a directory the guest never occupied.
+
+Next probe, one line: does ANY PTRACE_EVENT_EXEC reach the loop, and for which pid - i.e. is the engine's child losing
+its exec event because of how it is resumed after the pipe release, or because the loader substitution makes the exec a
+different process identity than the engine expects.
+
+Night's tally, unchanged: five fixes verified by direct command on a real Debian rootfs, two defects open, battery at
+30 cases / 28 EQUAL / 2 DIFFERENT, tree clean, everything pushed.
