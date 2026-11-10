@@ -1137,8 +1137,21 @@ fn parent_loop(
         // engine consumed its own child's group-stop before this slice.
         if !slots[idx].started {
             slots[idx].started = true;
-            ptrace::syscall(pid, None)?;
-            continue;
+            // The child has not executed a syscall yet, so the NEXT stop is its first ENTRY. Without
+            // this the fork child's first syscall was labelled an EXIT and every entry-only step was
+            // skipped for it. MEASURED on a real Debian rootfs (2026-11-10), full stop trace of the
+            // pipeline's left child:
+            //   EVENT code=128          <- birth stop, consumed by this guard
+            //   SYSCALL entry=false     <- its FIRST syscall, labelled exit
+            //   ... EXITED 127          <- `/bin/sh: dpkg-query: not found`
+            // The guard consumed the birth stop but left `at_entry` false, and that inversion (not a
+            // missing stop) is why the bare-name `execve` was never translated before the kernel
+            // answered ENOENT.
+            slots[idx].at_entry = true;
+            if !matches!(status, WaitStatus::PtraceSyscall(_)) {
+                ptrace::syscall(pid, None)?;
+                continue;
+            }
         }
 
         match status {

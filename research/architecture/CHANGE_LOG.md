@@ -2615,3 +2615,38 @@ sides of the pipeline, to see whether that child's execve is delivered as an exi
 `entry=false` by the bookkeeping (an inversion) or because the kernel really delivered one stop.
 
 Status of the case, stated plainly: `dpkg-query -W | wc -l` -> proot 78, native 0. Open.
+
+### THE CAUSE: a fork child's first syscall was labelled an exit (2026-11-10 13:40 WIB) - case CLOSED
+
+The full stop trace of the pipeline's left child, with every stop kind printed, ended the guessing:
+
+```text
+ALL pid=2770 EVENT code=128          <- birth stop (PTRACE_EVENT_STOP), consumed by the guard
+ALL pid=2770 SYSCALL entry=false     <- its FIRST syscall, labelled EXIT
+ALL pid=2770 SYSCALL entry=true
+ALL pid=2770 SIGNAL SIGSYS
+   dpkg-query: not found
+ALL pid=2770 EXITED 127
+```
+
+The stop was delivered; the LABEL was wrong. The birth-stop guard consumed the event stop and left `at_entry = false`,
+so the child's first syscall - its `execve` - was treated as an exit. Every entry-only step was therefore skipped for
+that tracee: the engine-child path requires `at_entry`, and the remote path was reached only after the kernel had
+already answered `ENOENT`. Four earlier hypotheses (readability, the address test, the bare name, the guard eating the
+stop) were all wrong; two of them produced real fixes that are kept, and the guard hypothesis was wrong for a
+different reason than I thought - the guard DID eat a stop, but the stop it ate was the birth event, and the damage
+was the flag it left behind.
+
+The fix is one assignment: a freshly-started tracee has not executed a syscall, so `at_entry = true` before resuming.
+
+Measured after (real Debian rootfs, direct commands, both engines):
+
+```text
+dpkg-query -W -f="${Package}\n" | wc -l   -> native 78   proot 78    EQUAL
+dpkg-query --version | head -1            -> identical strings       EQUAL
+e2e battery                               -> 8 EQUAL, 1 DIFFERENT, 1 SUSPECT
+```
+
+`write_read` (mktemp/write/cat/rm -rf) remains the one DIFFERENT case: `SYS_unlinkat` is refused because its path
+could not be translated, so the whole run exits 1 where proot exits 0. That is the next defect, not a described-away
+limitation.
