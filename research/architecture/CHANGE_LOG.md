@@ -3340,3 +3340,26 @@ or was forked - not a missing branch and not a wrong join.
 That is a precise enough place to stop tonight, and the next probe is narrow: which pid creates the leaf, what its
 slot's cwd was at fork, and which of its chdir stops did not update it. Everything measured is in this file with the
 command that produced it; nothing here is inferred from a passing suite.
+
+### Localised: the child never records the chdir into `s1` (2026-11-10 07:20 WIB)
+
+Two probes at once - the fork handover and every RELATIVE name with its pid:
+
+```text
+FORK parent=17227 child=17228 parent_cwd="/" inherited="/"
+REL2 pid=17228 mkdirat raw="s1" cwd=Some("/tmp")
+REL2 pid=17228 mkdirat raw="a"  cwd=Some("/tmp")      <- should be /tmp/s1
+REL2 pid=17228 newfstatat raw="a" cwd=Some("/tmp")
+```
+
+The child starts at `/`, is at `/tmp` by the time it creates `s1`, and is STILL at `/tmp` when it creates `a` - even
+though the guest's own trace shows a `chdir` in that process. So one update is missed: the process moved to `s1` and the
+engine's slot did not follow, which is why `a` lands as `/tmp/a` while the guest means `/tmp/s1/a`.
+
+That is the last thing this session measured, and it is narrow enough to finish in one pass: log every `chdir` stop of
+this exact command with the translation result (`Ok(true)`/`Ok(false)`) and the resulting stored cwd, and the missing
+update names itself - either the branch is skipped because the translation reports the path as already-host, or the
+value stored is the pre-move one.
+
+Housekeeping: both probes were removed by brace counting rather than by matching text, twice now, because `rustfmt`
+reformats an inserted block and an exact match then silently removes nothing. No debug markers remain in the tree.
