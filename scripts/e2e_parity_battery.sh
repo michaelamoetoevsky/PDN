@@ -63,9 +63,11 @@ case_begin() {
      && cmp -s "$WORK/$name.proot.err" "$WORK/$name.native.err"; then
     # Two IDENTICAL FAILURES are not agreement about the guest: the first run of this battery reported 10/10
     # EQUAL while both engines answered `Error: Container 'almalinux' not found` (rc=1, empty stdout) for every
-    # case - because the fixture copy had carried a 1 MB directory with no metadata.json. Agreement on an error
-    # says nothing about the engine, so a non-zero status with no stdout is its own verdict.
-    if [ "$rc_n" -ne 0 ] && [ "$out_bytes" -eq 0 ]; then
+    # case - because the fixture copy had carried a 1 MB directory with no metadata.json. Agreement on an ENVIRONMENT
+    # error says nothing about the engine, so it gets its own verdict; a case that legitimately exits non-zero with
+    # no stdout (the `exit 7` probe) is still EQUAL, because both engines agree on the guest's own behaviour.
+    if [ "$rc_n" -ne 0 ] && [ "$out_bytes" -eq 0 ] \
+       && grep -q "^Error: " "$WORK/$name.native.err" && grep -q "^Error: " "$WORK/$name.proot.err"; then
       SUSPECT=$((SUSPECT + 1)); verdict=SUSPECT
     else
       PASS=$((PASS + 1)); verdict=EQUAL

@@ -2910,3 +2910,44 @@ Measured state left behind: tree clean at 0393afa, no debug markers in the tree,
 passes, battery 8 EQUAL / 1 DIFFERENT (`rm -rf`) / 1 SUSPECT, and the causal chain for the failing case is complete:
 the file removal is issued with a host-shaped directory joined to a bare name, the engine writes it without mapping it
 back, the kernel answers ENOENT, and the guest's own retry sees ENOTEMPTY and prints `Directory not empty`.
+### CLOSED: the descriptor branch accepted a host path, and the battery is 10/10 (2026-11-10 21:10 WIB)
+
+The resolution was not another path-map. It was an INVARIANT at the boundary:
+
+```rust
+let dir_owned = guest_form_of_host_path(dir, rootfs, &plan.binds).unwrap_or_else(|| dir.to_string());
+if !dir_owned.starts_with('/') || std::path::Path::new(&dir_owned).starts_with(rootfs) {
+    return Ok(false);
+}
+let dir = dir_owned.as_str();
+```
+
+Everything the branch was given is now forced to be a GUEST-absolute path before it is joined with the name and
+written into the tracee: a host path is mapped back with the same rule any host-shaped name gets, and anything that
+is still not a guest path refuses the call rather than being written out.
+
+Measured after, both engines, real Debian rootfs, direct commands:
+
+```text
+sh -c 'mkdir -p /tmp/zm; touch /tmp/zm/a; rm -rf /tmp/zm; test -e /tmp/zm && echo MASIH ADA || echo HILANG'
+native: HILANG          proot: HILANG
+
+e2e battery: 10 cases, 10 EQUAL, 0 DIFFERENT, 0 SUSPECT, exit 0
+```
+
+The battery's SUSPECT rule was narrowed at the same time: identical failures are only suspicious when BOTH engines
+print an engine-level `Error:` line, so a probe that legitimately exits non-zero with no stdout (the `exit 7` case) is
+EQUAAL again instead of being flagged. That was a false positive in my own instrument, and it is the reason the summary
+now shows 10/10 rather than 9/1.
+
+What the last hour actually taught, in order:
+
+1. a host path can enter `fd_guest_dir` even though the helper prints a correct rootfs prefix array - I could not
+   reconcile those two observations, so I stopped relying on the explanation and enforced the invariant instead;
+2. text surgery on this file has now broken the braces four times; the `patch` tool with an exact anchor and a visible
+   diff works, and Python surgery with regexes does not. That is why this change is the smallest one of the block.
+
+Two further notes for the next session, both measured: the failing call was `unlinkat(fd=4, <host dir>/<name>)` with
+the kernel answering ENOENT and the guest retrying into ENOTEMPTY, and `rm -f`, `rmdir`, `ls`, `dpkg-query`,
+`touch`, pipelines, nested shells and `cd` all agreed on both engines BEFORE this change - so the battery now
+covers the case that was broken without weakening any case that was already right.

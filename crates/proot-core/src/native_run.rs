@@ -2468,6 +2468,17 @@ fn translate_path_remote(
         };
         let escapes = raw.split('/').any(|c| c == "..");
         if let (Some(dir), false) = (fd_guest_dir.as_deref(), against_cwd) {
+            // The directory MUST be a guest-absolute path (2026-11-10). A host path arriving here is resolved
+            // a second time inside the rootfs, the call acts on a filename that does not exist, and the guest
+            // reports the failure as its own (`Directory not empty` while proot removes the directory). The
+            // value is therefore mapped back with the same rule any host-shaped name gets, and anything that is
+            // still not a guest path refuses the call instead of being written into the tracee.
+            let dir_owned = guest_form_of_host_path(dir, rootfs, &plan.binds)
+                .unwrap_or_else(|| dir.to_string());
+            if !dir_owned.starts_with('/') || std::path::Path::new(&dir_owned).starts_with(rootfs) {
+                return Ok(false);
+            }
+            let dir = dir_owned.as_str();
             if escapes {
                 return Ok(false);
             }
