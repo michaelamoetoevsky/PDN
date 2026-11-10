@@ -1641,6 +1641,28 @@ fn parent_loop(
                 slots[idx].at_entry = false;
                 ptrace::syscall(pid, None)?;
             }
+            WaitStatus::Stopped(_, sig) => {
+                // SIGNAL DELIVERY, narrowly (2026-11-10). A signal delivered to a tracee stops it and is reported
+                // here; resuming with `None` DISCARDS it, which is why a guest that signals itself never died
+                // (`sh -c 'kill -TERM $$'`: proot rc=143, this engine rc=0 with no output at all).
+                //
+                // The FIRST attempt forwarded everything except SIGTRAP/SIGSTOP and took the whole battery from
+                // 21 EQUAL to 0 EQUAL / 22 DIFFERENT: it also forwarded the SIGSYS that Android's seccomp trap
+                // raises for the syscalls it blocks (faccessat2, set_robust_list, rseq), so the engine's own filter
+                // killed every guest. What is forwarded now is only signal the GUEST caused, with the four
+                // engine-internal ones excluded by name:
+                //   SIGTRAP, SIGSTOP  - ptrace bookkeeping
+                //   SIGSYS            - the seccomp trap, not the guest
+                //   SIGCHLD           - raised by a child exit, which the engine already tracks itself
+                let forward = match sig {
+                    nix::sys::signal::Signal::SIGTRAP
+                    | nix::sys::signal::Signal::SIGSTOP
+                    | nix::sys::signal::Signal::SIGSYS
+                    | nix::sys::signal::Signal::SIGCHLD => None,
+                    other => Some(other),
+                };
+                ptrace::syscall(pid, forward)?;
+            }
             WaitStatus::Exited(_, code) => {
                 // The engine's own child's status is the run's exit code; a descendant's status is
                 // reaped by whoever forked it and is not this report's verdict.

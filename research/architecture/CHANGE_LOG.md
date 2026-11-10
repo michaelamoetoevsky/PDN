@@ -3004,3 +3004,37 @@ died) while 21 cases that worked had stopped working.
 
 This is the second time tonight the battery caught a change that a targeted probe called an improvement; the first was
 the `utimensat` gating that turned a working path into a refusal.
+
+### 22/22: the signal rule had to be narrow, and now the battery agrees on every case (2026-11-10 23:40 WIB)
+
+The reverted attempt had forwarded every signal but SIGTRAP/SIGSTOP and took the battery to 0/22. The rule that works
+excludes the four signals the ENGINE produces or consumes:
+
+```rust
+nix::sys::signal::Signal::SIGTRAP | SIGSTOP | SIGSYS | SIGCHLD => None,
+other => Some(other),                                         // the guest's own signal goes through
+```
+
+SIGSYS was the one that mattered: Android's seccomp trap raises it for the syscalls it blocks, so forwarding it let the
+engine's own filter kill every guest.
+
+Measured after:
+
+```text
+sh -c 'kill -TERM $$' inside the guest
+  native: Terminated | rc=143
+  proot : Terminated | rc=143
+
+scripts/e2e_parity_battery.sh (22 cases, real Debian rootfs, both engines)
+  cases 22 | EQUAL 22 | DIFFERENT 0 | BLOCKED 0 | SUSPECT 0
+```
+
+That is the first run in which every case in the battery agrees, and the cases are not trivial: identity, os-release,
+a pipeline, a non-zero exit, stream separation, mktemp/write/cat/recursive removal, the dpkg package count, subshells,
+nested shells, cwd-relative reads, rename, symlink, chmod+stat, /dev/null and /dev/zero, /proc/self/exe, recursive find,
+recursive grep, a self-inflicted SIGTERM, the guest environment, statfs, du, and pure shell arithmetic.
+
+Two changes to the instrument itself are part of the result and are stated so the number is not over-read: the SUSPECT
+verdict now requires an engine-level "Error:" line from BOTH arms (a probe that legitimately exits non-zero is EQUAL),
+and the battery must not be run while a cargo build is in flight - two cases failed earlier purely because the binary
+was being relinked (`Text file busy`).
