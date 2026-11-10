@@ -1,34 +1,33 @@
-# #27 — Gateway config silently ignores unknown keys (fix + reconciliation)
+# #27 Gateway config silently ignores unknown keys: fix and reconciliation
 
 **Issue:** [#27] `[BUG-DOC1] Documented gateway fail-safe config (bulkhead, retry_policy) does not exist in code; keys are silently ignored`
-**Department:** Configuration & Documentation Engineering (CDE)
-**Branch:** `dept/config-drift` (worktree of master `5df9484`)
+**Department:** Configuration & Documentation Engineering. Short form: CDE.
+**Branch:** `dept/config-drift`, a worktree of master `5df9484`.
 **Scope:** enforcement fix + regression test + reconciliation of the `[gateway]` documentation surface. The full 227-key drift is listed as a prioritised backlog, not silently half-edited.
 
 ---
 
-## TL;DR
+## Summary
 
 1. **Code fix:** `#[serde(deny_unknown_fields)]` added to every `Deserialize` struct in
-   `crates/pn-gateway/src/config.rs` (18 structs). An unknown key — e.g. the documented
-   `bulkhead` / `retry_policy` — now fails at deserialization instead of being dropped.
-2. **Docs reconciled:** the `[gateway.fail_safe]` example and `architecture.md`'s `FailSafeConfig`
-   pseudo-struct now mirror the real struct; the unimplemented keys
-   (`bulkhead_*`, `retry_base_delay`, `retry_max_delay`) are marked **planned**, not presented as
-   working. No feature was invented.
+   `crates/pn-gateway/src/config.rs`, 18 structs total. An unknown key, for example the documented
+   `bulkhead` or `retry_policy`, now fails at deserialization. The code no longer drops the key.
+2. **Docs reconciled:** the `[gateway.fail_safe]` example and the `FailSafeConfig`
+   pseudo-struct in `architecture.md` now mirror the real struct. The unimplemented keys
+   `bulkhead_*`, `retry_base_delay` and `retry_max_delay` are marked **planned**. The docs do not
+   present these keys as working. No feature was invented.
 3. **Regression test:** `config::tests::documented_fail_safe_keys_are_real_or_declared_planned`
    reads `docs/src/configuration.md` and fails if a future doc key is neither a real field nor
    explicitly declared planned. A second test proves unknown keys are rejected.
-4. **`cargo test -p pn-gateway --locked` is green (5 passed).**
+4. **`cargo test -p pn-gateway --locked` is green, 5 passed.**
 
 ---
 
 ## 1. What changed and why
 
-### 1.1 Enforcement — `#[serde(deny_unknown_fields)]`
+### 1.1 Enforcement: `#[serde(deny_unknown_fields)]`
 
-**Pre-check (before applying):** the attribute is incompatible with `#[serde(flatten)]`. The crate
-has none:
+**Pre-check before the change:** the attribute is incompatible with `#[serde(flatten)]`. The crate has none:
 
 ```
 $ grep -rn "flatten" crates/pn-gateway/src/ || echo "NO flatten"
@@ -37,9 +36,9 @@ $ grep -rn "deny_unknown_fields" crates/pn-gateway/src/ || echo "NO deny_unknown
 NO deny_unknown_fields
 ```
 
-So `deny_unknown_fields` is safe here. Applied to the 18 structs that derive `Deserialize`
-(the unit-variant enums were left untouched — the attribute is a struct/field-deserialization
-control and has no meaning for externally-tagged unit enums):
+So `deny_unknown_fields` is safe here. Applied to the 18 structs that derive `Deserialize`.
+The unit-variant enums were left untouched. The attribute is a struct and field deserialization
+control. It has no meaning for externally-tagged unit enums.
 
 `GatewayConfig, ProotConfig, BindMount, DistroConfig, DistroSource, CompatConfig, FailSafeConfig,
 CircuitBreakerConfig, GuardrailConfig, GuardrailRule, HealthConfig, HealthCheck, MetricsConfig,
@@ -50,10 +49,10 @@ $ grep -c "deny_unknown_fields" crates/pn-gateway/src/config.rs
 18
 ```
 
-No code path deserialized these structs before this change (`grep -rn "from_str\|from_value\|serde_json::from" crates/pn-gateway/` → 0 hits), so the attribute cannot break existing behaviour:
-the only construction path is `Default`/builder.
+No code path deserialized these structs before this change. The command `grep -rn "from_str\|from_value\|serde_json::from" crates/pn-gateway/` gives 0 hits. So the attribute cannot break existing behaviour.
+The only construction path is `Default`/builder.
 
-### 1.2 Documentation reconciliation — the `[gateway.fail_safe]` block
+### 1.2 Documentation reconciliation: the `[gateway.fail_safe]` block
 
 `docs/src/configuration.md` previously documented seven keys that do not exist:
 
@@ -89,11 +88,11 @@ circuit_breaker = { enabled = true, failure_threshold = 5, timeout = "60s", half
 ```
 
 `docs/src/architecture.md` likewise carried a fake struct
-(`FailSafeConfig { retry_policy, bulkhead, timeout }`) and the line
-*"FailSafeManager: Circuit breakers, retry policies, bulkheads"*; both were corrected to the real
+`FailSafeConfig { retry_policy, bulkhead, timeout }` and the line
+*"FailSafeManager: Circuit breakers, retry policies, bulkheads"*. The fix corrected both to the real
 shape with a `#27` note.
 
-### 1.3 Reconciliation table (documented key → present in code? → action taken)
+### 1.3 Reconciliation table: documented key, present in code, action taken
 
 | Documented key | Present in code? | Action taken |
 |---|---|---|
@@ -109,27 +108,27 @@ shape with a `#27` note.
 | `architecture.md` `timeout: TimeoutConfig` | **No** | **Doc fixed** — removed |
 | `architecture.md` "retry policies, bulkheads" prose | **No** | **Doc fixed** — "fixed retries (no backoff/bulkhead yet — see #27)" |
 
-**Decision rule applied.** Where a real field exists under a different name (3 keys), the *code is
-right* and the markdown was fixed. Where no field exists anywhere (`bulkhead_*`, retry backoff),
-the docs describe an **intended but unimplemented** feature → marked planned and tracked; no feature
+**Decision rule applied.** Where a real field exists under a different name, 3 keys in total, the *code is
+right* and the markdown was fixed. Where no field exists anywhere, namely `bulkhead_*` and the retry backoff,
+the docs describe an **intended but unimplemented** feature. The docs mark it planned and tracked. No feature
 was invented.
 
 ---
 
 ## 2. Regression tests
 
-`crates/pn-gateway/src/config.rs` — `#[cfg(test)] mod tests`:
+`crates/pn-gateway/src/config.rs`, `#[cfg(test)] mod tests`:
 
-* `unknown_fields_are_rejected` — rounds-trips `FailSafeConfig`, then injects an unknown key
-  (`bulkhead`) and asserts deserialization **errors** with the offending key named.
-* `documented_fail_safe_keys_are_real_or_declared_planned` — reads `docs/src/configuration.md`,
-  derives the real field set from `FailSafeConfig` (serialised to JSON — not hand-copied), and
-  asserts every active `[gateway.fail_safe]` key is either a real field or listed in the
-  `# planned:` sentinel, **and** that no planned key has silently become real.
+* `unknown_fields_are_rejected` rounds-trips `FailSafeConfig`, then injects an unknown key,
+  `bulkhead`, and asserts that deserialization **errors** with the offending key named.
+* `documented_fail_safe_keys_are_real_or_declared_planned` reads `docs/src/configuration.md` and
+  derives the real field set from `FailSafeConfig`. The test serialises this set to JSON, it does not
+  copy the set by hand. The test asserts that every active `[gateway.fail_safe]` key is either a real
+  field or a key in the `# planned:` sentinel. It also asserts that no planned key has silently become real.
 
-### 2.1 Negative proof — the drift guard bites
+### 2.1 Negative proof: the drift guard bites
 
-Inserting a bogus active key (`drift_probe_unknown_key = 1`) into the documented block:
+The probe inserts a bogus active key `drift_probe_unknown_key = 1` into the documented block:
 
 ```
 $ cargo test -p pn-gateway --locked
@@ -142,9 +141,9 @@ documented key `drift_probe_unknown_key` is not a real FailSafeConfig field (iss
 test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 ```
 
-(exit 101; the probe was then reverted — `git diff` shows only the intended changes.)
+The run exits with code 101. The probe was then reverted. `git diff` shows only the intended changes.
 
-### 2.2 Green run (final state)
+### 2.2 Green run in the final state
 
 ```
 $ flock $HOME/.hermes/cache/scratch/cargo-mutex.lock -c \
@@ -154,7 +153,7 @@ $ flock $HOME/.hermes/cache/scratch/cargo-mutex.lock -c \
 EXIT=0
 ```
 
-Heavy status (`20261104T155810Z-env-u-LD.log.status`):
+Heavy status `20261104T155810Z-env-u-LD.log.status`:
 
 ```
 outcome=completed
@@ -189,29 +188,29 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ---
 
-## 3. Residual gaps (honest)
+## 3. Honest residual gaps
 
 * **The global `config.toml` still has no loader.** `pn-gateway` has no `toml` dependency and no
   crate opens a global config file. Even with the corrected field names the documented global
-  example is **inert by construction** — nothing reads it. Fixing that (writing a loader or
-  deleting the example) is a maintainer decision, not something this increment should invent.
-* **The other ~220 drifted keys are untouched.** The audit
-  (`research/DOCS_CONFIG_DRIFT_AUDIT.md`) lists 261 documented keys, 227 drifted. This change only
+  example is **inert by construction**. Nothing reads it. A fix, a written loader or a deleted
+  example, is a maintainer decision. This increment must not invent such a fix.
+* **The other ~220 drifted keys are untouched.** The audit in
+  `research/DOCS_CONFIG_DRIFT_AUDIT.md` lists 261 documented keys, 227 drifted. This change only
   reconciles the `[gateway]` section that #27 names. The remaining drift spans `[container.*]`,
   `[profile.*]`, `[network.*]`, `[grpc.*]`, `[api.*]`, `[general.*]`, `[plugin.*]`, `[pod.*]` and is
   carried as the backlog below.
-* **Backlog (prioritised by blast radius, per audit section 5.6):**
-  1. `gateway.guardrails.*` limits (`max_containers`, `max_memory_total`, `max_cpu_total`,
-     `blocked_images/syscalls`, `required_security_profile`, `quotas.*`, `rate_limit.*`) — safety
-     surface, all absent.
-  2. `gateway.health.timeout` / `healthy_threshold`, `gateway.metrics.port` / `path` — absent.
-  3. `profile.seccomp.rules.*` — documented as a map, real type is `Vec`; plus wrong enum literals
-     (`SCMP_ARCH_AARCH64` vs `AARCH64`).
-  4. The persisted surfaces that *are* loaded (`networks.toml`, `volumes.toml`, supervisor service
-     TOMLs) should get `deny_unknown_fields` too — those are the only ones where a wrong key
-     currently has real effect. Out of CDE's file scope here.
-* **Not verified:** an end-to-end `podnext` run against a documented `config.toml` — there is no
-  loader to exercise, so the inertness is structural, not observed at runtime.
+* **Backlog, prioritised by blast radius, per audit section 5.6:**
+  1. `gateway.guardrails.*` limits: `max_containers`, `max_memory_total`, `max_cpu_total`,
+     `blocked_images/syscalls`, `required_security_profile`, `quotas.*`, `rate_limit.*`. This safety
+     surface is all absent.
+  2. `gateway.health.timeout` / `healthy_threshold` and `gateway.metrics.port` / `path` are absent.
+  3. `profile.seccomp.rules.*` is documented as a map, but the real type is `Vec`. In addition, the
+     enum literals are wrong: `SCMP_ARCH_AARCH64` vs `AARCH64`.
+  4. The persisted surfaces that *are* loaded, `networks.toml`, `volumes.toml` and the supervisor
+     service TOMLs, must also get `deny_unknown_fields`. Those are the only ones where a wrong key
+     currently has real effect. This step is out of CDE file scope here.
+* **Not verified:** an end-to-end `podnext` run against a documented `config.toml`. There is no
+  loader to exercise. So the inertness is structural, not observed at runtime.
 
 ---
 
@@ -233,7 +232,7 @@ flock $HOME/.hermes/cache/scratch/cargo-mutex.lock -c \
 
 Raw transcripts saved to:
 
-* `$HOME/.hermes/cache/scratch/cde-03c-test.log` (first green run after `touch`)
-* `$HOME/.hermes/cache/scratch/cde-03d-NEGATIVE.log` + `cde-03d-heavy.log` (drift-guard failure)
-* `$HOME/.hermes/cache/scratch/cde-04-final.log` + `cde-04-heavy.log` (final green run)
-* `$HOME/.hermes/logs/heavy/20261104T155810Z-env-u-LD.log{,.status}` (authoritative heavy log)
+* `$HOME/.hermes/cache/scratch/cde-03c-test.log`, the first green run after `touch`.
+* `$HOME/.hermes/cache/scratch/cde-03d-NEGATIVE.log` plus `cde-03d-heavy.log`, the drift-guard failure.
+* `$HOME/.hermes/cache/scratch/cde-04-final.log` plus `cde-04-heavy.log`, the final green run.
+* `$HOME/.hermes/logs/heavy/20261104T155810Z-env-u-LD.log{,.status}`, the authoritative heavy log.

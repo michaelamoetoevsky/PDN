@@ -1,34 +1,25 @@
 # Documentation ↔ Configuration Drift Audit
 
-**Scope:** every configuration example in `docs/src/*.md` (fenced TOML blocks and `[section]`
-tables), checked key-by-key against the configurability structs that actually exist in
-`crates/`.
-**Trigger:** issue #27 ("documented gateway fail-safe config does not exist in code").
+**Scope:** every configuration example in `docs/src/*.md`. This set holds fenced TOML blocks and `[section]` tables. The audit checked each key against the configurability structs that exist in `crates/`.
+**Trigger:** issue #27, which states that the documented gateway fail-safe config does not exist in code.
 **Status:** read-only audit. No product code was changed.
-**`docs/book/` is excluded from every search** — `docs/book/searchindex-*.js` is a single ~1.4 MB
-line that swamps grep output.
+**`docs/book/` is excluded from every search.** `docs/book/searchindex-*.js` is a single ~1.4 MB line that swamps grep output.
 
 ---
 
-## TL;DR
+## Summary
 
 Issue #27 is not a `[gateway.fail_safe]` problem. It is a **whole-surface** problem:
 
-* **261** distinct configuration keys are documented across `docs/src/*.md`
-  (365 documented key occurrences, counting a key once per file it appears in).
-* **227** of them (87 %) do not map to any real struct field — **199 absent**, **28 renamed**.
+* **261** distinct configuration keys are documented across `docs/src/*.md`. These keys have **365** documented occurrences, with one count per file that holds the key.
+* **227** of them, or 87 %, do not map to any real struct field. There are **199 absent** and **28 renamed**.
 * **28** map cleanly.
-* **6** are external-tool config (containerd `plugins."io.containerd…"`), not PDN keys.
-* **`deny_unknown_fields` appears 0 times in the entire `crates/` tree.** So wherever a struct
-  *is* deserialized, an unknown key is silently discarded — there is nothing to make a wrong key
-  fail loudly.
-* **`pn-gateway` has no `toml` dependency at all**, and **no crate loads a global `config.toml`.**
-  The only TOML files any crate reads are `networks.toml`, `volumes.toml`, supervisor *service*
-  TOMLs, a socket config, and a policy-engine file. The "Global Configuration" example in
-  `configuration.md:18-152` — `[general]`, `[gateway]`, `[gateway.fail_safe]`,
-  `[gateway.guardrails]`, `[gateway.health]`, `[gateway.metrics]`, `[grpc]`, `[api]`,
-  `[tracing]`, `[plugin]` — is **inert by construction**: nothing reads that file, so those
-  keys have neither effect nor error.
+* **6** are external-tool config, not PDN keys. The containerd `plugins."io.containerd..."` keys are the example.
+* **`deny_unknown_fields` appears 0 times in the entire `crates/` tree.** So an unknown key is silently discarded wherever a struct *is* deserialized. Nothing makes a wrong key fail loudly.
+* **`pn-gateway` has no `toml` dependency at all.** **No crate loads a global `config.toml`.**
+  The only TOML files that any crate reads are `networks.toml`, `volumes.toml`, supervisor *service* TOMLs, a socket config, and a policy-engine file.
+  The "Global Configuration" example in `configuration.md:18-152` lists `[general]`, `[gateway]`, `[gateway.fail_safe]`, `[gateway.guardrails]`, `[gateway.health]`, `[gateway.metrics]`, `[grpc]`, `[api]`, `[tracing]`, and `[plugin]`.
+  That example is **inert by construction**. Nothing reads that file, so those keys have neither effect nor error.
 
 The nine keys in issue #27 are the visible corner of a 227-key drift.
 
@@ -36,16 +27,16 @@ The nine keys in issue #27 are the visible corner of a 227-key drift.
 
 ## Method
 
-1. Extract every fenced TOML block and every `[section]`/`key = value` line from
-   `docs/src/*.md` (12 files, 43 TOML-ish blocks), excluding `docs/book/`.
-2. For each documented key, locate the struct it is *supposed* to configure and its real field,
-   by reading the defining struct in the crate that owns that surface.
-3. Record: documented key · documented at · real field (or none) · struct location · verdict
-   (`match` / `renamed` / `absent` / `external`).
-4. For each non-matching key, decide the user-visible consequence (silently ignored vs hard
-   error) from the serde setup and from whether any code path deserializes that surface.
+1. Extract every fenced TOML block and every `[section]` or `key = value` line from `docs/src/*.md`.
+   The set has 12 files and 43 TOML-ish blocks. Exclude `docs/book/`.
+2. For each documented key, locate the target struct and the real field.
+   Read the defining struct in the crate that owns that surface.
+3. Record the documented key, the documented location, the real field or none, the struct location, and the verdict.
+   The verdict is `match`, `renamed`, `absent`, or `external`.
+4. For each non-matching key, decide the user-visible result. The result is either a silent ignore or a hard error.
+   Use the serde setup and the code path for that decision.
 
-Evidence commands (all reproducible):
+Evidence commands, all reproducible:
 
 ```
 grep -rn 'deny_unknown_fields' crates/                       # 0 hits
@@ -54,7 +45,7 @@ grep -rn 'config\.toml' crates/ --include='*.rs'             # only /etc/contain
 grep -rn 'toml::from_str' crates/ --include='*.rs'           # networks.toml, volumes.toml, service/socket/policy TOML
 ```
 
-### Struct locations (the "real field" column)
+### Struct locations for the real field column
 
 | Surface | Struct | Location | Deserialized from a user file? |
 |---|---|---|---|
@@ -78,28 +69,24 @@ grep -rn 'toml::from_str' crates/ --include='*.rs'           # networks.toml, vo
 
 Two independent facts make the whole `configuration.md` global example inert:
 
-1. **`pn-gateway` cannot read TOML.** `toml` is declared in `pn-next`, `podnext`, and
-   `proot-distro-core` Cargo.toml, and in **no** other crate. `pn-gateway` builds its config
-   programmatically (`GatewayConfigBuilder` at `crates/pn-gateway/src/config.rs:564`).
-2. **No crate loads `$HOME/.config/pn-next/config.toml`.** The only TOML reads in the tree are
-   `networks.toml`, `volumes.toml`, supervisor service files, a socket file, and a policy file.
-   The directory tree printed in `getting-started.md:145` lists a `config.toml` that nothing opens.
+1. **`pn-gateway` cannot read TOML.** `toml` is declared in `pn-next`, `podnext`, and `proot-distro-core` Cargo.toml. No other crate declares it.
+   `pn-gateway` builds its config programmatically. The builder is `GatewayConfigBuilder` at `crates/pn-gateway/src/config.rs:564`.
+2. **No crate loads `$HOME/.config/pn-next/config.toml`.** The only TOML reads in the tree are `networks.toml`, `volumes.toml`, supervisor service files, a socket file, and a policy file.
+   The directory tree in `getting-started.md:145` lists a `config.toml` that nothing opens.
 
-Consequently every documented key in `[general]`, `[gateway*]`, `[grpc*]`, `[api*]`, `[tracing*]`,
-`[plugin*]` is not merely mismatched — **it is unreachable**. A user who writes such a file gets no
-effect and no error, because the file is never parsed.
+Every documented key in `[general]`, `[gateway*]`, `[grpc*]`, `[api*]`, `[tracing*]`, and `[plugin*]` is **unreachable**, not merely mismatched.
+A user who writes such a file gets no effect and no error. The file is never parsed.
 
-The only documentation that lands on a *live* loader is `[network]`/`[network.config]`
-(`networks.toml`) and `[storage]`/`[storage.config]` (`volumes.toml`) — and those are the surfaces
-where a key mismatch would actually matter, because they *are* parsed (see section 3).
+Only two surfaces land on a *live* loader. They are `[network]` or `[network.config]` with `networks.toml`, and `[storage]` or `[storage.config]` with `volumes.toml`.
+A key mismatch matters on these surfaces, because code parses those files. Section 3 gives the detail.
 
 ---
 
 ## 2. Full key table
 
-Verdicts: **match** = documented key equals a real field name; **renamed** = a real field exists
-but under a different name/path/shape; **absent** = no corresponding field anywhere;
-**external** = not a PDN config key (containerd runtime config).
+Verdicts: **match** means that the documented key equals a real field name. **renamed** means that a real field exists under a different name, path, or shape.
+**absent** means that no corresponding field exists anywhere.
+**external** means that the key is not a PDN config key. It is a containerd runtime config key.
 
 | Documented key | Documented at (file:line) | Real field / struct.field | crate:file:line | Verdict |
 |---|---|---|---|---|
@@ -365,9 +352,9 @@ but under a different name/path/shape; **absent** = no corresponding field anywh
 | `plugins."io.containerd.grpc.v1.cri".containerd.runtimes.pdn.privileged_without_host_devices` | advanced.md:606 | containerd runtime config | n/a | external |
 | `plugins."io.containerd.grpc.v1.cri".containerd.runtimes.pdn.runtime_type` | advanced.md:605, api-reference.md:515 | containerd runtime config | n/a | external |
 
-**Totals:** 261 keys — 28 match · 28 renamed · 199 absent · 6 external (227 non-matching).
+**Totals:** 261 keys. The breakdown is 28 match, 28 renamed, 199 absent, and 6 external. That gives 227 non-matching keys.
 
-Per top-level section, non-matching (absent + renamed) keys:
+Non-matching keys per top-level section, absent plus renamed:
 
 | Section | absent+renamed | note |
 |---|---|---|
@@ -390,112 +377,91 @@ Per top-level section, non-matching (absent + renamed) keys:
 There are exactly two possible fates for a documented key that has no field. Which one applies
 depends on whether the owning surface is ever deserialized from a file.
 
-### (a) Silently ignored — no effect, no error
+### Part a. Silently ignored - no effect, no error
 
-Applies to **every absent/renamed key on a surface that is never loaded from a user file**, and to
-**every absent/renamed key on a surface that *is* loaded but lacks `deny_unknown_fields`.**
+This fate applies to **every absent or renamed key on a surface that code never loads from a user file**.
+It also applies to **every such key on a surface that *is* loaded but lacks `deny_unknown_fields`**.
 
 * `deny_unknown_fields` count in `crates/` = **0**. Serde's default is to ignore unknown fields.
-* So on the two live loaders (`networks.toml`, `volumes.toml`), an unknown key is dropped without
-  a message.
-* The gateway/container/profile surfaces are not file-loaded at all, so their keys are dropped even
-  earlier — the file is not read.
+* So the two live loaders, `networks.toml` and `volumes.toml`, drop an unknown key without a message.
+* No code loads the gateway, container, or profile surfaces from a file. Their keys are dropped even earlier, because no code reads the file.
 
-This is the verdict for the overwhelming majority: **a user configures a control that is never
-applied and never reported.**
+This verdict covers the overwhelming majority. A user configures a control that no code applies and no code reports.
 
-### (b) Hard error — only for a *value* / *type* mismatch on a live loader
+### Part b. Hard error - only for a value or type mismatch on a live loader
 
-A hard error requires (i) the surface to be deserialized from a file **and** (ii) the wrong thing
-to be a value/type the deserializer accepts no alternative for. Two documented examples are wrong
-in exactly this way — but on surfaces that happen to be live:
+A hard error needs two conditions. First, code deserializes the surface from a file. Second, the wrong item is a value or type with no accepted alternative.
+Two documented examples are wrong in exactly this way. Both sit on surfaces that are live:
 
-* **Wrong enum spelling.** Docs write seccomp architectures as `"SCMP_ARCH_AARCH64"` and actions
-  as `"errno"` / `"kill"`. The real enums are `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]`, so
-  the correct literals are `"AARCH64"` and `"ERRNO"`/`"KILL"`
-  (`crates/proot-compat/src/security.rs:96,134`). A profile file using the documented strings
-  would fail with `unknown variant`. **In practice this never fires**, because
-  `SecurityProfileConfig` is only ever registered programmatically (`register_profile`), never
-  parsed from TOML. The doc's seccomp block is unreachable *and* wrong.
-* **Wrong type.** `[container.config.env]` is documented as a table of `KEY = "value"`, but the
-  real field is `env_vars: Vec<(String, String)>` (`container.rs:359`) — an array of pairs, not a
-  map. If it were parsed, TOML would reject the tables. Again inert, because container configs are
-  not file-loaded.
+* **Wrong enum spelling.** Docs write seccomp architectures as `"SCMP_ARCH_AARCH64"` and actions as `"errno"` or `"kill"`.
+  The real enums are `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]`, so the correct literals are `"AARCH64"` and `"ERRNO"` or `"KILL"`. The source lines are `crates/proot-compat/src/security.rs:96,134`.
+  A profile file with the documented strings fails with `unknown variant`. **In practice this never fires.**
+  Code registers `SecurityProfileConfig` only programmatically, with `register_profile`. No code parses it from TOML.
+  The doc seccomp block is unreachable and wrong.
+* **Wrong type.** Docs document `[container.config.env]` as a table of `KEY = "value"`.
+  The real field is `env_vars: Vec<(String, String)>` at `container.rs:359`. It is an array of pairs, not a map.
+  TOML rejects such tables when a parse occurs. Again the result is inert, because no code file-loads container configs.
 
-**Net:** in the current tree **no** documented configuration key produces a hard error. Every one
-of the 227 non-matching keys is silently ignored — either because its file is never read, or
-because unknown fields are not denied. The "loud failure" a user might hope for does not exist.
+**Net:** in the current tree **no** documented configuration key produces a hard error.
+Code silently ignores each of the 227 non-matching keys. The file is never read, or the deserializer does not deny unknown fields.
+The "loud failure" that a user hopes for does not exist.
 
-### (c) `pn-gateway` specifically (issue #27)
+### Part c. `pn-gateway` only, issue #27
 
-`FailSafeConfig` (`crates/pn-gateway/src/config.rs:190`) has `enabled`, `max_retries`,
-`retry_delay`, `fallback_actions`, `circuit_breaker`, `auto_recovery`. Documented
-`[gateway.fail_safe]` keys (`circuit_breaker_threshold`, `circuit_breaker_timeout`,
-`retry_max_attempts`, `retry_base_delay`, `retry_max_delay`, `bulkhead_max_concurrent`,
-`bulkhead_queue_size`) have **empty intersection** with it. Same for `[gateway.guardrails]`
-(real `GuardrailConfig` = `enabled`, `rules`, `strict_mode`, `audit_log`; documented keys are
-`max_containers`, `max_memory_total`, `max_cpu_total`, `allowed_images`, `blocked_images`,
-`required_security_profile`, `blocked_syscalls`, plus `[gateway.guardrails.rate_limit]` and
-`[gateway.guardrails.quotas]`). All silently ignored.
+`FailSafeConfig` at `crates/pn-gateway/src/config.rs:190` has `enabled`, `max_retries`, `retry_delay`, `fallback_actions`, `circuit_breaker`, and `auto_recovery`.
+Documented `[gateway.fail_safe]` keys have **empty intersection** with it. Their names are `circuit_breaker_threshold`, `circuit_breaker_timeout`, `retry_max_attempts`, `retry_base_delay`, `retry_max_delay`, `bulkhead_max_concurrent`, and `bulkhead_queue_size`.
+The same holds for `[gateway.guardrails]`. The real `GuardrailConfig` is `enabled`, `rules`, `strict_mode`, and `audit_log`. Its documented keys are `max_containers`, `max_memory_total`, `max_cpu_total`, `allowed_images`, `blocked_images`, `required_security_profile`, `blocked_syscalls`, plus `[gateway.guardrails.rate_limit]` and `[gateway.guardrails.quotas]`.
+Code ignores all of them.
 
 ---
 
 ## 4. Section-by-section findings
 
-### 4.1 `[general]` — 30/30 keys absent
-No `GeneralConfig` struct exists in any crate (`grep -rn GeneralConfig crates/` → nothing).
-Directories, logging, defaults, image, and feature-flag keys (`data_dir`, `log_level`,
-`default_runtime`, `enable_criu`, …) have no target. File never loaded → inert.
+### 4.1 `[general]` - 30/30 keys absent
+No `GeneralConfig` struct exists in any crate. The command `grep -rn GeneralConfig crates/` returns nothing.
+Directories, logging, defaults, image, and feature-flag keys have no target. Examples are `data_dir`, `log_level`, `default_runtime`, and `enable_criu`.
+Code never loads the file, so those keys are inert.
 
-### 4.2 `[gateway]` — 27/37 keys absent-or-renamed
-* `[gateway.fail_safe]`: only 3 of 7 documented keys have *any* relative
-  (`retry_max_attempts`→`max_retries`, `circuit_breaker_threshold`→`circuit_breaker.failure_threshold`,
-  `circuit_breaker_timeout`→`circuit_breaker.timeout`); `retry_base_delay`, `retry_max_delay`,
-  `bulkhead_max_concurrent`, `bulkhead_queue_size` are absent. No backoff, no bulkhead — the
-  documented safety controls do not exist. (See #27.)
-* `[gateway.guardrails]`: real struct stores *rules as condition strings*
-  (`condition = "container_count > 100"`), not the numeric limits the docs show. `rate_limit` and
-  `quotas` sub-tables have no struct.
-* `[gateway.health]`: `interval`→`check_interval` (renamed); `timeout` and `healthy_threshold`
-  absent (only `unhealthy_threshold` exists).
-* `[gateway.metrics]`: `port` and `path` absent (real `MetricsConfig` = `enabled`, `interval`,
-  `retention`, `exporters`).
+### 4.2 `[gateway]` - 27/37 keys absent or renamed
+* `[gateway.fail_safe]`: only 3 of 7 documented keys have *any* relative.
+  The three are `retry_max_attempts`->`max_retries`, `circuit_breaker_threshold`->`circuit_breaker.failure_threshold`, and `circuit_breaker_timeout`->`circuit_breaker.timeout`.
+  `retry_base_delay`, `retry_max_delay`, `bulkhead_max_concurrent`, and `bulkhead_queue_size` are absent.
+  No backoff and no bulkhead exist. The documented safety controls do not exist. See #27.
+* `[gateway.guardrails]`: the real struct stores *rules as condition strings*, not the numeric limits in the docs.
+  An example is `condition = "container_count > 100"`. The `rate_limit` and `quotas` sub-tables have no struct.
+* `[gateway.health]`: `interval`->`check_interval` is renamed. `timeout` and `healthy_threshold` are absent. Only `unhealthy_threshold` exists.
+* `[gateway.metrics]`: `port` and `path` are absent. The real `MetricsConfig` is `enabled`, `interval`, `retention`, and `exporters`.
 
-### 4.3 `[container]` — 98 non-matching keys
-The documented container spec is far richer than `ContainerConfig`. There is **no `[container.config]`
-table** on the real struct (it is flat: `hostname`, `working_dir`, `env_vars`, `bind_mounts`,
-`labels`, `annotations`, …). Missing outright: `image` (real: `distro`+`version`),
-`created`/`updated`, `domainname`, `user`, `group`, `groups`, `entrypoint`, `cmd`,
-`stop_signal`, `stop_timeout`, `volumes`, `tmpfs`, `devices`, `sysctls`, `ulimits`,
-`seccomp`/`apparmor`/`selinux` sub-tables, `checkpoint`, `hooks`, `platform`, `path_translation`,
-`network.service_mesh`, `gpu.api`/`gpu.vulkan`/`gpu.opengl`. `ResourceLimits` has only
-`cpu_limit`/`memory_limit`/`disk_limit`/`pids_limit` — the documented `cpu_shares`, `cpu_quota`,
-`cpu_period`, `cpuset_cpus/mems`, `io_*`, `memory_swap_limit`, `memory_reservation`,
-`memory_swappiness` are all absent.
+### 4.3 `[container]` - 98 non-matching keys
+The documented container spec is far richer than `ContainerConfig`.
+The real struct has **no `[container.config]` table**. It is flat, with `hostname`, `working_dir`, `env_vars`, `bind_mounts`, `labels`, and `annotations`.
+Keys that are absent outright are `image`, `created` or `updated`, `domainname`, `user`, `group`, `groups`, `entrypoint`, `cmd`, `stop_signal`, `stop_timeout`, `volumes`, and `tmpfs`.
+Also missing are `devices`, `sysctls`, `ulimits`, the `seccomp`, `apparmor`, and `selinux` sub-tables, `checkpoint`, `hooks`, `platform`, and `path_translation`.
+Also missing are `network.service_mesh` and the `gpu.api`, `gpu.vulkan`, and `gpu.opengl` keys.
+`ResourceLimits` has only `cpu_limit`, `memory_limit`, `disk_limit`, and `pids_limit`.
+The documented `cpu_shares`, `cpu_quota`, `cpu_period`, `cpuset_cpus`, `cpuset_mems`, `io_*`, `memory_swap_limit`, `memory_reservation`, and `memory_swappiness` are all absent.
 
-### 4.4 `[profile]` — 25 non-matching keys
-`SecurityProfileConfig` matches on `name`, `enabled`, `no_new_privileges`, `read_only_rootfs`,
-`user_namespace`. `type`→`profile_type` (renamed). `description` absent. `[profile.seccomp]`:
-`rules` is documented as a **map keyed by syscall name**; the real field `syscalls` is a
-`Vec<SeccompSyscallRule>` (`{names:[…], action, args}`) — different shape, so all 13
-`profile.seccomp.rules.*` keys are absent. `[profile.mask_paths]` and `[profile.readonly_paths]`
-have no backing field. `[profile.selinux].enforce` absent (only `context` matches).
+### 4.4 `[profile]` - 25 non-matching keys
+`SecurityProfileConfig` matches on `name`, `enabled`, `no_new_privileges`, `read_only_rootfs`, and `user_namespace`.
+`type`->`profile_type` is renamed. `description` is absent.
+For `[profile.seccomp]`, `rules` is documented as a **map keyed by syscall name**. The real field `syscalls` is a `Vec<SeccompSyscallRule>`.
+Its shape is `{names:[...], action, args}`. The shape differs, so all 13 `profile.seccomp.rules.*` keys are absent.
+`[profile.mask_paths]` and `[profile.readonly_paths]` have no backing field. `[profile.selinux].enforce` is absent. Only `context` matches.
 
-### 4.5 `[network]` / `[storage]` — the two *live* loaders
-These are persisted as `HashMap<String, NetworkConfig>` and `HashMap<String, VolumeConfig>`.
-Real `NetworkConfig` (flat) = `name`, `driver`, `subnet`, `gateway`, `dns_servers`, `enable_ipv6`,
-`mtu`, `containers`, `ips`. The docs wrap the same settings under `[network.config]`
-(`subnet`, `gateway`, `mtu`, `enable_ipv6`, `dns`) — **renamed/path-different**, plus `ip_range`,
-`ipv6_*`, `internal`, `enable_icc`, `dns_search`, `labels` absent and `created` absent.
-`VolumeConfig` = `name`, `driver`, `labels`, `options` — everything under `[storage.config]`
-(`path`, `fs_type`, `mount_options`, `quota_enabled`, `quota_size`) is absent. These blocks *are*
-deserialized, but with no `deny_unknown_fields` the extra keys are dropped silently.
+### 4.5 `[network]` and `[storage]` - the two *live* loaders
+Code persists these files as `HashMap<String, NetworkConfig>` and `HashMap<String, VolumeConfig>`.
+The real flat `NetworkConfig` is `name`, `driver`, `subnet`, `gateway`, `dns_servers`, `enable_ipv6`, `mtu`, `containers`, and `ips`.
+The docs wrap the same settings under `[network.config]`. Those names are `subnet`, `gateway`, `mtu`, `enable_ipv6`, and `dns`.
+That path is **renamed and different**. Also absent are `ip_range`, `ipv6_*`, `internal`, `enable_icc`, `dns_search`, `labels`, and `created`.
+`VolumeConfig` is `name`, `driver`, `labels`, and `options`. Everything under `[storage.config]` is absent.
+Those keys are `path`, `fs_type`, `mount_options`, `quota_enabled`, and `quota_size`.
+Code deserializes these blocks, but the deserializer drops the extra keys silently, because no `deny_unknown_fields` attribute exists.
 
-### 4.6 External blocks (not PDN keys)
-`advanced.md` and `api-reference.md` document a containerd runtime config
-(`[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.pdn]`). That is containerd's own
-schema, not a PDN struct — out of scope, marked `external`. The envoy service-mesh blob
-(`advanced.md:443-487`) is likewise an opaque multi-line string value.
+### 4.6 External blocks, not PDN keys
+`advanced.md` and `api-reference.md` document a containerd runtime config.
+The section is `[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.pdn]`.
+That schema belongs to containerd, not to a PDN struct. It is out of scope and marked `external`.
+The envoy service-mesh blob at `advanced.md:443-487` is also an opaque multi-line string value.
 
 ---
 
@@ -504,35 +470,35 @@ schema, not a PDN struct — out of scope, marked `external`. The envoy service-
 This audit raises the same two questions as #27, but for the whole surface. The decisions are
 maintainer calls, not code facts:
 
-1. **Is each documented section *planned* or *stale*?** For every absent block the maintainer must
-   choose: *implement it* or *mark it planned / delete it*. There is no third option that keeps the
-   docs honest, because today none of it is reachable.
-2. **Should the config surface be loadable at all?** Right now there is no global `config.toml`
-   loader. Decide whether PDN intends to have one. If yes, someone must write the loader; the docs
-   already assume it exists. If no, `configuration.md`'s global example describes a file the
-   product will never read and should say so.
-3. **Make wrong keys fail loudly.** Add `#[serde(deny_unknown_fields)]` to the structs that *are*
-   loaded (`NetworkConfig`/`VolumeConfig` in the persisted form, supervisor service config), so a
-   key that does not exist produces an error instead of silence. (Today: 0 structs have it.)
-4. **Make the docs verifiable.** Add a test that parses every example in `docs/src/` against the
-   real structs (round-trip or key-presence assertion). This is the guard whose absence let 227
-   keys drift; the benchmark suite was only an accidental canary (#27 acknowledges this).
-5. **Fix the value spelling too, not just the keys.** The seccomp `architectures`/`default_action`
-   literals are wrong (`SCMP_ARCH_AARCH64` vs `AARCH64`; `errno` vs `ERRNO`). Any doc-verification
-   test must check enum values, not only key names.
-6. **Prioritise by blast radius.** If any of this ever becomes loadable, the *safety* surfaces
-   matter most: the bulkhead/retry controls (#27), the guardrail limits, and the security-profile
-   syscall rules — all currently neither implemented nor enforced.
+1. **Is each documented section *planned* or *stale*?** For every absent block the maintainer must choose.
+   The choice is *implement it* or *mark it as planned* or *delete it*.
+   No third option keeps the docs honest, because no path reaches that code today.
+2. **Is the config surface loadable at all?** There is no global `config.toml` loader today.
+   Decide whether PDN intends to have one. If yes, someone must write the loader.
+   The docs already assume that the loader exists.
+   If no, the global example in `configuration.md` describes a file that the product never reads. The doc must state this.
+3. **Make wrong keys fail loudly.** Add `#[serde(deny_unknown_fields)]` to the structs that *are* loaded.
+   These are `NetworkConfig` and `VolumeConfig` in the persisted form, plus the supervisor service config.
+   Then a key that does not exist produces an error, not silence. Today 0 structs have it.
+4. **Make the docs verifiable.** Add a test that parses every example in `docs/src/` against the real structs.
+   The test uses a round-trip or key-presence assertion.
+   This guard is absent, and that absence let 227 keys drift. The benchmark suite was only an accidental canary. Issue #27 acknowledges this.
+5. **Fix the value spelling too, not only the keys.** The seccomp `architectures` and `default_action` literals are wrong.
+   The wrong pairs are `SCMP_ARCH_AARCH64` against `AARCH64`, and `errno` against `ERRNO`.
+   A doc-verification test must check enum values, not only key names.
+6. **Prioritise by blast radius.** If any of this becomes loadable, the *safety* surfaces matter most.
+   The most important items are the bulkhead and retry controls of #27, the guardrail limits, and the security-profile syscall rules.
+   No code currently implements or enforces these items.
 
 ---
 
 ## Certainty boundary
 
-**Verified directly:** the 261-key inventory and per-key verdicts (struct fields read from
-source); `deny_unknown_fields` = 0 across `crates/`; `pn-gateway` has no `toml` dependency;
-no crate opens a global `config.toml` (the only `config.toml` reference is containerd's);
-the flat persisted schemas for `networks.toml`/`volumes.toml`; the seccomp enum literals.
+**Verified directly:** the 261-key inventory and the per-key verdicts, with struct fields read from source.
+`deny_unknown_fields` = 0 across `crates/`. `pn-gateway` has no `toml` dependency.
+No crate opens a global `config.toml`. The only `config.toml` reference is containerd's.
+Also verified are the flat persisted schemas for `networks.toml` and `volumes.toml`, and the seccomp enum literals.
 
-**Not verified:** an end-to-end run of `podnext` with a documented `config.toml` (there is no such
-loader to exercise). Whether a given absent block is *planned* or *stale* is a maintainer decision,
-not derivable from the code — this report states the drift, it does not guess intent.
+**Not verified:** an end-to-end run of `podnext` with a documented `config.toml`. No such loader exists to exercise.
+Whether a given absent block is *planned* or *stale* is a maintainer decision that the code does not settle.
+This report states the drift. It does not guess intent.

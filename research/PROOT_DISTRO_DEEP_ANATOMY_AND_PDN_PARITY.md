@@ -1,28 +1,28 @@
-# Radical Forensic Dissection of `proot-distro` & Full Parity Blueprint for PDN (v0.1.9 & v0.2.0)
+# Radical Forensic Dissection of `proot-distro` and Full Parity Blueprint for PDN v0.1.9 and v0.2.0
 
 **Author**: Hermes Agent Architecture & Systems Engineering  
-**Subject**: Canonical Termux `proot-distro` Implementation (`proot_distro` Python package) vs `podnext` (PDN Rust)  
-**Date**: November 5, 2026 (WIB)  
+**Subject**: Canonical Termux `proot-distro` Implementation, the `proot_distro` Python package, against `podnext`, the PDN Rust program  
+**Date**: November 5, 2026, WIB  
 **Location on Host**: `/data/data/com.termux/files/usr/lib/python3.14/site-packages/proot_distro/`
 
 ---
 
 ## 1. Executive Summary
 
-Termux's `proot-distro` is the de facto standard tool for running userland Linux distributions on unrooted Android devices. While popular for its stability and heuristics, it is constrained by:
-1. **Python Runtime Overhead**: 120–180 ms cold startup delay per invocation.
-2. **Missing OCI Ecosystem**: Incapable of pulling standard Docker/OCI container images directly.
-3. **No Process / Service Supervision**: Lacks cgroups resource controls, watchdog circuit breakers, and programmatic RPC/D-Bus APIs.
+Termux `proot-distro` is the de facto standard tool to run userland Linux distributions on unrooted Android devices. It is popular for its stability and its heuristics. Three limits constrain it:
+1. **Python Runtime Overhead**: A cold start costs 120 to 180 ms for each invocation.
+2. **Missing OCI Ecosystem**: The tool cannot pull standard Docker or OCI container images directly.
+3. **No Process or Service Supervision**: The tool has no cgroup resource controls, no watchdog circuit breakers, and no programmatic RPC or D-Bus APIs.
 
-`podnext` (PDN) was conceived as a high-performance, native Rust replacement. However, our swarm audit revealed that while PDN implemented advanced features (GitOps, D-Bus, quotas), it **lost critical low-level heuristics and ergonomic login polygons** that make `proot-distro` work seamlessly in Termux.
+`podnext`, or PDN, was built as a high-performance native Rust replacement. A swarm audit found one defect. PDN implemented advanced features such as GitOps, D-Bus, and quotas. At the same time PDN **lost critical low-level heuristics and ergonomic login polygons**. These are the features that make `proot-distro` work well in Termux.
 
-This document presents the complete forensic deconstruction of `proot-distro`'s internals and establishes the exact engineering blueprint to achieve full parity in **v0.1.9** and revolutionary superiority in **v0.2.0**.
+This document gives the complete forensic deconstruction of the `proot-distro` internals. It also gives the exact engineering blueprint. The goal is full parity in **v0.1.9** and clear superiority in **v0.2.0**.
 
 ---
 
 ## 2. Forensic Reverse-Engineering of `proot-distro`
 
-### 2.1 The Seven-Phase PRoot Argv Construction (`proot_cmd.py`)
+### 2.1 The Seven-Phase PRoot Argv Construction in `proot_cmd.py`
 In `proot_distro/commands/login/proot_cmd.py`, `build_proot_args()` constructs the `proot` command line with an exact, inviolable sequence:
 
 ```text
@@ -64,14 +64,14 @@ Phase 7: Guest Executable & Shell Payload
 ```
 
 ### 2.2 Security Heuristics in `proot-distro`
-1. **Dirfd Pinning & Inode Race Protection (`dirfd.py` & `sysdata.py`)**:
-   - `proot-distro` never resolves paths dynamically from the rootfs root when creating host stubs.
-   - It pins parent directory file descriptors using `dirfd.opendir` and creates files via `openat(dir_fd, ..., O_NOFOLLOW | O_CREAT)`.
-   - It validates `st_nlink == 1` to prevent hardlink swaps by malicious guest scripts.
-2. **Device Node Shielding (`_add_termux_dev_binds`)**:
-   - On Android, `/dev/random` can block or return `EPERM`. Binding `/dev/urandom:/dev/random` prevents hangs in cryptographic libraries (OpenSSL, Rust ring, Go crypto).
-3. **World-Execute Mode Filtering (`bindings.py`)**:
-   - System directories (`/apex`, `/vendor`) are only bound if `st_mode` contains execute permissions (modes 1, 5, or 7). Binding non-traversable Android system mounts causes PRoot to fail during path resolution.
+1. **Dirfd Pinning and Inode Race Protection in `dirfd.py` and `sysdata.py`**:
+   - `proot-distro` never resolves a path dynamically from the rootfs root when it makes host stubs.
+   - It pins the parent directory file descriptor with `dirfd.opendir`. It then creates a file with `openat(dir_fd, ..., O_NOFOLLOW | O_CREAT)`.
+   - It validates `st_nlink == 1` and stops hardlink swaps from malicious guest scripts.
+2. **Device Node Shielding in `_add_termux_dev_binds`**:
+   - On Android, `/dev/random` can block or return `EPERM`. The bind `/dev/urandom:/dev/random` prevents hangs in cryptographic libraries such as OpenSSL, Rust ring, and Go crypto.
+3. **World-Execute Mode Filtering in `bindings.py`**:
+   - The system directories `/apex` and `/vendor` are bound only if `st_mode` contains execute permissions, that is mode 1, 5, or 7. A bind of a non-traversable Android system mount makes PRoot fail during path resolution.
 
 ---
 
@@ -94,31 +94,31 @@ Phase 7: Guest Executable & Shell Payload
 
 ---
 
-## 4. Immediate Action Plan for v0.1.9 (Stabilization & Honesty)
+## 4. Immediate Action Plan for v0.1.9: Stabilization and Honesty
 
-To ensure v0.1.9 is the most stable and honest release possible before introducing complex features:
+The purpose of this plan is a stable and honest v0.1.9 release before complex features start:
 1. **Enforce Canonical Environment Invariants**:
    - Guarantee that every PRoot spawn includes `--link2symlink`, `--sysvipc`, `--kill-on-exit`, and `-L`.
-   - Ensure `/dev/urandom:/dev/random` is always bound for non-isolated containers.
+   - Make sure that every non-isolated container has a bind for `/dev/urandom:/dev/random`.
 2. **Merge Dispatched Worktree Patches**:
-   - Merge Batch A (`fix/storage-validation`): Path traversal elimination in volume and network names.
-   - Merge Batch B (`fix/automation`): Clean JSON on stdout, error logging on stderr, exit code unification.
-   - Merge Batch C (`fix/guest-env`): Automatic fallback DNS generation when host DNS is empty.
-   - Merge Batch H (`fix/polish`): Reqwest 60s timeout, config validate formatting.
+   - Merge Batch A, `fix/storage-validation`: it removes path traversal in volume and network names.
+   - Merge Batch B, `fix/automation`: it gives clean JSON on stdout, error logs on stderr, and one exit code scheme.
+   - Merge Batch C, `fix/guest-env`: it makes a fallback DNS entry when the host DNS is empty.
+   - Merge Batch H, `fix/polish`: it adds a Reqwest 60s timeout and formats the config validate output.
 3. **Audit Ledger Update**:
-   - Re-evaluate tests to certify **75 PASS / 0 FAIL**.
+   - Re-evaluate the tests and certify **75 PASS / 0 FAIL**.
 
 ---
 
-## 5. Radical Roadmap for v0.2.0 (The Mobility Leap)
+## 5. Radical Roadmap for v0.2.0: The Mobility Leap
 
-Once v0.1.9 ships:
-1. **The 18-Flag Login Engine (`InvocationOverrides`)**:
-   Implement full flag parity with `proot-distro login`:
+After the v0.1.9 release:
+1. **The 18-Flag Login Engine, `InvocationOverrides`**:
+   It gives full flag parity with `proot-distro login`:
    `--bind`, `--shared-home`, `--shared-tmp`, `--shared-x11`, `--termux-home`, `--work-dir`, `--user`, `--hostname`, `--fix-low-ports`, `--no-sysvipc`, `--no-link2symlink`, `--no-kill-on-exit`, `--env`.
-2. **Native OCI Layer Engine (`pn-image-store`)**:
-   Download, verify, cache, and unpack OCI blobs without root, honoring whiteout markers (`.wh.`) and handling non-root UID mapping.
-3. **The Zero-Ptrace Fast-Path Shim (`libpdn_fastpath.so`)**:
-   Eliminate 75% of PRoot context switches by intercepting standard glibc/musl VFS calls in userspace before they trigger kernel ptrace traps.
+2. **Native OCI Layer Engine, `pn-image-store`**:
+   It downloads, verifies, caches, and unpacks OCI blobs without root. It honors the whiteout marker `.wh.` and handles non-root UID mapping.
+3. **The Zero-Ptrace Fast-Path Shim, `libpdn_fastpath.so`**:
+   It removes 75% of PRoot context switches. It intercepts standard glibc and musl VFS calls in userspace before they cause a kernel ptrace trap.
 4. **Shell Completion & Aliases**:
-   Install `pd` alias and autocompletions for Bash, Zsh, and Fish.
+   Add the `pd` alias and autocompletions for Bash, Zsh, and Fish.

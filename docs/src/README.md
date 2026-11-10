@@ -2,36 +2,36 @@
 
 **Next-generation container platform for Termux/Android**
 
-PDN (PRoot Distro Next) is a unified Rust codebase that combines **PRoot**, **PRoot-distro**, and **proot-compat** into a single, cohesive container platform for Termux/Android. It provides a modern, safe, and performant alternative to traditional shell-based container management.
+PDN is the short name for PRoot Distro Next. PDN is a unified Rust codebase. It combines **PRoot**, **PRoot-distro**, and **proot-compat**. The result is one container platform for Termux/Android. PDN gives a modern, safe, and high-performance alternative to traditional shell-based container management.
 
 ## Features
 
 - **proot-core**: Core PRoot implementation with ptrace, syscall interception, and VFS
 - **proot-distro-core**: Container lifecycle, image management, networking, and storage
-- **proot-compat**: Termux/Android compatibility layer (platform shim, path translation, seccomp bypass, stub filesystem, mount helper, cgroup v2)
+- **proot-compat**: Termux/Android compatibility layer. It provides a platform shim, path translation, seccomp bypass, a stub filesystem, a mount helper, and cgroup v2
 - **pn-gateway**: Unified gateway with fail-safe mechanisms, guardrails, health monitoring, and metrics
 - **pn-next**: Advanced runtime, scheduler, security, API, workflow, and plugin system
-- **podnext (CLI)**: Full-featured CLI for container/image/network/volume management
+- **podnext CLI**: Full-featured CLI for container, image, network, and volume management
 
 ### Advanced CLI Features
 
-- **Native Docker Hub Integration**: Direct OCI image search/pull without shelling out
+- **Native Docker Hub Integration**: Direct OCI image search and pull with no shell call
 - **Multi-Format Output**: Table, JSON, YAML output formats
 - **Tab Completion**: Shell completion for bash, zsh, fish
 - **Parallel Operations**: Concurrent container operations where possible
 - **Progress Indicators**: Real-time progress for image downloads and operations
 - **Config Profiles**: Multiple configuration profiles for different environments
 - **Remote Management**: Manage containers on remote hosts via SSH/TLS
-- **Resource Templates**: Predefined resource limit templates (dev, prod, test)
+- **Resource Templates**: Predefined resource limit templates for dev, prod, and test
 
 ### Mobility & Portability
 
-- **Standalone Binary**: Single static binary with all dependencies (musl/glibc)
+- **Standalone Binary**: Single static binary with all dependencies for musl and glibc
 - **Android Cross-Compilation**: Native aarch64-linux-android target support
 - **Termux Package Ready**: Designed for termux-packages repository integration
 - **Offline Operation**: Full functionality without network after image install
 - **Config Migration**: Automated migration from PRoot-distro configs
-- **Rootless Execution**: No root privileges required (uses PRoot's ptrace)
+- **Rootless Execution**: No root privileges are required, because it uses the PRoot ptrace
 
 ## Quick Start
 
@@ -119,15 +119,15 @@ podnext login ubuntu
 
 ## System Requirements
 
-- **Android**: 10+ (API 29+)
-- **Architecture**: aarch64 (ARM64)
+- **Android**: version 10 or later, API 29 or later
+- **Architecture**: aarch64, also known as ARM64
 - **Termux**: Latest version from F-Droid or GitHub releases
 - **Storage**: ~500MB for binaries and containers
 - **Memory**: 2GB+ recommended
 
 ## License
 
-Licensed under GPL-2.0-or-later (compatible with PRoot's license).
+Licensed under GPL-2.0-or-later. This license is compatible with the PRoot license.
 
 ## Links
 

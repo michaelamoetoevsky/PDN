@@ -2,7 +2,7 @@
 
 ## Installation
 
-### From Release Binaries (Recommended)
+### From Release Binaries, Recommended
 
 ```bash
 # Download the latest release for Android aarch64
@@ -47,12 +47,12 @@ Two programs can be installed at the same time on Termux and they share nothing:
 | `podnext` | this project | `$HOME/.podnext/containers/<name>/rootfs` |
 | `proot-distro` | the Termux package this project replaces; a separate program with its own CLI and its own store | its own layout under the Termux prefix |
 
-So if `podnext list` shows your container but `proot-distro login <name>` answers `container '<name>' is not
-installed`, nothing is broken: the second command is a different program looking in a different place. PDN's
-commands all start with `podnext`.
+So if `podnext list` shows your container, but `proot-distro login <name>` answers `container '<name>' is not
+installed`, nothing is broken. The second command is a different program that looks in a different place.
+PDN's commands all start with `podnext`.
 
-Containers run on PodNext's own engine by default, which does not need a `proot` binary at all; `--engine proot`
-selects the legacy path. See [Container Engines](engines.md).
+Containers run on the PodNext engine by default. That engine does not need a `proot` binary. The option
+`--engine proot` selects the legacy path. See [Container Engines](engines.md).
 
 ## Quick Start
 
@@ -147,10 +147,10 @@ pkg install proot proot-distro qemu-user-static binfmt-support curl tar gzip xz-
 
 ### Kernel Requirements
 
-- `CONFIG_CHECKPOINT_RESTORE=y` (for checkpoint/restore)
-- `CONFIG_CGROUPS=y` and `CGROUP_V2` (for resource limits)
-- `CONFIG_SECCOMP=y` (for seccomp profiles)
-- `CONFIG_USER_NS=y` (for user namespace support)
+- `CONFIG_CHECKPOINT_RESTORE=y` for checkpoint and restore
+- `CONFIG_CGROUPS=y` and `CGROUP_V2` for resource limits
+- `CONFIG_SECCOMP=y` for seccomp profiles
+- `CONFIG_USER_NS=y` for user namespace support
 
 ## Configuration Files
 
@@ -168,7 +168,7 @@ $HOME/.config/pn-next/
 
 ## First Container Walkthrough
 
-Let's create and use an Ubuntu container:
+Create an Ubuntu container and use it:
 
 ```bash
 # 1. Search for Ubuntu

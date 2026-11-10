@@ -1,8 +1,8 @@
 # Issue inventory for the PDN tracker
 
-Every issue in `michaelamoetoevsky/PDN`, checked against the code rather than against its own
-label, on 5 November 2026. Generated from `gh issue list --state all` and the ledger's own tables;
-regenerate by re-running the script that produced this file and comparing the counts.
+Every issue in `michaelamoetoevsky/PDN` is checked against the code, not against its own
+label. The check happened on 5 November 2026. The data comes from `gh issue list --state all` and the ledger's own tables.
+To regenerate the data, run the script that produced this file and compare the counts.
 
 **Reproduce the classification:**
 
@@ -26,14 +26,14 @@ python3 scripts/build_issue_ledger.py --offline    # the predicate verdicts
 
 ## What this pass found: six issues were open with the work already done
 
-#41, #42, #43, #45, #46, #47 each had every predicate passing while the issue stayed open -
-the defect was fixed and verified, the ticket was never closed. They were closed in this pass, each
-with its own predicate list and verdicts quoted from the ledger at head `32594ee`, where all 102
-predicates carried verdicts (102 PASS, 0 FAIL, 0 SKIPPED). This is the failure mode a tracker has
-and a gate does not: a gate cannot go stale, a status field can.
+#41, #42, #43, #45, #46, #47 each had every predicate pass while the issue stayed open.
+The defect was fixed and verified. The ticket was never closed. These tickets were closed in this pass.
+Each ticket got its own predicate list and its verdicts from the ledger at head `32594ee`, where all
+102 predicates carried a verdict: 102 PASS, 0 FAIL, 0 SKIPPED. This is a failure mode that a tracker has
+and a gate does not. A gate cannot go stale. A status field can.
 
-The other open issues are open on purpose: the declined ones say why they are not fixed, and the
-backlog items are feature requests with no commitment attached.
+The other open issues are open on purpose. The declined issues say why they are not fixed.
+The backlog items are feature requests with no commitment attached.
 
 ## Every issue
 
@@ -115,13 +115,14 @@ backlog items are feature requests with no commitment attached.
 | Measure the bindings and the `USER` story inside a guest | #66 |
 | The map that holds all of the above | #48 |
 
-Release state: `Cargo.toml` is `0.1.8`, `v0.1.9` was withdrawn, and the next tag is `v0.2.0` (the section 9 stabilization; the mobility polygon that used to carry that number is now section 10 = `v0.3.0`)
-according to `docs/src/roadmap.md` section 10. Sections 7.1 and 7.2 (seccomp, zero-trust boundary)
-are **declined** for v0.1.9 with the measurement recorded; nothing in this list is claimed as done
+Release state: `Cargo.toml` is `0.1.8`. The tag `v0.1.9` was withdrawn. The next tag is `v0.2.0`, which is the section 9 stabilization.
+The mobility polygon that used to carry that number is now section 10 = `v0.3.0`, per
+`docs/src/roadmap.md` section 10. Sections 7.1 and 7.2 cover seccomp and the zero-trust boundary.
+Both are **declined** for v0.1.9 and the measurement is recorded. Nothing in this list counts as done
 until its ticket carries evidence.
 
 ## What this document does not claim
 
-It does not claim an issue is correct because it is closed, nor that a closed issue's fix is
-complete - only that its predicates pass. A predicate proves the specific thing it greps for and
-nothing more; the limits of each are written next to the check in `scripts/build_issue_ledger.py`.
+This document does not claim that an issue is correct because it is closed. It does not claim that
+the fix of a closed issue is complete. It claims only that its predicates pass. A predicate proves the
+specific thing it greps for and nothing more. The limits of each predicate are written next to the check in `scripts/build_issue_ledger.py`.

@@ -2,7 +2,7 @@
 
 ## Common Issues
 
-### Container Won't Start
+### Container Does Not Start
 
 #### Symptoms
 - `podnext run` hangs or fails
@@ -192,7 +192,7 @@ free -h
 
 #### Symptoms
 - `podnext backup create` fails
-- Restored container doesn't work
+- The restored container does not work
 
 #### Solutions
 ```bash
@@ -361,11 +361,11 @@ tar czf debug-logs.tar.gz debug-logs/
 ### Reporting Issues
 
 1. Check existing issues on GitHub
-2. Collect logs (see above)
+2. Collect the logs as shown above
 3. Include:
-   - PDN version (`podnext version`)
+   - PDN version from `podnext version`
    - Android/Termux version
-   - Kernel version (`uname -a`)
+   - Kernel version from `uname -a`
    - Steps to reproduce
    - Expected vs actual behavior
    - Logs and error messages
@@ -396,5 +396,5 @@ with no atomicity guarantee, and any synchronisation is the workload's own respo
 Measured, so it is not speculation: the same five-worker experiment run (a) with plain host
 processes, no PDN anywhere, and (b) through `podnext run`, produced the identical result -- 4 of 5
 writes clobbered, file left with exactly one line -- in every run of both. If you need
-read-modify-write across concurrent invocations, use a file lock (`flock`) in your command, or give
+read-modify-write across concurrent invocations, use a file lock such as `flock` in your command, or give
 each writer its own path and merge afterwards.

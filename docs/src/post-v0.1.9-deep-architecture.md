@@ -1,13 +1,13 @@
-# Deep Architectural Forensics & Post-v0.1.9 Complex Subsystem Blueprint (v0.2.0 "Mobility")
+# Deep Architectural Forensics and Post-v0.1.9 Complex Subsystem Blueprint for v0.2.0 "Mobility"
 
 **Author**: Hermes Agent Architecture Group  
 **Target Milestone**: v0.2.0  
-**Context**: Deep forensic analysis separating v0.1.9 (surgical stability & honesty) from complex, high-risk subsystem re-engineering (deferred to v0.2.0).  
-**Hardware Baseline**: aarch64 Android 16 (Linux 6.6+ bionic, Termux prefix `/data/data/com.termux/files/usr`, no real root, no writable `/tmp`).
+**Context**: This document separates v0.1.9 from v0.2.0. v0.1.9 is surgical stability and honesty. v0.2.0 is complex, high-risk subsystem re-engineering. v0.2.0 defers this work.  
+**Hardware Baseline**: aarch64 Android 16 with Linux 6.6+ bionic. The Termux prefix is `/data/data/com.termux/files/usr`. There is no real root and no writable `/tmp`.
 
 ---
 
-## 1. Subsystem A: OCI Content-Addressable Blob Store (`pn-image-store`)
+## 1. Subsystem A: OCI Content-Addressable Blob Store "pn-image-store"
 
 ### 1.1 The Failure Vector in v0.1.x
 In v0.1.8, `podnext image pull <image>` was a deceptive façade:
@@ -17,18 +17,18 @@ let mut container_mgr = ContainerManager::new(&config.storage.containers_dir)?;
 container_mgr.create(&name, &image)?; // Silent no-op/fake success if image not local
 println!("Image pulled successfully"); // Lie!
 ```
-This was patched in v0.1.9 (Finding 01-1 / C2) with an honest hard rejection (`bail!`). However, v0.2.0 must implement real image pulling without running into Android sandbox limitations.
+In v0.1.9, the patch used an honest hard rejection. The finding number is 01-1 and C2. The rejection uses `bail!`. However, v0.2.0 must implement real image pulling. The implementation must avoid the Android sandbox limitations.
 
 ### 1.2 Anatomical Constraints on Android/Termux
 1. **Unprivileged Extraction**:
-   - `chown` / `lchown` fails with `EPERM` unless PRoot is intercepting syscalls or the extraction runs in unprivileged rootless mode where all files map to the current Termux UID (`u0_aXXX`).
+   - `chown` and `lchown` fail with `EPERM`. One exception is a PRoot syscall interception. The other exception is unprivileged rootless mode. In that mode, all files map to the current Termux UID `u0_aXXX`.
    - Hard links: Android SELinux blocks cross-directory hard links or certain link creation types.
-   - Special device nodes (`mknod` for `/dev/null`, `/dev/urandom` in rootfs layers): Always fails with `EPERM` on Android storage (`ext4`/`f2fs`).
+   - Special device nodes use `mknod` for `/dev/null` and `/dev/urandom` in rootfs layers. The operation always fails with `EPERM` on Android storage types `ext4` and `f2fs`.
 2. **AUFS / OverlayFS Absence**:
    - Android kernels do not allow unprivileged user mounts of `overlayfs` or `fuse-overlayfs` without root.
-   - PRoot cannot natively emulate dynamic layered union mounts without severe memory/CPU overhead (ptrace trap on every VFS resolution).
+   - PRoot cannot natively emulate dynamic layered union mounts. The emulation has severe memory and CPU overhead. A ptrace trap runs on every VFS resolution.
 3. **Storage Quota & Deduplication**:
-   - Flash storage on mobile devices is constrained. Unpacking complete duplicate distros wastes gigabytes.
+   - Flash storage on mobile devices is constrained. A duplicate distro unpack wastes gigabytes.
 
 ### 1.3 Target Architecture: Two-Tier Storage Engine
 ```
@@ -49,18 +49,18 @@ This was patched in v0.1.9 (Finding 01-1 / C2) with an honest hard rejection (`b
 
 ### 1.4 Unpack & Whiteout Sanitation Pipeline
 When unpacking OCI layers into a flattened container `rootfs`:
-- **Whiteouts (`.wh.<filename>`)**: Must be processed during sequential layer application:
+- **Whiteouts** with the name `.wh.<filename>`: The unpack must process whiteouts during sequential layer application:
   - Explicit file whiteout: `.wh.foo` deletes existing `foo`.
   - Opaque whiteout: `.wh..wh..opq` deletes all existing siblings in that directory.
-- **Device Node Neutralization**: Intercept `mknod` entries in tar archives; replace them with dummy regular empty files or omit them, relying on PRoot's runtime bind-mounting (`-b /dev`).
-- **Permission Normalization**: Force directory permissions to `0755` and executables to `0755`/`0644`. Mask out `setuid`/`setgid` bits (which are non-functional under Termux anyway and trigger audit warnings).
+- **Device Node Neutralization**: Intercept `mknod` entries in tar archives. Replace each entry with a dummy regular empty file or omit it. PRoot runtime bind-mounting of `-b /dev` provides the device nodes.
+- **Permission Normalization**: Force directory permissions to `0755`. Force executable permissions to `0755` or `0644`. Mask out the `setuid` and `setgid` bits. Those bits are non-functional under Termux and trigger audit warnings.
 
 ---
 
 ## 2. Subsystem B: Login Polygon & Proot-Distro Parity Engine
 
 ### 2.1 The 18-Flag Gap Analysis
-Auditing Termux's official `proot-distro` (`commands/login/__init__.py`) against `podnext login` revealed a massive capability gap:
+A comparison of Termux's official `proot-distro` against `podnext login` revealed a massive capability gap. The source is `commands/login/__init__.py`.
 
 | Capability / Flag | `proot-distro login` | `podnext login` (v0.1.8) | v0.2.0 Target Contract |
 | :--- | :--- | :--- | :--- |
@@ -83,9 +83,9 @@ Auditing Termux's official `proot-distro` (`commands/login/__init__.py`) against
 ### 2.2 Forensic Discovery: The Disconnected CLI-to-Engine Plumbing
 A deep code inspection across `crates/podnext/src/main.rs`, `crates/podnext/src/native.rs`, and `crates/proot-distro-core/src/runtime.rs` reveals the exact mechanical breakdown:
 
-1. **CLI Layer (`main.rs:2117`)**: `cmd_run` declares `_volume: Vec<String>`, `_publish: Vec<String>`, `_workdir: Option<String>`, `_user: Option<String>`, prepending underscores to silence compiler dead-code warnings. These values are never passed downstream.
-2. **Native Dispatcher (`native.rs:497`)**: `login_container_native` accepts only `(container, user, isolated, cmd)`. Any bind mounts or environment variables passed on the command line cannot be received.
-3. **Core Engine (`runtime.rs:113`)**: `ProotRuntimeBackend::execute` populates `engine_guard.config.bind` strictly from `container.config.bind_mounts` stored statically on disk at container installation time. Dynamic per-invocation bindings never reach the PRoot argument builder.
+1. **CLI Layer at `main.rs:2117`**: `cmd_run` declares `_volume: Vec<String>`, `_publish: Vec<String>`, `_workdir: Option<String>`, and `_user: Option<String>`. `cmd_run` prepends underscores to silence compiler dead-code warnings. These values are never passed downstream.
+2. **Native Dispatcher at `native.rs:497`**: `login_container_native` accepts only `(container, user, isolated, cmd)`. Any bind mounts or environment variables from the command line cannot arrive.
+3. **Core Engine at `runtime.rs:113`**: `ProotRuntimeBackend::execute` populates `engine_guard.config.bind` only from `container.config.bind_mounts`. That list is stored statically on disk at container installation time. Dynamic per-invocation bindings never reach the PRoot argument builder.
 
 #### Required Plumbing Overhaul for v0.2.0:
 - Define an `InvocationOverrides` struct in `proot-distro-core`:
@@ -101,27 +101,27 @@ A deep code inspection across `crates/podnext/src/main.rs`, `crates/podnext/src/
   }
   ```
 - Pass `InvocationOverrides` through `cmd_login` / `cmd_run` -> `login_container_native` -> `distro_core.login_with_overrides()` -> `backend.execute_with_overrides()`.
-- Merge dynamic binds with static binds in `runtime.rs:113` before constructing `-b <src>:<dst>`.
+- Merge dynamic binds with static binds in `runtime.rs:113`. Do the merge before you construct `-b <src>:<dst>`.
 
-### 2.3 Security Matrix for Custom Binds (`--bind`)
-In v0.1.8, arbitrary path traversal in volume creation was discovered (Finding 05-2). The `--bind` engine in v0.2.0 must enforce strict guardrails:
+### 2.3 Security Matrix for Custom Binds `--bind`
+In v0.1.8, the project discovered arbitrary path traversal in volume creation. The finding is 05-2. The `--bind` engine in v0.2.0 must enforce strict guardrails:
 1. **Canonicalization**: Resolve host path with `std::fs::canonicalize()`.
 2. **Deny List**:
-   - Host `/proc` and `/sys` cannot be bound raw (causes kernel telemetry leak and potential PRoot hang).
+   - A raw bind of host `/proc` and `/sys` is forbidden. The bind causes a kernel telemetry leak and a possible PRoot hang.
    - Host `$PREFIX/etc/passwd` cannot be bound directly over guest authentication tables.
 3. **Android Storage Isolation**:
-   - Warn or guard against binding `/storage/emulated/0` (shared SD card) with execute bits unless `exec` emulation is explicitly requested.
+   - Warn about a bind of `/storage/emulated/0`, the shared SD card, with execute bits. Guard that bind unless the user requests `exec` emulation explicitly.
 
 ---
 
 ## 3. Subsystem C: Guest Environment & Sysdata Emulation
 
 ### 3.1 The 6 Sysdata Vectors (Findings 11-6 through 11-11)
-Swarm audit Subagent 11 isolated 6 subtle runtime breaks in guest processes (`systemd-detect-virt`, `htop`, `neofetch`, `apt`, `node`):
+Swarm audit Subagent 11 isolated 6 subtle runtime breaks in guest processes. The processes are `systemd-detect-virt`, `htop`, `neofetch`, `apt`, and `node`.
 
-#### Vector 1: `/proc/mounts` Reality Drift (11-1)
-- **Current State**: Empty or raw host mounts showing Termux internal private mount namespace (`/dev/block/dm-... on /data ...`).
-- **Failure**: Package managers (e.g. `dpkg`, `pacman`) fail disk space checks (`df -P /`) because the root filesystem `/` is not represented as a writable mount point.
+#### Vector 1: `/proc/mounts` Reality Drift, 11-1
+- **Current State**: Empty or raw host mounts show the Termux internal private mount namespace. An example is `/dev/block/dm-... on /data ...`.
+- **Failure**: Package managers such as `dpkg` and `pacman` fail disk space checks. The command is `df -P /`. The root filesystem `/` is not represented as a writable mount point.
 - **v0.2.0 Fix**: Synthesize a standard Linux VFS table:
   ```text
   rootfs / rootfs rw 0 0
@@ -133,16 +133,15 @@ Swarm audit Subagent 11 isolated 6 subtle runtime breaks in guest processes (`sy
   tmpfs /tmp tmpfs rw,nosuid,nodev,relatime,size=65536k 0 0
   ```
 
-#### Vector 2: `/etc/resolv.conf` Desynchronization (11-2)
-- **Current State**: Container creation copied host `resolv.conf` once. When the mobile device toggles between Wi-Fi and Cellular (LTE/5G), DNS nameservers change, rendering guest network dead.
-- **v0.2.0 Fix**: Dynamic injector on every `login`/`run`:
-  Inspect Android system DNS via `getprop net.dns1` or fallback to quad-eight (`8.8.8.8`, `1.1.1.1`), atomic write to `<guest>/etc/resolv.conf` before launching PRoot.
+#### Vector 2: `/etc/resolv.conf` Desynchronization, 11-2
+- **Current State**: Container creation copied host `resolv.conf` once. The mobile device toggles between Wi-Fi and Cellular LTE or 5G. The DNS nameservers change. These changes render the guest network dead.
+- **v0.2.0 Fix**: A dynamic injector runs on every `login` and `run`. Inspect the Android system DNS through `getprop net.dns1`. Use a fallback to quad-eight `8.8.8.8` and `1.1.1.1`. Write atomically to `<guest>/etc/resolv.conf` before PRoot starts.
 
-#### Vector 3: Android UID / Host Leak (11-3)
+#### Vector 3: Android UID and Host Leak, 11-3
 - **Current State**: `/etc/passwd` inside guest maps UID 0 to `root`, but Android SELinux context and `/proc/<pid>/status` leak `u0_aXXX` identity.
 - **v0.2.0 Fix**: Bind a sanitized `/proc/stat` and `/proc/version` via PRoot `-b /path/to/fake_proc:/proc`.
 
-#### Vector 4: Sysfs Skeleton (`/sys`) & IPC (11-6)
+#### Vector 4: Sysfs Skeleton `/sys` and IPC, 11-6
 - **Current State**: Missing `/sys` causes `udev`, `mesa`, and system diagnostic tools to crash.
 - **v0.2.0 Fix**: Provide a synthetic `sysfs` tree containing minimal nodes:
   - `/sys/class/net/`
@@ -167,8 +166,8 @@ To make PDN reliable for automated agents, CI, and shell scripts, exit codes mus
 | **127** | Command Not Found | Guest binary does not exist in `$PATH`. |
 | **128+N**| Terminated by Signal | Guest killed by signal `N` (e.g. 137 = SIGKILL, 139 = SIGSEGV, 143 = SIGTERM). |
 
-### 4.2 Stream Separation (stdout vs stderr)
-In automated mode (`--format json` or `-f json`):
+### 4.2 Stream Separation of stdout and stderr
+In automated mode with `--format json` or `-f json`:
 - `stdout`: **STRICTLY PURE JSON**. No progress bars, no human warnings, no colored text.
 - `stderr`: Human telemetry, logging, spinners, warnings, and error diagnostics.
 

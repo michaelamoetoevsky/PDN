@@ -5,19 +5,19 @@
 PodNext runs a guest with one of two engines, and the difference is what actually executes the guest's
 programs.
 
-- `native` is the engine that ships inside PodNext (`proot_core::native_run`). It attaches to the guest
-  with `ptrace`, translates the guest's file paths as they cross into the host, and never executes a
-  `proot` binary. It has been the default since 2026-11-09.
+- `native` is the engine that ships inside PodNext, in `proot_core::native_run`. It attaches to the
+  guest with `ptrace`, translates the guest's file paths as they cross into the host, and never
+  executes a `proot` binary. It has been the default since 2026-11-09.
 - `proot` is the legacy path: PodNext assembles a command line and executes the host `proot` binary,
   which then does the same job in C.
 
 What each engine does NOT do is worth stating plainly, because both are easy to over-read.
 
-- `native` does not emulate every kernel call the way `proot` does. Where the host refuses an operation
-  (opening `/sys`, for instance), the native engine passes that refusal through instead of inventing a
-  successful answer. It does rewrite the four identity calls (`getuid`, `geteuid`, `getgid`, `getegid`)
-  to zero, which is a deliberate and documented divergence that mirrors what `proot` does through
-  `--change-id=0:0:0`.
+- `native` does not emulate every kernel call the way `proot` does. Where the host refuses an
+  operation, for example an open of `/sys`, the native engine passes that refusal through. It does not
+  invent a successful answer. It does rewrite the four identity calls `getuid`, `geteuid`, `getgid`, and
+  `getegid` to zero. That rewrite is a deliberate and documented divergence. It mirrors what `proot`
+  does through `--change-id=0:0:0`.
 - `proot` does not need to be installed for the default engine to work. A missing `proot` binary is only
   a problem when you ask for `--engine proot`, which is why `podnext doctor` reports it as a warning
   rather than a failure.
@@ -27,7 +27,7 @@ for the list of measured differences that remain.
 
 ## How To Use
 
-Run a container on the default engine (nothing to add):
+Run a container on the default engine. You add nothing:
 
 ```bash
 podnext run mycontainer -- /bin/sh -c 'cat /etc/os-release'
@@ -52,9 +52,9 @@ PROOT_BIN=/path/to/a/decoy/script podnext run mycontainer -- /bin/sh
 
 The second form is the stronger one: point `PROOT_BIN` at a script that writes a file, and the file's
 absence afterwards is evidence that the engine never executed it. The repository's acceptance harness does
-exactly this (`scripts/own_engine_acceptance.py`).
+exactly this, in `scripts/own_engine_acceptance.py`.
 
-To check your host before blaming a container:
+To check your host before you blame a container:
 
 ```bash
 podnext doctor
@@ -69,9 +69,10 @@ a `warn`, because the default engine does not use it.
   the legacy path, or leave it alone and get `native`.
 - `PROOT_BIN` overrides the path to the `proot` binary, and is read only by the `proot` engine.
 - `PATH` matters only to the `proot` engine, which resolves the binary through it.
-- Environment variables for the guest come from the container's own configuration (`podnext config set
-  <container> env.NAME=VALUE`), not from the host, and the engine forwards them unchanged. That is true for
-  both engines: the difference is who executes the guest, not what the guest sees.
+- Environment variables for the guest come from the container's own configuration, through
+  `podnext config set <container> env.NAME=VALUE`. The variables do not come from the host, and the
+  engine forwards them unchanged. That is true for both engines. The difference is who executes the
+  guest, not what the guest sees.
 
 ## Example
 
@@ -93,11 +94,11 @@ $ podnext --engine proot run deb-real -- /bin/sh -c 'test -x /bin/ls && echo Y |
 Y
 ```
 
-One divergence you can see directly, and it is explained rather than hidden: the `argv[0]` of a program the
-guest spawns is the guest interpreter under `native`, because a matching interpreter invocation carries the
-program as its argument. The program's own `argv[0]` is preserved through the interpreter's `--argv0` option
-where the interpreter has one; this host's Android `linker64` does not, so the fallback shows the program
-path instead.
+One divergence is visible directly, and this document explains it rather than hides it. The `argv[0]` of a
+program that the guest spawns is the guest interpreter under `native`. A matching interpreter invocation
+carries the program as its argument. The program's own `argv[0]` is preserved through the `--argv0` option of
+the interpreter where that interpreter has the option. This host's Android `linker64` has no such option, so
+the fallback shows the program path.
 
 ## Two programs, two stores
 
@@ -108,6 +109,6 @@ path instead.
 | `podnext` | `$HOME/.podnext/containers/<name>/rootfs` | this project |
 | `proot-distro` | its own layout under the Termux prefix | the Termux package this project replaces; separate CLI, separate store |
 
-If `podnext list` shows your container but `proot-distro login <name>` says the container is not installed,
-nothing is broken: the second command is a different program looking in a different place. Use `podnext
-login <name>`.
+If `podnext list` shows your container, but `proot-distro login <name>` says the container is not
+installed, nothing is broken. The second command is a different program that looks in a different place.
+Use `podnext login <name>`.

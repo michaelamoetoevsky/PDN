@@ -1,8 +1,8 @@
 # PDN v0.3.0 - competitive matrix against Termux's proot-distro
 
-Four axes, because the goal was stated as four axes. Every number below says HOW it was measured; where a number
-does not exist yet it is marked MEASURE and given the command that would produce it. Prose verdicts come from
-`research/V030_COMPONENT_CONFIRMATION.md` and its three evidence files; nothing here is inferred from them that they
+Four axes, because the goal was stated as four axes. Every number below says HOW it was measured. Where a number
+does not exist yet, it is marked MEASURE and carries the command that produces it. Verdicts in prose come from
+`research/V030_COMPONENT_CONFIRMATION.md` and its three evidence files. Nothing here is inferred from them that they
 do not say.
 
 ## 1. Mobility - the axis that decides the comparison
@@ -33,8 +33,8 @@ rewards. R3 re-orders v0.3.0 to attack C4 and C3 first for exactly this reason.
 | image/content store with layer blobs | no (#37/#39) | no (#37/#39) | **the one capability YES**: five mechanisms named in the confirmation table |
 | guest FUSE | no | no | parity |
 
-Verdict: capability is a parity axis today, not a losing one. The only thing that changes it for v0.3.0 is the image
-store, and that changes the *mobility* story (import/export/dedup), not the envelope.
+Verdict: capability is a parity axis today, not a losing one. Only one item changes it for v0.3.0: the image
+store. That item changes the *mobility* story, which is import, export, and dedup. It does not change the envelope.
 
 ## 3. Stability - the axis where PDN has been spending its effort, measured
 
@@ -46,8 +46,8 @@ store, and that changes the *mobility* story (import/export/dedup), not the enve
 | orphan survivors | measured in the campaign: 2.730 s and 3.046 s with PPID 1 - **A22 is closing this now**, the one stability mechanism round 2 marked YES |
 | gate gaps found in the parent's own tooling | 3: a piped gate, a `--cargo` half skipped, and a non-goal stage that certified itself instead of measuring - all three now fixed in `scripts/local_gate.sh` |
 
-Verdict: this is PDN's strongest axis and it is measurable rather than asserted - and the two honesty defects found by
-reading the comparators show the class is not exhausted.
+Verdict: this is the strongest axis of PDN and it is measurable, not asserted. Two honesty defects found by a
+read of the comparators show that the class is not exhausted.
 
 ## 4. Optimization
 
@@ -59,33 +59,33 @@ reading the comparators show the class is not exhausted.
 | the reference's shape, as a target | shroot (a third implementation) measures 12.3x faster than PRoot on 16,384 `stat` calls, 6.6x on `open/close`, 3.6x on file churn - **but 1.53x SLOWER on `fork/exec/wait`** | `docs/shroot-benchmarks.md`, columns as published |
 | why that matters here | selective interception is a different execution model, not a v0.3.0 patch: round 2 marked it **NO** for this release, and the worse number is published by its own authors | round 2, R2-EXECUTION |
 
-Verdict: optimization has one honest open exception (daemon latency) and no v0.3.0 mechanism attached to it. Claiming
-a speed win for v0.3.0 would be inventing one.
+Verdict: optimization has one honest open exception, the daemon latency, and no v0.3.0 mechanism attached to it.
+A claim of a speed win for v0.3.0 invents one.
 
 ## What this matrix says v0.3.0 is
 
-Not a capability release and not a performance release. It is the release where PDN becomes the better **mobility**
-tool - the login polygon, archive and OCI import, portable export, a checksummed URL install the reference cannot
-match - while closing the honesty defects and the orphan leak that its own testing found. The envelope stays narrow,
-and the documents say so.
+This is not a capability release and not a performance release. It is the release where PDN becomes the better
+**mobility** tool. The work covers the login polygon, archive and OCI import, portable export, and a checksummed URL
+install that the reference cannot match. It also closes the honesty defects and the orphan leak that its own tests
+found. The envelope stays narrow, and the documents say so.
 
 ## Limits of this document
 
 Every MEASURE row is a gap in evidence, not a claim. `install` and `list` timings for the *reference* on this device
-were not taken; the PDN numbers come from the campaign's 606 records and from a read-only baseline run. The comparison
-of code size is context, not a verdict - fewer lines with fewer features is not a win.
+were not taken. The PDN numbers come from the campaign's 606 records and from a read-only baseline run. The comparison
+of code size is context, not a verdict. Fewer lines with fewer features is not a win.
 
 
-## Added after measuring the reference on this device (same night)
+## Added after the reference was measured on this device, the same night
 
-`pd list` takes **957-4,038 ms** here against PDN's **33-88 ms** for the same intent - "show me my containers". The
-caveat is load-bearing and I will not hide it: the reference is a Python program whose shebang is
-`$PREFIX/usr/bin/python3.14`, so an unknown share of that time is interpreter start and module import rather than
-container work. Splitting the two is a MEASURE row that needs a profile of `pd list`, not a stopwatch. What can be
-said without profiling: on this device, invoking the reference to list containers costs seconds, and invoking PDN
-costs tens of milliseconds, and that difference is what a user feels.
+`pd list` takes **957-4,038 ms** here. PDN takes **33-88 ms** for the same intent, "show me my containers". The
+caveat is load-bearing and I will not hide it. The reference is a Python program whose shebang is
+`$PREFIX/usr/bin/python3.14`. An unknown share of that time is interpreter start and module import, not
+container work. To split the two is a MEASURE row that needs a profile of `pd list`, not a stopwatch. One statement is
+possible without a profile. On this device, a call to the reference to list containers costs seconds. A call to PDN
+costs tens of milliseconds. A user feels that difference.
 
-The store comparison also comes out closer than the raw numbers suggest: 289 MB over 4 entries is about 72 MB per
-container, against PDN's 853 MB over 10, or 85 MB each - and PDN's figure carries two near-duplicate Debian trees
-that layer deduplication would collapse. The OCI store (C1) is therefore a *size* argument as well as an
-import/export argument.
+The store comparison is also closer than the raw numbers suggest. 289 MB over 4 entries is about 72 MB for each
+container. PDN has 853 MB over 10 entries, or 85 MB each. The PDN figure carries two near-duplicate Debian trees
+that layer deduplication can collapse. The OCI store, item C1, is therefore a *size* argument as well as an
+import and export argument.

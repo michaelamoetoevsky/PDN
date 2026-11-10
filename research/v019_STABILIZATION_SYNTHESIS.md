@@ -1,9 +1,9 @@
 # v0.1.9 Stabilization & Hardening Synthesis Report
 
-**Status**: Eight remediation batches integrated; the `v0.1.9` tag was withdrawn pending roadmap section 9
-**Date**: November 5, 2026 (WIB)
-**Integration head**: `ed7dc3f` (v0.1.9 withdrawn; version back to `0.1.8`)
-**Baseline**: 57 empirically observed audit findings (2 critical, 16 high, 22 medium, 12 low, 5 nit)
+**Status**: Eight remediation batches are integrated. The `v0.1.9` tag was withdrawn pending roadmap section 9
+**Date**: November 5, 2026 WIB
+**Integration head**: `ed7dc3f`. The v0.1.9 tag is withdrawn. The workspace version is back to `0.1.8`
+**Baseline**: 57 empirically observed audit findings. These are 2 critical, 16 high, 22 medium, 12 low and 5 nit
 
 ---
 
@@ -21,12 +21,12 @@
 | **G** | Sysdata virtualization (`/proc`, `/sys`, `/dev`) | 6 (`11-6`..`11-11`) | `wt-fix-g` (`fix/proc-stubs`) | merged (`9dbce8e`) | `sysdata::tests` (5 checks) |
 | **H** | Polish & defect mop-up | 11 (`04-7`..`04-12`, `01-8`..`01-10`) | `wt-fix-h` (`fix/polish`) | merged (`ebffba0`..`8bc2ef4`, 8 commits) | per-finding unit tests |
 
-Twenty commits landed between `7cf3fd4` and the integration head: 18 originating in the
-batches, 2 written during integration (see section 3).
+Twenty commits landed between `7cf3fd4` and the integration head: 18 originate in the
+batches and 2 were written during integration. See section 3.
 
 ---
 
-## 2. Verification Evidence (measured on the Android/Termux target)
+## 2. Verification Evidence Measured on the Android/Termux Target
 
 | Command | Result |
 | :--- | :--- |
@@ -38,60 +38,60 @@ batches, 2 written during integration (see section 3).
 | `build_issue_ledger.py --offline --json` (source predicates) | 55 PASS / 0 FAIL / 4 SKIPPED of 59 checks |
 | `build_issue_ledger.py --cargo` (full verdicts) | **59 PASS / 0 FAIL / 0 SKIPPED** of 59 checks |
 
-The four cargo-gated behaviour checks (`#16`, `#18`, `#25`, `#31`) carry verdicts in the `--cargo`
-run recorded above; the source-only run leaves them `SKIPPED`, and a `SKIPPED` check is never a pass.
-The `Issue ledger` CI workflow (the required status check on this branch) runs the same gate with
-`--cargo`.
+The four cargo-gated behaviour checks `#16`, `#18`, `#25` and `#31` carry verdicts in the
+`--cargo` run recorded above. The source-only run leaves them `SKIPPED`, and a `SKIPPED`
+check is never a pass. The `Issue ledger` CI workflow, the required status check on this
+branch, runs the same gate with `--cargo`.
 
-`cargo test --workspace` is run on the device with `-j 1` under the memory guard; release
-builds and the full matrix remain the CI's job, because a release build on the device
-exceeds the 2400 MB budget and the guard kills it (`BUILD_RC=137`).
+`cargo test --workspace` runs on the device with `-j 1` under the memory guard. Release
+builds and the full matrix remain the job of CI. A release build on the device exceeds the
+2400 MB budget and the guard kills it with `BUILD_RC=137`.
 
 ---
 
-## 3. Integration-Only Defects (invisible to per-batch CI)
+## 3. Integration-Only Defects Invisible to Per-Batch CI
 
-Per-batch verification cannot see these: they appear only when the branches meet, or only
-on the target device. All four were found by running the merged tree, and all four are
+Per-batch verification cannot see these defects. They appear only when the branches meet,
+or only on the target device. All four came from a run of the merged tree. All four are
 fixed in `a52029f`, `2925626` and `c3139bb`.
 
-1. **Duplicate symbols from a union-of-hunks conflict resolution (`E0428`).**
-   Batches C and G both edited `crates/proot-distro-core/src/sysdata.rs`. The conflict was
-   resolved by keeping both sides of every region, which left two definitions of
-   `FAKE_MOUNTS` and two of `fake_vmstat`. The crate did not compile at all.
-   Fix: keep the richer mount table (`/dev`, `/dev/shm`, `/tmp` included) and the helper
-   that reads `host_mem_free_kb()`, drop the older duplicates.
+1. **Duplicate symbols from a union-of-hunks conflict resolution, error `E0428`.**
+   Batches C and G both edited `crates/proot-distro-core/src/sysdata.rs`. The conflict
+   resolution kept both sides of every region. It left two definitions of `FAKE_MOUNTS` and
+   two of `fake_vmstat`. The crate did not compile at all.
+   Fix: keep the richer mount table with `/dev`, `/dev/shm` and `/tmp`. Keep the helper
+   that reads `host_mem_free_kb()`. Drop the older duplicates.
 
-2. **Borrow conflict in the proot spawn path (`E0499`).**
+2. **Borrow conflict in the proot spawn path, error `E0499`.**
    `crates/proot-core/src/lib.rs` acquired the command's mutable reference before
    `.spawn()`. Only visible once the umask/pgid work met the `pre_exec` hook.
    Fix: call `pre_exec` on `cmd` first, then chain `stdout`/`stderr`/`stdin`/`process_group(0)`
    into a single `.spawn()`.
 
-3. **A read probe on `/dev/ptmx` blocks forever — the test hung instead of failing.**
+3. **A read probe on `/dev/ptmx` blocks forever, so the test hung and did not fail.**
    `sysdata::bindings()` probes host paths with `readable()`, which opens the path and reads
    one byte. On a device where `/sys` and `/dev` cannot be listed, the `/dev` mask branch
    runs and probes the device nodes. A 1-byte read from a PTY master waits for data the
    slave never sends, so `bindings()` never returned:
    `sysdata::tests::ensure_writes_every_entry_then_bindings_cover_the_blocked_ones` stalled
-   past 180 s (memguard peak 86 MB, `--test-threads=1`), where CI's Ubuntu runner lists
-   `/dev` normally and skips the branch entirely.
+   past 180 s, with a memguard peak of 86 MB and `--test-threads=1`. The CI Ubuntu runner
+   lists `/dev` normally and skips the branch entirely.
    Fix: `readable()` returns true on metadata alone for a character device, so the guest
-   still gets the real `/dev/null`, `/dev/zero`, `/dev/urandom` and `/dev/ptmx` bound
-   without ever reading from one.
+   still gets the real `/dev/null`, `/dev/zero`, `/dev/urandom` and `/dev/ptmx` bound and
+   never reads from one.
    The same test then failed fast on a second, independent defect: it asserted that
    `/sys/fs/selinux` is always bound, but the two mask branches are mutually exclusive. On
    Android the whole `/sys` tree is masked, so the assertion now accepts either mask.
 
 4. **A cross-crate assertion left stale by a new bind.**
-   Batch G added a second bind to `proot_distro_core::guestdirs::bindings()`
-   (`<container>/tmp:/tmp`, so the guest gets a writable `/tmp` from its own directory
-   rather than the host's) and updated the tests inside `guestdirs`. The colon-free
-   store-key test in `crates/podnext/src/commands/mod.rs` — a different crate — asserted
-   that every bind ends with `:/dev/shm`, so the merged tree failed with
-   `unexpected bind: <tmpdir>/tmp:/tmp`. The code is right; the assertion now accepts
-   either target while keeping its real intent (exactly one colon, and only directories
-   PDN owns). Re-run: `cargo test -p podnext --bin podnext` → 32 passed / 0 failed.
+   Batch G added a second bind to `proot_distro_core::guestdirs::bindings()` as
+   `<container>/tmp:/tmp`. The guest then gets a writable `/tmp` from its own directory and
+   not from the host directory. Batch G updated the tests inside `guestdirs`. The
+   colon-free store-key test in `crates/podnext/src/commands/mod.rs`, a different crate,
+   asserted that every bind ends with `:/dev/shm`. The merged tree failed with
+   `unexpected bind: <tmpdir>/tmp:/tmp`. The code is right. The assertion now accepts
+   either target and keeps its real intent: exactly one colon, and only directories PDN
+   owns. Re-run: `cargo test -p podnext --bin podnext` → 32 passed / 0 failed.
 
 Lesson: "does it compile" and "do the unit tests pass" are per-branch questions. The
 integration tree needs its own compile, its own test run, and its own ledger pass before
@@ -101,42 +101,45 @@ release.
 
 ## 4. Integrated Behaviour Highlights
 
-### 4.1 Critical hardening — zero-lie engine
-- **argv non-UTF8 sanitization (`#41`)**: `std::env::args_os()` + `to_string_lossy()`
-  replaces `std::env::args()`; regression test `crates/podnext/tests/argv_nonutf8.rs`.
-- **Deceptive `image pull` neutralized (`01-1`)**: bails with exit 1 and points the user at
-  `podnext install`, instead of fabricating a local container.
+### 4.1 Critical Hardening and the Zero-Lie Engine
+- **argv non-UTF8 sanitization for issue `#41`**: `std::env::args_os()` + `to_string_lossy()`
+  replaces `std::env::args()`. The regression test is `crates/podnext/tests/argv_nonutf8.rs`.
+- **Deceptive `image pull` neutralized for finding `01-1`**: it bails with exit 1 and points
+  the user at `podnext install`. It does not fabricate a local container.
 
-### 4.2 Storage and name hygiene (Batch A)
+### 4.2 Storage and Name Hygiene for Batch A
 - `validate_container_name` is the single validator behind container, volume and network
   names: `../`, control bytes, empty names and invalid delimiters are rejected.
 - `volume rm` deletes the mountpoint directory and returns non-zero when a removal fails.
 
-### 4.3 Guest environment (Batches B, C, G)
-- Truthful `/proc/mounts` and `/etc/mtab`; host PIDs masked out of the guest's `/proc`.
+### 4.3 Guest Environment for Batches B, C and G
+- The guest gets truthful `/proc/mounts` and `/etc/mtab`. The host PIDs are masked out of
+  the guest's `/proc`.
 - `/etc/resolv.conf` is written when a docker image ships none, so `apk update` resolves.
 - `/sys` masked, `/proc/net`, `/proc/filesystems`, `/proc/cmdline` stubbed, `umask 022`.
 - Interactive prompts and progress messages go to stderr, so `--format json` output stays
-  parseable; a non-tty stdin without `--force`/`--yes` is an error, not a silent no-op.
+  parseable. A non-tty stdin without `--force`/`--yes` is an error, not a silent no-op.
 
-### 4.4 Documentation honesty (Batches D, F, H)
-- Fictitious `podnext storage` group purged; fictitious exit codes 3–12 replaced by the real
-  codes (0, 1, 2, child pass-through); phantom Clap options removed from the reference.
-- Top-level `--help` examples standardized to English; unimplemented build stubs annotated
-  and warned about on stderr.
+### 4.4 Documentation Honesty for Batches D, F and H
+- The fictitious `podnext storage` group is purged. The fictitious exit codes 3 to 12 are
+  replaced by the real codes 0, 1, 2 and the child pass-through code. The phantom Clap
+  options are removed from the reference.
+- Top-level `--help` examples are standardized to English. Unimplemented build stubs are
+  annotated and warned about on stderr.
 
 ---
 
-## 5. Release Status: v0.1.9 WITHDRAWN — roadmap section 9 is not met
+## 5. Release Status: v0.1.9 WITHDRAWN and Roadmap Section 9 Is Not Met
 
 The `v0.1.9` tag and GitHub release were created on 2026-11-05 and **withdrawn the same day**:
-`gh release delete v0.1.9 --cleanup-tag`, the remote tag deleted, `releases/tags/v0.1.9` now answers
-404 and `v0.1.8` is Latest again. The version bump was reverted in `ed7dc3f` (workspace version back
-to `0.1.8`), because the artifact claimed a milestone that is not implemented.
+`gh release delete v0.1.9 --cleanup-tag`, the remote tag deleted, `releases/tags/v0.1.9` now
+answers 404 and `v0.1.8` is Latest again. The version bump was reverted in `ed7dc3f`, so the
+workspace version is back to `0.1.8`. The artifact claimed a milestone that is not
+implemented.
 
 Reason: `docs/src/v0.1.9-release-strategy.md` scopes v0.1.9 to the audit findings, while
-`docs/src/roadmap.md` section 9 scopes it to stability **plus simplicity/performance plus the interactive
-shell** — and section 9's own acceptance criteria are largely unmet:
+`docs/src/roadmap.md` section 9 scopes it to stability **plus simplicity/performance plus
+the interactive shell**. Section 9's own acceptance criteria are largely unmet:
 
 | section 9 work item | Acceptance criterion | State at `ed7dc3f` |
 |---|---|---|
@@ -151,35 +154,42 @@ shell** — and section 9's own acceptance criteria are largely unmet:
 | release checklist | roadmap section 9 marked shipped, `known-limitations.md`, `CHANGELOG.md`, README "What's New" | `known-limitations.md` and `CHANGELOG.md` absent; section 9 unmarked |
 | release checklist | manual smoke test: install alpine → run → login → remove | not run |
 
-What the withdrawal does **not** invalidate — section 9.1's triage arm is done and verified:
+The withdrawal does **not** invalidate these facts. Section 9.1's triage arm is done and
+verified:
 
-1. C1/C2 plus batches A–H: 20 commits, ledger `--cargo` **59 PASS / 0 FAIL / 0 SKIPPED** of 59 checks
-   (the four gated behaviour checks `#16`, `#18`, `#25`, `#31` now carry verdicts).
-2. CI `14/14 success` on `be4919d` and on `0e00daf` (`Rust Host Build`, `Fuzzing`, `Security Audit`,
-   `Build Documentation`, `PRoot Distro Integration Test`, `Rust Android Cross-Compile (aarch64)`,
-   four NDK cross-compile matrix jobs, `Run Benchmarks`, `Issue ledger`, `Aggregate Artifacts &
-   Checksums`, `Report benchmark results`).
-3. `research/ISSUE_LEDGER.md` regenerated by the script (`64cfc8f`), summary paragraph conditional on
-   the skipped count.
-4. The tag-gated `Release` job in `ci.yml` repaired (`0e00daf`): it never installed the Android Rust
-   target, so its "Build release binaries (Android aarch64)" step died with `E0463`. Still
-   **unobserved on the event it guards** — a `master` push does not run it; the next tag is the
-   evidence.
+1. C1/C2 plus batches A to H: 20 commits, ledger `--cargo` **59 PASS / 0 FAIL / 0 SKIPPED**
+   of 59 checks. The four gated behaviour checks `#16`, `#18`, `#25` and `#31` now carry
+   verdicts.
+2. CI `14/14 success` on `be4919d` and on `0e00daf`. The jobs are `Rust Host Build`,
+   `Fuzzing`, `Security Audit`, `Build Documentation`, `PRoot Distro Integration Test`,
+   `Rust Android Cross-Compile (aarch64)`, four NDK cross-compile matrix jobs,
+   `Run Benchmarks`, `Issue ledger`, `Aggregate Artifacts & Checksums` and
+   `Report benchmark results`.
+3. The script regenerated `research/ISSUE_LEDGER.md` at `64cfc8f`. The summary paragraph
+   stays conditional on the skipped count.
+4. The tag-gated `Release` job in `ci.yml` is repaired at `0e00daf`. The job never installed
+   the Android Rust target, so its `Build release binaries (Android aarch64)` step died with
+   `E0463`. The job stays **unobserved on the event it guards**: a `master` push does not run
+   it. The next tag is the evidence.
 
-Sizing note: the remainder is not a patch release. section 9.3 is the interactive shell, section 9.2 is a CLI split
-and a cached index, and the version after them is **v0.2.0** (roadmap section 10, with the OCI image store
-from section 4.4 as its spine) — there is no v0.1.10.
+Size note: the remainder is not a patch release. Section 9.3 is the interactive shell.
+Section 9.2 is a CLI split and a cached index. The version after them is **v0.2.0**, from
+roadmap section 10, with the OCI image store from section 4.4 as its spine. There is no
+v0.1.10.
 
-Lesson recorded in the skill: a tag is a claim about scope. Check the roadmap section's acceptance
-criteria and the release checklist before creating a public artifact, not after.
+Lesson recorded in the skill: a tag is a claim about scope. Check the acceptance criteria of
+the roadmap section and the release checklist before you create a public artifact. Do not
+check them after the fact.
 
-Next: the section 9 work items above, in the order 9.1 (labels, contract test) → 9.2 (paths, split, index) →
-9.3 (`doctor`, shell), then the release checklist and a single v0.1.9 tag.
+Next: the section 9 work items above, in this order. First 9.1 for the labels and the
+contract test. Then 9.2 for the paths, the split and the index. Then 9.3 for `doctor` and
+the shell. After that, the release checklist and a single v0.1.9 tag.
 
-## 6. Where section 9 stands now (measured 2026-11-05, head `7960de8`)
+## 6. Where Section 9 Stands Now, Measured 2026-11-05 at Head `7960de8`
 
-Section 5 records the withdrawal. This section is the live state, re-measured rather than carried
-forward: every row below was produced by the command named in its evidence column, on this device.
+Section 5 records the withdrawal. This section is the live state, re-measured rather than
+carried forward: every row below was produced by the command named in its evidence column,
+on this device.
 
 | section 9 work item | Acceptance criterion | State | Evidence |
 |---|---|---|---|
@@ -215,10 +225,13 @@ Commits that moved these rows, each with the evidence that closed it:
 
 What the remainder still requires, in the order that least wastes work:
 
-1. **section 9.2 CLI split** — the only item that blocks a release on its own; mechanical, but it must keep
-   `--help` byte-identical, which the contract test already enforces.
-2. **section 9.2 cache and daemon routing** — the two performance criteria, both measurable (p50 < 10 ms).
-3. **section 9.3 terminal fidelity, `detach`/`attach`, quoting table, soak** — the interactive shell, the
-   largest remaining value and the reason section 9.4 keeps the TUI out.
-4. **Release checklist** — `CHANGELOG.md`, README "What's New", section 9 marked shipped, the manual
-   smoke test, and only then a version bump.
+1. **section 9.2 CLI split**. This is the only item that blocks a release on its own. The
+   work is mechanical, but it must keep `--help` byte-identical. The contract test already
+   enforces that.
+2. **section 9.2 cache and daemon routing**. These are the two performance criteria. Both
+   are measurable, with a p50 below 10 ms.
+3. **section 9.3 terminal fidelity, `detach`/`attach`, quoting table, soak**. This is the
+   interactive shell. It holds the largest remaining value and it is the reason section 9.4
+   keeps the TUI out.
+4. **Release checklist**. The items are `CHANGELOG.md`, README "What's New", section 9
+   marked shipped and the manual smoke test. A version bump comes only after them.

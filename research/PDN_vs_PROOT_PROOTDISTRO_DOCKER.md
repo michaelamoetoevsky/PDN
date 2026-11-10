@@ -1,17 +1,18 @@
 # PDN against proot, proot-distro and Docker
 
-**Status**: research dossier, 6 Nov 2026, written against `podnext` v0.2.0 (tag `v0.2.0`, `0881275`).
+**Status**: research dossier, 6 Nov 2026, against `podnext` v0.2.0. The tag is `v0.2.0`. The commit is `0881275`.
 **Purpose**: the three comparators are more mature than PDN in features, ecosystem and infrastructure. This
-document records what they have, what PDN has, and what to take from whom - so the next release follows them
-instead of rediscovering their answers.
+document records what they have, what PDN has, and what to take from whom. The next release thus follows them.
+It does not rediscover their answers.
 
-**Evidence discipline**: every row is marked **M** (measured on this device, with the command), **R** (read
-from a source or package file on this device), or **K** (documented knowledge about the project, not verified
-here). The distinction matters: `docker`'s CLI is installed here and measurable; its daemon is not running and
-was not started, so anything about daemon internals is **K**.
+**Evidence discipline**: every row carries one mark. The mark **M** means measured on this device, with the
+command. The mark **R** means read from a source or package file on this device. The mark **K** means
+documented knowledge about the project, not verified here. The distinction matters. The `docker` CLI is
+installed here and is measurable. Its daemon does not run here, and no test started it. So anything about
+daemon internals is **K**.
 
-Cross-reference: `research/PATH_TRANSLATION_AND_SHIM_INTEGRITY.md` covers the fourth question (PATH
-translation versus shims that can be forged) and is not repeated here.
+Cross-reference: the file `research/PATH_TRANSLATION_AND_SHIM_INTEGRITY.md` covers the fourth question, which
+is PATH translation versus shims that can be forged. This document does not repeat that question.
 
 ---
 
@@ -26,25 +27,22 @@ translation versus shims that can be forged) and is not repeated here.
 | Command surface | 19 options **M** | 18 commands **M** | 17 management commands **M** | 39 commands **M** |
 | Short alias | - | **`pd`**, shipped in the package **M** (`dpkg -L` shows `bin/pd`) | - | none **M** |
 
-The dependency column is the first infrastructure lesson and it is easy to miss: proot-distro is **installable
-and upgradable through apt**, with a versioned dependency on proot. PDN ships a static binary through
-`curl | bash` (section 3.1).
+The dependency column is the first infrastructure lesson and it is easy to miss. proot-distro is
+**installable and upgradable through apt**, with a versioned dependency on proot. PDN ships a static binary
+through `curl | bash`. Refer to section 3.1.
 
 ## 1. Features - what each comparator has that PDN does not
 
 ### 1.1 The execution model, and why the comparison is asymmetric
 
-`proot` is the primitive: 19 options **M** (`-r -b -q -w --kill-on-exit -v -V -h -k -i --link --sysvipc
---ashmem-memfd -H -p -L -R -S`). PDN does not reimplement proot's option surface; it *drives* it. So
-proot's contribution to the comparison is not a feature list to copy but three specifics PDN touches
-directly:
+`proot` is the primitive. It has 19 options **M**:
+`-r -b -q -w --kill-on-exit -v -V -h -k -i --link --sysvipc --ashmem-memfd -H -p -L -R -S`
+PDN does not reimplement the proot option surface. PDN *drives* proot. So the proot contribution to the
+comparison is not a feature list to copy. It is three specifics that PDN touches directly:
 
-- `--ashmem-memfd` **M**: Android shared-memory emulation, the flag that makes `/dev/shm` workable. PDN
-  already isolates `/dev/shm` per container (measured in #66) and this is the underlying knob.
-- `--link` (L2S) **M**: the hardlink-to-symlink conversion, whose in-place-rewrite behaviour PDN has already
-  had to handle during relocation.
-- `-q` **M**: QEMU user-mode emulation, which is the only path to multi-arch here - and PDN exposes it as
-  `--qemu <PATH>` without the emulator bind set the reference adds (`arch.py:308-315`, **R**).
+- `--ashmem-memfd` **M**: Android shared-memory emulation, the flag that makes `/dev/shm` workable. PDN already isolates `/dev/shm` per container, as measured in #66. This is the underlying knob.
+- `--link` **M**, also known as L2S: this flag converts a hardlink to a symlink. PDN has already had to handle its in-place rewrite behaviour during relocation.
+- `-q` **M**: this flag gives QEMU user-mode emulation. That is the only path to multi-arch here. PDN exposes it as `--qemu <PATH>`, without the emulator bind set that the reference adds. The reference is `arch.py:308-315` **R**.
 
 ### 1.2 Docker's management surface, measured, and what it says
 
@@ -64,9 +62,9 @@ Five of those eleven do not exist in PDN in any form, and each is a lesson rathe
 | `checkpoint` **M** | live checkpoint/restore of a running container | none | no - needs daemon-level support PDN cannot have under proot |
 | `builder` **M** | BuildKit-driven builds with cache semantics | `build local` from a Dockerfile, no cache, no multi-stage report | yes, incrementally |
 
-The `plugin` row is the most instructive **M**: the very fact that `compose` and `buildx` are *missing* from
-this CLI while existing in the Docker world is the extension mechanism working as designed. PDN's 39 fixed
-commands have no equivalent, and its `docker`/`compose` subcommands are refusals pointing at the roadmap.
+The `plugin` row is the most instructive **M**. The fact that `compose` and `buildx` are *missing* from this
+CLI shows the extension mechanism at work, because both exist in the Docker world. PDN has 39 fixed commands
+with no equivalent. Its `docker`/`compose` subcommands are refusals that point at the roadmap.
 
 ### 1.3 proot-distro's features PDN lacks, measured
 
@@ -74,24 +72,24 @@ commands have no equivalent, and its `docker`/`compose` subcommands are refusals
 `help search install list login run ps kill remove rename reset backup restore clear-cache copy sync build
 push`. The parity gaps, unchanged from the other dossier and repeated here for completeness of this one:
 
-- `install` from a **rootfs archive or local OCI layout** (**R**, its own help text says "OCI image or rootfs
-  archive") against PDN's registry-reference-only install;
-- `restore` (PDN has `backup`, no counterpart);
-- `clear-cache` (PDN has a cache directory with no eviction command);
+- `install` from a **rootfs archive or local OCI layout** **R**. Its own help text says "OCI image or rootfs
+  archive". PDN installs only from a registry reference.
+- `restore`. PDN has `backup`, but no counterpart.
+- `clear-cache`. PDN has a cache directory, but no eviction command.
 - `--architecture` plus the emulator bind set.
 
 **And one feature of the reference that is not a command at all**: `commands/help/{__init__,pages,render}.py`
-**R** - a paginated, rendered help subsystem inside the CLI. PDN's `--help` is flat text, 23 of 39 commands
-carry no example, and the mdBook is unpublished (section 3.2). The reference treats help as a feature; PDN
-treats it as clap's default.
+**R**: a paginated help subsystem inside the CLI, with rendered output. PDN's `--help` is flat text. 23 of 39
+commands carry no example, and the mdBook is unpublished. Refer to section 3.2. The reference treats help as a
+feature. PDN treats it as the clap default.
 
 ### 1.4 What PDN has that none of them do
 
-Fourteen commands the reference lacks, listed in the other dossier, of which three are worth naming here
-because they are PDN's actual differentiator and should be defended rather than trimmed: `doctor` (host and
-guest diagnostics with the value behind every verdict - *none* of the three comparators has an equivalent),
-`service`/`watchdog`/`quota` (supervision, which Docker delegates to the daemon and proot-distro does not
-have at all), and `sync` with content hashing.
+Fourteen commands the reference lacks are listed in the other dossier. Three of them are worth naming here,
+because they are PDN's actual differentiator. PDN must defend these commands rather than trim them. The
+command `doctor` gives host and guest diagnostics, with the value behind every verdict. None of the three
+comparators has an equivalent. The commands `service`/`watchdog`/`quota` give supervision. Docker delegates
+supervision to the daemon, and proot-distro does not have it at all. The command `sync` hashes content.
 
 ## 2. Ecosystem - how each project is reached, extended and extended by others
 
@@ -109,11 +107,11 @@ Two rows deserve a sentence each, because they are the ecosystem lessons PDN is 
 **The alias is not cosmetic.** `pd` is shipped by the package **M**. It is the cheapest adoption feature in
 this table and PDN has nothing like it.
 
-**No distribution channel is the real gap.** proot and proot-distro arrive through apt, which means signed
-packages, dependency resolution and upgrades; `termux-gui-pm` can then treat a `proot-distro` distro as a
-manageable thing **M**. `podnext` arrives as a script that downloads a binary and installs it with no
-verification (#74), and nothing in the repository can upgrade it. Everything else in this table is a feature;
-this one is whether the project can be adopted at all by someone who is not its author.
+**No distribution channel is the real gap.** proot and proot-distro arrive through apt. That method gives
+signed packages, dependency resolution and upgrades. Then `termux-gui-pm` can treat a `proot-distro` distro as
+a manageable thing **M**. `podnext` arrives as a script that downloads a binary and installs it with no
+verification, as issue #74 records. Nothing in the repository can upgrade it. Everything else in this table is
+a feature. This one is whether a person who is not its author can adopt the project at all.
 
 ## 3. Infrastructure - packaging, supply chain, CI, docs
 
@@ -126,10 +124,10 @@ this one is whether the project can be adopted at all by someone who is not its 
 | Checksums published for users | via the package index **K** | via digests in every reference **K** | computed by the "Aggregate Artifacts & Checksums" job and stored as a **workflow artifact** **M**, invisible to a user |
 | Working installer path | n/a | n/a | `install.sh` prefers a `.deb` that **no workflow produces** **M** |
 
-This is the sharpest infrastructure finding in the document, and it is not a feature request: PDN computes
-what a user needs, and publishes it where only a logged-in maintainer can see it. Docker's answer - pin by
-digest, verify against a signature - is the design to copy, and it is testable: a tampered download must fail
-with both digests printed.
+This is the sharpest infrastructure finding in the document, and it is not a feature request. PDN computes
+what a user needs. It publishes that value where only a logged-in maintainer can see it. Docker's answer is
+to pin by digest and to verify against a signature. This design is the one to copy, and it is testable. A
+tampered download must fail, with both digests printed.
 
 ### 3.2 Documentation
 
@@ -137,24 +135,25 @@ with both digests printed.
 |---|---|---|
 | Site | proot-me.github.io **M**, docs.docker.com **K**, the reference documents itself in-CLI with `help/{pages,render}` **R** | `docs/book.toml` + 16 pages including getting-started, architecture, roadmap, known limitations and CLI reference **M** - and nothing in `.github/workflows/` mentions `pages` or `deploy` **M**, so the book is built in CI and discarded |
 
-PDN's documentation is *better written* than either of the two small comparators - it records measured
-exceptions, declared simplifications and per-command stability - and it is unreachable. Publishing is one
+PDN's documentation is *better written* than either of the two small comparators. It records measured
+exceptions, declared simplifications and per-command stability. Yet it is unreachable. Publishing is one
 workflow file.
 
 ### 3.3 Continuous integration and release machinery
 
-**Measured**: PDN's `.github/workflows/` holds eight workflows - `ci.yml` (host build, four cross-compile
-targets, integration test, security audit, benchmarks, documentation build, artifact aggregation),
-`cross-compile.yml`, `benchmark.yml`, `benchmark-report.yml`, `dependency-updates.yml`,
-`devcontainer-test.yml`, `issue-ledger.yml`, `release.yml`. Fuzzing is wired in. That is not the weak part of
-this project; the weak parts are that `ci.yml` filters on paths, so a documentation-only push runs nothing at
-all (corrected here: an earlier version of this paragraph claimed `ci.yml` had no `workflow_dispatch`; it has
-had one since its first commit - `git show v0.1.8:.github/workflows/ci.yml`, line 26), that the runner's
-warning ceiling cannot be re-recorded without its raw log (#73), that the release body was first
-`git log -n 50` and then, once that was fixed, arrived as 8 KB of notes on **one line** because the workflow
-escaped the notes into a line-oriented Actions output (`#75`, fixed, and the published body repaired), and
-that a second tag-triggered release job in `ci.yml` could never succeed and would have overwritten the
-curated body with stale boilerplate had it ever run (`#77`, removed).
+**Measured**: PDN's `.github/workflows/` holds eight workflows. The names are `ci.yml`, `cross-compile.yml`,
+`benchmark.yml`, `benchmark-report.yml`, `dependency-updates.yml`, `devcontainer-test.yml`, `issue-ledger.yml`
+and `release.yml`. The workflow `ci.yml` does the host build, four cross-compile targets, the integration test,
+the security audit, the benchmarks, the documentation build and artifact aggregation. Fuzzing is wired in. That
+is not the weak part of this project. The weak parts are below. The workflow `ci.yml` filters on paths, so a
+documentation-only push runs nothing at all. An earlier version of this paragraph claimed that `ci.yml` had no
+`workflow_dispatch`. That claim is corrected here. It has had one since its first commit, as
+`git show v0.1.8:.github/workflows/ci.yml` at line 26 shows. The runner warning ceiling cannot be re-recorded
+without its raw log, as issue #73 records. The release body was first `git log -n 50`. Then, once that was
+fixed, the body arrived as 8 KB of notes on **one line**. The workflow escaped the notes into a line-oriented
+Actions output, as issue #75 records. Issue #75 is fixed, and the published body is repaired. A second
+tag-triggered release job in `ci.yml` never can succeed. That job never ran, and it held the power to replace
+the curated body with stale boilerplate. Issue #77 removed it.
 
 Docker's infrastructure lesson is scale rather than shape: separate repositories with their own CI for CLI,
 daemon, compose and buildx **K**, which is also why its `plugin` command exists.
@@ -175,19 +174,13 @@ daemon, compose and buildx **K**, which is also why its `plugin` command exists.
 | 10 | an extension mechanism | **Docker** (`plugin`) | after section 1 of the other dossier: any extension that hands the guest a host file by name is spoofable | a plugin manifest declares what a plugin may do, and the loader refuses anything else |
 | 11 | checkpoint/restore | **Docker** (`checkpoint`) | **not recommended** - needs daemon-level support PDN cannot have under proot | - |
 
-**Ordering argument**: 1-4 are adoption and truthfulness (nothing works if the tool cannot be installed or
-verified), 5-8 are the mobility polygon that `v0.3.0` already owns, 9-10 are architecture, and 11 is listed so
-that the rejection is on the record rather than forgotten.
+**Ordering argument**: 1-4 are adoption and truthfulness. Nothing works if a user cannot install or verify the
+tool. Items 5-8 are the mobility polygon that `v0.3.0` already owns. Items 9-10 are architecture. Item 11 is
+listed so that the rejection is on the record rather than forgotten.
 
 ## 5. What this document does not know
 
-- **Docker's daemon behaviour is unmeasured here.** The CLI is installed (**M**) and the daemon was not
-  started, deliberately: starting a container runtime on this phone is outside the scope of a research task
-  and outside the release window. Every daemon-internal claim above is **K**.
-- **Whether the apt channel's verification is actually enforced end-to-end on Termux** (repository signing
-  keys present and checked) is **K**, not verified; if point 2 of the table is pursued, that is the first
-  thing to measure.
-- **The reference's `help` subsystem output was not read** - the file layout is **R**, the rendered pages
-  were not exercised. Reading them is worth ten minutes before copying the idea.
-- **Whether `docker compose`/`buildx` can be installed as plugins in this Termux environment** is **K**; the
-  absence measured here may be a packaging choice rather than a platform limit.
+- **Docker's daemon behaviour is unmeasured here.** The CLI is installed, with the mark **M**. No test started the daemon. That choice is deliberate. A container runtime on this phone is outside the scope of a research task, and outside the release window. Every daemon-internal claim above is **K**.
+- **Whether the apt channel's verification is actually enforced end-to-end on Termux** is **K**, not verified. That verification covers the repository signing keys. It asks if those keys are present and checked. If the project pursues point 2 of the table, that check is the first thing to measure.
+- **The reference's `help` subsystem output was not read.** The file layout is **R**. No test exercised the rendered pages. Read them before you copy the idea. That work is worth ten minutes.
+- **Whether `docker compose`/`buildx` can be installed as plugins in this Termux environment** is **K**. The absence measured here can be a packaging choice rather than a platform limit.

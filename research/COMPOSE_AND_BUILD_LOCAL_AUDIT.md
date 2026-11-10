@@ -1,18 +1,19 @@
-# Compose export & `build local` — evidence audit
+# Compose export and `build local`: evidence audit
 
-Scope: follow-ups for **#28** (`ServiceConfig::export_to_compose`) and **#29**
-(`podnext build local` produces no image). Read-only against product code; every
-claim below is backed by a command run against the tree or by a standalone
-`rustc` harness. Revision: `3e260dc`.
+Scope: follow-ups for **#28** and **#29**. Issue **#28** is
+`ServiceConfig::export_to_compose`. Issue **#29** is `podnext build local`
+produces no image. This audit is read-only against product code. Every claim
+below is backed by a command run against the tree or by a standalone `rustc`
+harness. Revision: `3e260dc`.
 
 ---
 
-## A. Issue #28 — `ServiceConfig::export_to_compose`
+## A. Issue #28: `ServiceConfig::export_to_compose`
 
 ### A.1 Where the code lives
 
 `export_to_compose` is **not** in the working tree. It is the entire content of
-PR #26 (state OPEN, head `master`). `gh pr diff 26` is `+11 -0`, all
+PR #26. PR #26 has state OPEN and head `master`. `gh pr diff 26` is `+11 -0`, all
 implementation:
 
 ```rust
@@ -33,10 +34,10 @@ and no `mod tests`, so that statement is false.
 
 ### A.2 Field-coverage table
 
-`ServiceConfig` (`crates/pn-next/src/supervisor.rs:45`) carries **one** top-level
-`command` field and ~37 sub-fields across six nested structs. `export_to_compose`
-maps **one** of them (`process.command`), and maps it with `{:?}` rather than a
-serialiser.
+`ServiceConfig` is at `crates/pn-next/src/supervisor.rs:45`. It carries **one**
+top-level `command` field and ~37 sub-fields across six nested structs.
+`export_to_compose` maps **one** of them. It maps `process.command` with `{:?}`
+rather than a serialiser.
 
 | Struct field | Type | Mapped now? | Correct Compose key |
 |---|---|---|---|
@@ -92,19 +93,19 @@ notes.
 ### A.3 Two additional findings beyond the filed follow-ups
 
 1. **Even the "valid" case is not runnable.** `ServiceConfig` has **no `image`
-   field** (and no `build` field), so `export_to_compose` never emits `image:` or
-   `build:`. A service with only `command:` parses as a mapping but Compose V2
-   rejects it (`service "<name>" must specify an image or a build context`). The
-   empty-command defect is the *parse* error; this is the *semantic* error in the
-   case the issue calls "valid Compose". Both ship.
+   field** and no `build` field. So `export_to_compose` never emits `image:` or
+   `build:`. A service with only `command:` parses as a mapping, but Compose V2
+   rejects it with `service "<name>" must specify an image or a build context`.
+   The empty-command defect is the *parse* error. This is the *semantic* error in
+   the case the issue calls "valid Compose". Both ship.
 2. **Duplicate working-directory sources.** `ServiceConfig.working_dir` and
-   `ProcessConfig.cwd` are both working directories; a correct mapping has to
+   `ProcessConfig.cwd` are both working directories. A correct mapping must
    pick a precedence or the export is ambiguous.
 
-### A.4 Escaping claim — tested concretely
+### A.4 Escaping claim: tested concretely
 
-Standalone `rustc` harness (verbatim function body + direct `{:?}` probes),
-`rustc 1.99.1`, no crate build:
+Standalone `rustc` harness with a verbatim function body and direct `{:?}`
+probes. `rustc 1.99.1`. No crate build:
 
 ```
 --- normal ---
@@ -130,30 +131,31 @@ services:
     command: ["ctrl\u{1}char"]
 ```
 
-Reading:
-- **quotes / backslashes agree with YAML.** `{:?}` prints `["a\"b", "c\\d"]`;
+Interpretation:
+- **quotes / backslashes agree with YAML.** `{:?}` prints `["a\"b", "c\\d"]`.
   YAML double-quoted scalars use the same `\"` / `\\` escapes. No divergence.
-- **a control character diverges.** Rust emits `\u{1}` (braced, no zero-padding).
-  YAML double-quoted scalars have no braced form; they need `\x01` (8-bit) or
-  `\u0001` (16-bit). Confirmed by parsing both with a YAML loader:
+- **a control character diverges.** Rust emits `\u{1}` in braced form, with no
+  zero-padding. YAML double-quoted scalars have no braced form. They need `\x01`
+  for the 8-bit form or `\u0001` for the 16-bit form. A YAML loader test confirms
+  both cases:
 
 ```
 y1.yaml  (a: "ctrl\u{1}char")  →  ScannerError while scanning a double-quoted scalar
 y2.yaml  (a: "ctrl\x01char")   →  OK, decodes to ['0x63','0x74','0x72','0x6c','0x1','0x63','0x68','0x61','0x72']
 ```
 
-So an argument containing a control character produces a file Compose cannot
-parse. `serde_yaml = "0.9"` is already a dependency of the same crate
-(`crates/pn-next/Cargo.toml:67`), so `#[derive(Serialize)]` + `serde_yaml::to_string`
-removes the hand-rolled escape layer entirely.
+So an argument with a control character produces a file Compose cannot
+parse. `serde_yaml = "0.9"` is already a dependency of the same crate at
+`crates/pn-next/Cargo.toml:67`. So `#[derive(Serialize)]` +
+`serde_yaml::to_string` removes the hand-rolled escape layer entirely.
 
-### A.5 The rest of the carried-over review items (confirmed)
+### A.5 Confirmed carried-over review items
 
-- **`version: '3.8'`** is emitted unconditionally; the Compose Specification
-  deprecates it (V2 warns and ignores). Modern files start at `services:`.
+- **`version: '3.8'`** is emitted unconditionally. The Compose Specification
+  deprecates it. V2 warns and ignores it. Modern files start at `services:`.
 - **Placement.** The `impl ServiceConfig` block is appended after the closing
-  brace of `mod tests` at end of file (diff hunk `@@ -2363,3 +2363,14 @@`), not
-  next to the other `ServiceConfig` impls.
+  brace of `mod tests` at end of file. It follows diff hunk
+  `@@ -2363,3 +2363,14 @@`. It is not next to the other `ServiceConfig` impls.
 - **No test**, so the empty-command case is unguarded.
 
 ### A.6 Honest gap list for #28
@@ -164,73 +166,75 @@ removes the hand-rolled escape layer entirely.
 2. No `image`/`build` key is ever emitted → every export is semantically invalid
    for Compose, not just the empty-command one.
 3. No test, despite the PR body claiming coverage.
-4. Hand-rolled YAML; `{:?}` is not a YAML serialiser (control chars break it).
-5. Only one field mapped; `env`/`working_dir` are the cheap, high-value next two.
+4. Hand-rolled YAML. `{:?}` is not a YAML serialiser. Control chars break it.
+5. Only one field mapped. `env`/`working_dir` are the cheap, high-value next two.
 6. `version: '3.8'` deprecated.
 7. Ambiguous `working_dir` vs `ProcessConfig.cwd` precedence.
 8. Placement after `mod tests`.
 
 ---
 
-## B. Issue #29 — `podnext build local` computes a layer diff but produces no image
+## B. Issue #29: `podnext build local` computes a layer diff but produces no image
 
 ### B.1 What `cmd_build_local` actually does
 
 `crates/podnext/src/commands/mod.rs:2036`. In order:
 
-1. Resolves the Dockerfile path (`-f`, else `<path>/Dockerfile`); bails only if the
-   **Dockerfile** is missing. The build context `path` is never required to exist.
+1. Resolves the Dockerfile path from `-f`, or else `<path>/Dockerfile`. It
+   bails only if the **Dockerfile** is absent. The build context `path` is never
+   required to exist.
 2. `preprocess_build_args` strips `ARG` lines and substitutes `$NAME`/`${NAME}`
-   (`mod.rs:2119`). *(Added for #17.)*
-3. `parse_dockerfile` (`proot-distro-core`) → prints every instruction.
-4. Walks the instructions and records `base_image` from `FROM` — **prints it and
-   never pulls or resolves it.**
+   at `mod.rs:2119`. *Added for #17.*
+3. `parse_dockerfile` from `proot-distro-core` prints every instruction.
+4. Walks the instructions and records `base_image` from `FROM`. It **prints it
+   and never pulls or resolves it.**
 5. Executes each `RUN` via `execute_run` → `sh -c` with cwd = the context
-   directory (`mod.rs:2203`). *(Added for #17.)*
+   directory at `mod.rs:2203`. *Added for #17.*
 6. If `path` exists: `compute_layer_diff(dummy_base, &path, out_tar)` with a
    throwaway empty `tempfile::tempdir()` as the base, prints
    `Generated layer blob: digest=…, size=…`, then **deletes the tarball**
-   (`mod.rs:2104-2106`).
+   at `mod.rs:2104-2106`.
 7. Prints `Successfully built image '<tag>'` and returns `Ok(())`.
 
-`compute_layer_diff` (`crates/proot-distro-core/src/layer_diff.rs:127`) diffs two
-directories and writes a tar.gz of the changes. With an empty base, every file in
-the context is "added", so the produced blob is the **raw context directory**
-tarred — no base-image layers, no OCI manifest/config, no image metadata.
+`compute_layer_diff` is at `crates/proot-distro-core/src/layer_diff.rs:127`. It
+diffs two directories and writes a tar.gz of the changes. With an empty base,
+every file in the context is "added". So the produced blob is the **raw context
+directory** in a tar. It has no base-image layers, no OCI manifest/config, and no
+image metadata.
 
 ### B.2 What it produces
 
 - stdout: an instruction listing, an optional `Base image: …` line, a
   `digest=`/`size=` line, and the success line.
-- on disk: nothing durable. The tar.gz is created under `paths::temp_base()`
-  (i.e. `$TMPDIR`) and removed in the same block.
+- on disk: nothing durable. The tar.gz is created under `paths::temp_base()`,
+  which is `$TMPDIR`. It is removed in the same block.
 
 ### B.3 What a real implementation needs
 
 1. **Pull / resolve the base image** from `FROM`. Today `base_image` is only
-   printed. The pull machinery already exists for `install`
-   (`crates/podnext/src/native.rs`: registry token, manifest fetch,
-   `download_and_extract_layers`, `extract_layer`, `patch_rootfs`) — it is simply
+   printed. The pull machinery already exists for `install`. It is at
+   `crates/podnext/src/native.rs`: registry token, manifest fetch,
+   `download_and_extract_layers`, `extract_layer`, `patch_rootfs`. It is simply
    not called from `build local`.
 2. **Assemble a real rootfs.** Apply the context and each instruction's
-   filesystem effect on top of the pulled base, instead of tarring the context in
+2. **Assemble a real rootfs.** Apply the context and each instruction's
+   filesystem effect on top of the pulled base. Do not tar the context in
    isolation. The parser already yields `Copy`, `Add`, `Env`, `Workdir`, `Expose`,
-   `Entrypoint`, `Cmd`, `Label`, `User` (`crates/proot-distro-core/src/dockerfile.rs:8`);
-   `build local` acts only on `Run` and `From`, so the rest are parsed and printed
-   but not applied.
+   `Entrypoint`, `Cmd`, `Label`, `User` at
+   `crates/proot-distro-core/src/dockerfile.rs:8`. `build local` acts only on `Run`
+   and `From`. So the rest are parsed and printed but not applied.
 3. **Register the result so `podnext run <tag>` works.** `run` →
-   `run_container_native` (`native.rs:577`) → `ContainerManager::get(name)`
-   (`container.rs:153`), which returns only entries in the in-memory map.
-   `ContainerManager::new()` populates that map by scanning
+   `run_container_native` at `native.rs:577`, then `ContainerManager::get(name)`
+   at `container.rs:153`. That call returns only entries in the in-memory map.
+   `ContainerManager::new()` populates that map. It scans
    `~/.podnext/containers/*` for directories with a `rootfs/` containing
-   `etc`/`bin`/`usr` and a `metadata.json` (`container.rs:44-124`). So a runnable
+   `etc`/`bin`/`usr` and a `metadata.json` at `container.rs:44-124`. So a runnable
    "image" today *is* a container dir under `~/.podnext/containers/<name>/`, and
    `build local` never creates one. `ContainerPaths` even exposes
-   `images_dir` (`paths.rs:31`, `~/.podnext/images`), but nothing in `build local`
-   touches it.
-4. **Stop claiming success when it is not one.**
+   `images_dir` at `paths.rs:31` and `~/.podnext/images`, but nothing in
+   `build local` touches it.
 
-### B.4 Is the success message still false? — Yes
+### B.4 Is the success message still false? Yes
 
 `crates/podnext/src/commands/mod.rs:2109`:
 
@@ -242,10 +246,10 @@ It is printed **unconditionally**, after all branches, and is preceded by no
 registration step anywhere in the function. Two distinct false cases:
 
 - **Context exists:** a layer diff of the raw context is computed, its digest
-  printed, and the blob deleted — no image is registered, so
+  printed, and the blob deleted. No image is registered. So
   `podnext run <tag>` fails with `Container '<tag>' not found`.
-- **Context missing:** the entire diff block at `mod.rs:2093` is skipped (guarded
-  by `if path.exists()`), and the success line still prints. This is the stronger
+- **Context missing:** the entire diff block at `mod.rs:2093` is skipped. The
+  guard is `if path.exists()`. The success line still prints. This is the stronger
   falsehood: the command reports a built image while having done nothing at all.
 
 The message is therefore still false in the current tree, unchanged by the #17
@@ -266,16 +270,16 @@ work.
 
 ### B.6 Honest gap list for #29
 
-1. No base-image pull/resolution — `FROM` value is inert.
-2. No rootfs assembly — the "layer diff" is the context alone, against an empty
+1. No base-image pull/resolution. The `FROM` value is inert.
+2. No rootfs assembly. The "layer diff" is the context alone, against an empty
    base, then discarded.
-3. No registration — no container dir, no metadata, no image store entry, so
-   `run <tag>` cannot find the result.
+3. No registration. There is no container dir, no metadata, no image store entry.
+   So `run <tag>` cannot find the result.
 4. `Successfully built image` prints even when the context path does not exist and
-   nothing was computed.
-5. Only `RUN` is applied; the other parsed instructions (`COPY`, `ADD`, `ENV`,
-   `WORKDIR`, `USER`, `EXPOSE`, `ENTRYPOINT`, `CMD`, `LABEL`) are no-ops.
-6. Parser-level `ARG` is still a `build local` workaround; the clean home is a
+   it computed nothing.
+5. Only `RUN` is applied. The other parsed instructions are no-ops. They are
+   `COPY`, `ADD`, `ENV`, `WORKDIR`, `USER`, `EXPOSE`, `ENTRYPOINT`, `CMD`, `LABEL`.
+6. Parser-level `ARG` is still a `build local` workaround. The clean home is a
    `DockerfileInstruction::Arg` variant.
 
 ---

@@ -2,7 +2,7 @@
 
 PDN provides multiple API interfaces for programmatic access.
 
-## Gateway API (gRPC)
+## Gateway API with gRPC
 
 ### Service Definition
 
@@ -169,7 +169,7 @@ while let Some(response) = stream.next().await {
 }
 ```
 
-## Gateway API (REST)
+## Gateway API with REST
 
 ### Base URL
 
@@ -238,7 +238,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/containers/<id>/exec \
 curl http://127.0.0.1:8080/api/v1/metrics
 ```
 
-## Runtime API (Rust)
+## Runtime API in Rust
 
 ### RuntimeManager
 
@@ -295,7 +295,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### ContainerManager (proot-distro-core)
+### `ContainerManager` in proot-distro-core
 
 ```rust
 use proot_distro_core::{ContainerManager, ImageManager, NetworkManager, StorageManager};
@@ -556,7 +556,7 @@ export PN_GATEWAY_TOKEN="your-token"
 curl -H "Authorization: Bearer $PN_GATEWAY_TOKEN" http://127.0.0.1:8080/api/v1/containers
 ```
 
-### mTLS (Planned)
+### mTLS planned
 
 ```rust
 let channel = Channel::builder("https://[::]:50051")

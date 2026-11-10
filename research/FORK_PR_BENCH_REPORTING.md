@@ -1,19 +1,14 @@
-# Fork-PR benchmark reporting — reproduction, fix, and what is still unverified
+# Fork-PR benchmark reporting: reproduction, fix, and items still unverified
 
-Department: CI Engineering (CIE). Scope: `.github/workflows/benchmark.yml` and the
-new `.github/workflows/benchmark-report.yml`. Base revision `72ef9d6`.
+Department: CI Engineering, known as CIE. Scope: the file `.github/workflows/benchmark.yml` and the new file `.github/workflows/benchmark-report.yml`. Base revision `72ef9d6`.
 
-**Verdict: the limitation is reproduced from raw API/log evidence; the fix is
-locally verifiable only as far as YAML + permission reasoning goes. The "comment
-actually appears on a fork PR" outcome is UNVERIFIED and cannot be verified from
-this environment — see section 5.**
+**Verdict: raw API and log evidence reproduce the limitation. The fix is locally verifiable only for the YAML and the permission reasoning. The result "the comment actually appears on a fork PR" is UNVERIFIED. This environment cannot verify that result. Refer to section 5.**
 
 ---
 
-## 1. Reproducing the limitation against the real API
+## 1. Reproduce the limitation against the real API
 
-All calls read-only: `env -u LD_LIBRARY_PATH gh api …`. Repo
-`michaelamoetoevsky/PDN`.
+All calls are read-only: `env -u LD_LIBRARY_PATH gh api …`. Repo `michaelamoetoevsky/PDN`.
 
 ### 1.1 The run and its job are real, and the run is a fork-PR run
 
@@ -23,12 +18,9 @@ $ env -u LD_LIBRARY_PATH gh api "repos/michaelamoetoevsky/PDN/actions/runs/41848
 {"conclusion":"failure","event":"pull_request","head_branch":"master","head_repository":"gabm0932/PDN","head_sha":"30dabb147ac94b6df636dd6c041d7ef021bd3470","id":41848512267,"pull_requests":[],"workflow_name":"Benchmark"}
 ```
 
-`head_repository: gabm0932/PDN` — the run belongs to a fork, which is exactly the
-condition that makes the token read-only. Note `"pull_requests": []`: **the run's
-own PR association array is empty even though the run is a `pull_request` event
-from PR #26.** That is load-bearing for the fix (section 3.2).
+`head_repository: gabm0932/PDN` shows that the run belongs to a fork. That fork is the condition that makes the token read-only. Note `"pull_requests": []`. **The run's own PR association array is empty.** The run is still a `pull_request` event from PR #26. That fact is load-bearing for the fix in section 3.2.
 
-### 1.2 The step list — the comment step is the only failure
+### 1.2 The step list: the comment step is the only failure
 
 ```
 $ env -u LD_LIBRARY_PATH gh api "repos/michaelamoetoevsky/PDN/actions/jobs/126638857856" \
@@ -49,10 +41,7 @@ $ env -u LD_LIBRARY_PATH gh api "repos/michaelamoetoevsky/PDN/actions/jobs/12663
  {"number":21,"name":"Complete job","conclusion":"success"}]}
 ```
 
-Every benchmark step is `success`; only step 10 fails. (This run predates commit
-`15e1d37`, which added `continue-on-error`; on that run the 403 therefore still
-marked the job failed. Confirmed present on master:
-`15e1d37 fix(ci): make benchmark PR comment non-fatal and grant write perms`.)
+Every benchmark step is `success`. Only step 10 fails. This run predates commit `15e1d37`, which added `continue-on-error`. On that run the 403 still marked the job failed. Confirmed present on master: `15e1d37 fix(ci): make benchmark PR comment non-fatal and grant write perms`.
 
 ### 1.3 The 403, verbatim from the job log
 
@@ -61,7 +50,7 @@ $ env -u LD_LIBRARY_PATH gh api --allow-escape-sequences \
     "repos/michaelamoetoevsky/PDN/actions/jobs/126638857856/logs"
 ```
 
-Relevant lines (timestamps trimmed):
+Relevant lines follow. Timestamps are trimmed.
 
 ```
 POST /repos/michaelamoetoevsky/PDN/issues/26/comments - 403 with id A800:1E03B8:2134AE:6D1752:6AEB4D79 in 226ms
@@ -78,7 +67,7 @@ RequestError [HttpError]: Resource not accessible by integration - https://docs.
       ...
 ```
 
-and the response headers, which name the permission the token was missing:
+and the response headers, which name the permission that the token lacked:
 
 ```
 'x-accepted-github-permissions': 'issues=write; pull_requests=write',
@@ -90,11 +79,7 @@ and the response headers, which name the permission the token was missing:
     }
 ```
 
-The API's own response says the request needed `issues=write; pull_requests=write`.
-The job **requested** those scopes (`benchmark.yml` on master at the time:
-`permissions: {contents: read, issues: write, pull-requests: write}`); the fork run
-did not **receive** them. That is the limitation, reproduced end to end: the fix
-must move the comment out of the fork's token context, not request more scopes.
+The API response says the request needed `issues=write; pull_requests=write`. The job **requested** those scopes. At the time, `benchmark.yml` on master had `permissions: {contents: read, issues: write, pull-requests: write}`. The fork run did not **receive** them. That is the limitation, reproduced end to end. The fix must move the comment out of the fork's token context. The fix must not request more scopes.
 
 ### 1.4 The artifact the reporter must read
 
@@ -111,8 +96,7 @@ Artifact benchmark-results successfully finalized. Artifact ID 13338356144
 Artifact benchmark-results has been successfully uploaded! Final size is 27759 bytes. Artifact ID is 13338356144
 ```
 
-So the run that cannot comment does still produce `benchmark-results` (27,759 bytes)
-— the data the reporter needs is present even when the post is refused.
+So the run that cannot comment does still produce `benchmark-results`, of 27,759 bytes. The data the reporter needs is present even when the post is refused.
 
 ### 1.5 PR resolution: `pull_requests` is empty, `commits/{sha}/pulls` is not
 
@@ -125,10 +109,7 @@ $ env -u LD_LIBRARY_PATH gh api "repos/michaelamoetoevsky/PDN/commits/30dabb147a
 {"base":"master","head_repo":"gabm0932/PDN","number":26,"state":"closed"}
 ```
 
-`commits/{sha}/pulls` resolves the fork run to PR **#26**, with `head_repo:
-gabm0932/PDN` — a second, independent confirmation of the fork. This is the
-fallback the fix uses because `workflow_run.pull_requests` carries the same empty
-array as section 1.1.
+`commits/{sha}/pulls` resolves the fork run to PR **#26**, with `head_repo: gabm0932/PDN`. That is a second, independent confirmation of the fork. The fix uses this fallback because `workflow_run.pull_requests` carries the same empty array as section 1.1.
 
 ---
 
@@ -136,51 +117,26 @@ array as section 1.1.
 
 Two files:
 
-- **NEW** `.github/workflows/benchmark-report.yml` — a `workflow_run` workflow on
-  `Benchmark` `completed`, with `permissions: {actions: read, pull-requests: write,
-  issues: write}`. It downloads the run's `benchmark-results` artifact and posts the
-  summary comment on the originating PR.
-- **CHANGED** `.github/workflows/benchmark.yml` — the in-job
-  `Comment benchmark results on PR` step is **REMOVED**, and the job's write scopes
-  with it (`permissions` is now `{contents: read}` only).
+- **NEW** `.github/workflows/benchmark-report.yml` is a `workflow_run` workflow on `Benchmark` `completed`, with `permissions: {actions: read, pull-requests: write, issues: write}`. It downloads the run's `benchmark-results` artifact and posts the summary comment on the originating PR.
+- **CHANGED** `.github/workflows/benchmark.yml`. The in-job `Comment benchmark results on PR` step is **REMOVED**, and the job's write scopes go with it. `permissions` is now `{contents: read}` only.
 
-### 2.1 Removal vs. reduction — and why
+### 2.1 Removal compared to reduction and the reason
 
-**Chosen: removal, not reduction.** The alternative (keep the step gated to
-same-repo PRs) would post a comment on same-repo PRs from `benchmark.yml` *and*
-again from `benchmark-report.yml` for the same run — two comments, two code paths
-for one job. Removing the step makes the `workflow_run` workflow the single
-commenting path for every PR (fork and same-repo alike). It also lets the
-benchmark job drop `issues: write` + `pull-requests: write`, which is least
-privilege: a job that only builds and uploads now cannot write anything.
+**Chosen: removal, not reduction.** The alternative keeps the step gated to same-repo PRs. That method posts a comment on same-repo PRs from `benchmark.yml` *and* again from `benchmark-report.yml` for the same run. The result is two comments and two code paths for one job. Removal of the step makes the `workflow_run` workflow the single path for comments on every PR, fork and same-repo PRs alike. Removal also lets the benchmark job drop `issues: write` + `pull-requests: write`. That drop is least privilege, because a job that only builds and uploads cannot write anything.
 
 ### 2.2 Why a `workflow_run` workflow is not the fork's context
 
-`workflow_run` is dispatched by the **base** repository, on its default branch,
-when the named workflow completes. The token the reporting workflow gets is
-therefore a normal base-repo token with the scopes declared in its own
-`permissions:` block — it is not the read-only token handed to a `pull_request`
-run from a fork (section 1.3). That is the entire mechanism; no PAT, no `pull_request_target`
-with a checkout, nothing that grants a fork-write primitive.
+`workflow_run` is dispatched by the **base** repository, on its default branch, when the named workflow completes. The token the reporting workflow gets is therefore a normal base-repo token. The scopes come from its own `permissions:` block. That token is not the read-only token handed to a `pull_request` run from a fork. Refer to section 1.3 for that token. That is the entire mechanism. There is no PAT, no `pull_request_target` with a checkout, and nothing that grants a fork-write primitive.
 
 ### 2.3 Why it is safe against fork code
 
-This is the load-bearing property, and it is written into the workflow header so
-nobody "simplifies" it away later:
+This is the load-bearing property, and it is written into the workflow header so nobody "simplifies" it away later:
 
-- **No checkout.** `benchmark-report.yml` has no `actions/checkout` step, and the
-  header states that none may be added. Nothing from the fork's tree is fetched.
-- **No execution of fork-derived content.** The workflow reads exactly (a) the
-  triggering run's metadata (`id`, `event`, `head_sha`) through the API, and
-  (b) the `benchmark-results` artifact uploaded by the base repo's own
-  `Benchmark` workflow. The artifact's *contents* are untrusted — they quote
-  fork-controlled benchmark output — and are only ever interpolated **inside a
-  fenced code block in a comment body**. Nothing is sourced, `eval`'d, or run.
-- **Fixed artifact paths.** `benchmark.yml` uploads a fixed path list
-  (`benchmark-output.txt`, `benchmark-baseline.txt`); the fork does not choose
-  file names, and extraction is confined to `$GITHUB_WORKSPACE`.
+- **No checkout.** `benchmark-report.yml` has no `actions/checkout` step, and the header states that no one can add one. Nothing from the fork's tree is fetched.
+- **No execution of fork-derived content.** The workflow reads exactly two items. Item one is the triggering run's metadata through the API, that is `id`, `event`, and `head_sha`. Item two is the `benchmark-results` artifact uploaded by the base repo's own `Benchmark` workflow. The artifact's *contents* are untrusted, because they quote fork-controlled benchmark output. The workflow only interpolates those contents **inside a fenced code block in a comment body**. Nothing is sourced, `eval`'d, or run.
+- **Fixed artifact paths.** `benchmark.yml` uploads a fixed path list, that is `benchmark-output.txt` and `benchmark-baseline.txt`. The fork does not choose file names, and extraction is confined to `$GITHUB_WORKSPACE`.
 
-### 2.4 Finding the PR number (and why not just `workflow_run.pull_requests`)
+### 2.4 Find the PR number and not `workflow_run.pull_requests` alone
 
 ```
 1. run.event !== 'pull_request'            -> log "not a pull_request … no-op" and stop   (section 2.5)
@@ -190,24 +146,17 @@ nobody "simplifies" it away later:
 4. no PR found                             -> core.warning(…) and stop
 ```
 
-Step 2 is the requirement's "triggering run's associated pull requests"; step 3 is
-mandatory because that array was **empty** on the fork run (section 1.1) while
-`commits/{sha}/pulls` resolved it to #26 (section 1.5). A fix that trusted step 2 alone
-would silently post nothing on the exact runs this change exists to fix.
+Step 2 is the requirement's "triggering run's associated pull requests". Step 3 is mandatory because that array was **empty** on the fork run, as section 1.1 shows. At the same time `commits/{sha}/pulls` resolved it to #26, as section 1.5 shows. A fix that trusts step 2 alone posts nothing on the exact runs this change exists to fix.
 
 ### 2.5 The non-PR no-op
 
-`run.event !== 'pull_request'` is checked **inside the script**, not as a job-level
-`if:`, so the log line always appears:
+`run.event !== 'pull_request'` is checked **inside the script**, not as a job-level `if:`, so the log line always appears:
 
 ```
 core.info(`Event is '${run.event}', not 'pull_request' - nothing to comment; no-op.`);
 ```
 
-A job-level `if:` would show the job as `skipped` and print nothing. Only the
-artifact-download step carries a step-level
-`if: github.event.workflow_run.event == 'pull_request'`, so a push run costs one
-`skipped` step and one log line — the master path is otherwise unchanged.
+A job-level `if:` shows the job as `skipped` and prints nothing. Only the artifact-download step carries a step-level `if: github.event.workflow_run.event == 'pull_request'`. A push run therefore costs one `skipped` step and one log line. The master path is otherwise unchanged.
 
 ---
 
@@ -223,8 +172,7 @@ artifact-download step carries a step-level
 | `benchmark-report.yml` (workflow) | `pull-requests: write` | | read PR association / comment on the PR | required by the task and by the API (`x-accepted-github-permissions`) |
 | `benchmark-report.yml` (workflow) | `issues: write` | | `POST /issues/{n}/comments` is the issues API | API response in section 1.3 |
 
-No `contents:` is declared in `benchmark-report.yml`: the workflow reads no
-repository content, so it has no `contents` permission at all.
+No `contents:` is declared in `benchmark-report.yml`: the workflow reads no repository content, so it has no `contents` permission at all.
 
 ### 3.2 Every `if:` condition relied on
 
@@ -256,70 +204,35 @@ repository content, so it has no `contents` permission at all.
 | `repos/{o}/{r}/commits/{head_sha}/pulls` | `[0].number` | `26` | the PR actually commented on |
 | `context.repo` | `owner`/`repo` | `michaelamoetoevsky` / `PDN` | all API calls and the comment |
 
-No other run, job, step, artifact or PR identifier is hardcoded anywhere in either
-workflow — the ids above appear only in this report as evidence.
+No other run, job, step, artifact or PR identifier is hardcoded anywhere in either workflow. The ids above appear only in this report as evidence.
 
 ---
 
 ## 5. Verified vs. UNVERIFIED
 
-### Verified locally (provable here)
+### Verified locally and provable here
 
-- `benchmark.yml` and `benchmark-report.yml` both parse:
-  `env -u LD_LIBRARY_PATH python3 -c "import yaml; yaml.safe_load(open(...))"` → OK.
+- `benchmark.yml` and `benchmark-report.yml` both parse: `env -u LD_LIBRARY_PATH python3 -c "import yaml; yaml.safe_load(open(...))"` → OK.
 - No trailing whitespace in either file.
-- The embedded `github-script` body is syntactically valid JavaScript: extracted
-  from the YAML and checked with `node --check` inside an `async function` wrapper
-  (github-script@v9 evaluates the body in an async context, so top-level `await`
-  is legal there; a bare `node --check` on the unwrapped body reports
-  `await is only valid in async functions`).
-- The workflow structure reads back correctly from the parsed YAML:
-  `benchmark` job → `permissions: {contents: read}`, 8 steps, no comment step;
-  `report` job → `permissions: {actions: read, pull-requests: write,
-  issues: write}`, 2 steps, download step gated on
-  `github.event.workflow_run.event == 'pull_request'`.
-- The limitation itself is reproduced from raw API + log evidence (section 1).
+- The embedded `github-script` body is syntactically valid JavaScript. The check is extraction from the YAML and a test with `node --check` inside an `async function` wrapper. The reason is that github-script@v9 evaluates the body in an async context, so top-level `await` is legal there. A bare `node --check` on the unwrapped body reports `await is only valid in async functions`.
+- The workflow structure reads back correctly from the parsed YAML. The `benchmark` job has `permissions: {contents: read}` and 8 steps, with no comment step. The `report` job has `permissions: {actions: read, pull-requests: write, issues: write}` and 2 steps. The download step is gated on `github.event.workflow_run.event == 'pull_request'`.
+- The limitation itself is reproduced from raw API + log evidence, as section 1 shows.
 
-### UNVERIFIED — cannot be established from this environment
+### UNVERIFIED facts that this environment cannot establish
 
-- **That the comment actually appears on a fork PR.** Opening a fork PR requires a
-  fork and a push; this task forbids `git push` and there is no fork available.
-  A green local YAML parse says nothing about runtime behaviour. Treat "fork PRs
-  now get the table" as **unproven** until a real fork run exists.
-- **That `actions/download-artifact@v8` succeeds cross-run in this repo.** The
-  `run-id` + `github-token` inputs are confirmed against the action's README, and
-  `actions: read` is declared, but the cross-run download has not been executed.
-- **That `listPullRequestsAssociatedWithCommit` returns the PR at run time.** It
-  returned PR #26 for the reproduced head SHA (section 1.5), but on a live open PR the
-  `state` filter behaves differently from a merged one (it would pick the `open`
-  entry). Unverified on an open PR.
-- **That the master path is truly unchanged at runtime.** The logic reads as a
-  no-op for `event == 'push'`, but the job still starts a runner and logs the no-op
-  line; per the requirement that is the intent, and it has not been observed.
-- **Action versions.** `download-artifact@v8` matches this repo's existing usage
-  (`cross-compile.yml:186`, `release.yml:312`), but whether that tag resolves is
-  not verifiable offline.
+- **That the comment actually appears on a fork PR.** A fork PR requires a fork and a push. This task forbids `git push`, and there is no fork available. A green local YAML parse says nothing about runtime behaviour. Treat "fork PRs now get the table" as **unproven** until a real fork run exists.
+- **That `actions/download-artifact@v8` succeeds cross-run in this repo.** The `run-id` + `github-token` inputs are confirmed against the action's README. The `actions: read` scope is declared, but the cross-run download has not been executed.
+- **That `listPullRequestsAssociatedWithCommit` returns the PR at run time.** It returned PR #26 for the reproduced head SHA, as section 1.5 shows. On a live open PR the `state` filter behaves differently from a merged one. The filter picks the `open` entry in that case. Unverified on an open PR.
+- **That the master path is truly unchanged at runtime.** The logic reads as a no-op for `event == 'push'`. The job still starts a runner and logs the no-op line. Per the requirement that is the intent, and no one has observed it.
+- **Action versions.** `download-artifact@v8` matches this repo's existing usage in `cross-compile.yml:186` and `release.yml:312`. The resolution of that tag is not verifiable offline.
 
 ---
 
-## 6. How to test it (a maintainer with a fork)
+## 6. How a maintainer with a fork can test it
 
-1. Ensure `benchmark-report.yml` is on the default branch (`master`) — `workflow_run`
-   only fires for workflows that exist on the default branch.
-2. Open or push to a PR that touches `crates/**`, `tests/**`, `Cargo.toml`,
-   `Cargo.lock` or `.github/workflows/**` (the `Benchmark` path filter), **from a
-   fork**, and let the `Benchmark` workflow complete.
-3. Expect: a new run named **Benchmark Report** → job **Report benchmark results
-   on PR** → step **Post benchmark summary comment**, with log lines
-   `Benchmark run <id>: event=pull_request head_sha=<sha>` then
-   `Posted benchmark summary to PR #<n>.` (or
-   `workflow_run.pull_requests was empty; commit <sha> -> 1 PR(s)` on the fallback
-   path — expected for fork runs).
-4. Expect a `## Benchmark Results` comment on the PR with the tail of
-   `benchmark-output.txt` in a code block.
-5. Sanity-check the no-op: push to `master` and confirm the same job logs
-   `Event is 'push', not 'pull_request' - nothing to comment; no-op.` and posts
-   nothing.
-6. If step 3 fails with 403, the fix has not addressed the token context and the
-   `x-accepted-github-permissions` header from the new run's log will say which
-   scope is still missing.
+1. Ensure `benchmark-report.yml` is on the default branch, `master`. `workflow_run` only fires for workflows that exist on the default branch.
+2. Open or push to a PR that touches `crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock` or `.github/workflows/**`. This list is the `Benchmark` path filter. Make the push **from a fork**, and let the `Benchmark` workflow complete.
+3. Expect a new run named **Benchmark Report**. Expect a job named **Report benchmark results on PR**. Expect a step named **Post benchmark summary comment**. The log lines are `Benchmark run <id>: event=pull_request head_sha=<sha>` then `Posted benchmark summary to PR #<n>.` On the fallback path, expect `workflow_run.pull_requests was empty; commit <sha> -> 1 PR(s)`. That line is expected for fork runs.
+4. Expect a `## Benchmark Results` comment on the PR with the tail of `benchmark-output.txt` in a code block.
+5. Sanity-check the no-op: push to `master` and confirm the same job logs `Event is 'push', not 'pull_request' - nothing to comment; no-op.` and posts nothing.
+6. If step 3 fails with 403, the fix has not addressed the token context. The `x-accepted-github-permissions` header from the new run's log will name the scope that the token still lacks.

@@ -1,20 +1,20 @@
 # PDN CI/CD Audit
 
-Read-only audit of all GitHub Actions workflows in `michaelamoetoevsky/PDN`.
-Date: 2026-11-04 (WIB). Default branch: **`master`** (confirmed). Repo has exactly one remote branch (`master`).
+This is a read-only audit of all GitHub Actions workflows in `michaelamoetoevsky/PDN`.
+Date: 2026-11-04 WIB. The default branch is **`master`**. This is confirmed. The repository has one remote branch only. That branch is `master`.
 
 - Workflows audited: **6**
 - Distinct defects found: **12**
-- Failing workflow on master: `PDN CI/CD` (`ci.yml`), run `41744808292`
-- Root cause of that failure: flaky test `test_restart_policy_unless_stopped` (fixed 3000 ms sleeps)
+- The workflow that fails on master is `PDN CI/CD` in `ci.yml`, run `41744808292`
+- The root cause of that failure is the flaky test `test_restart_policy_unless_stopped`. That test has fixed 3000 ms sleeps.
 
-All evidence was collected with `gh run list` / `gh run view <id> --log-failed` and file reads. No files were modified except this report.
+All evidence came from `gh run list` and `gh run view <id> --log-failed`, and from file reads. No files changed, apart from this report.
 
 ---
 
 ## 1. Workflow inventory
 
-### 1.1 `ci.yml` — name: `PDN CI/CD`
+### 1.1 `ci.yml`, name `PDN CI/CD`
 
 | Property | Value |
 |---|---|
@@ -28,7 +28,7 @@ All evidence was collected with `gh run list` / `gh run view <id> --log-failed` 
 | Jobs | 7: `rust-host-build` (30m), `rust-android-cross-compile` (45m), `security-audit` (20m), `docs` (15m), `fuzz` (60m), `proot-distro-integration-test` (60m), `release` (30m, needs all, gated on tag push) |
 | Est. cost | **34.4 billable job-minutes / push** (measured, run `41741331011`) |
 
-### 1.2 `cross-compile.yml` — name: `Android Cross-Compile Matrix`
+### 1.2 `cross-compile.yml`, name `Android Cross-Compile Matrix`
 
 | Property | Value |
 |---|---|
@@ -42,7 +42,7 @@ All evidence was collected with `gh run list` / `gh run view <id> --log-failed` 
 | Jobs | `cross-compile` (4-cell matrix, 60m) + `aggregate-artifacts` (`if: always()`, 15m) |
 | Est. cost | **22.3 billable job-minutes / push** (measured, run `41744808230`) |
 
-### 1.3 `benchmark.yml` — name: `Benchmark`
+### 1.3 `benchmark.yml`, name `Benchmark`
 
 | Property | Value |
 |---|---|
@@ -56,7 +56,7 @@ All evidence was collected with `gh run list` / `gh run view <id> --log-failed` 
 | Jobs | `benchmark` (60m) |
 | Est. cost | **1.9 billable job-minutes / push** (measured, run `41744808339`) |
 
-### 1.4 `dependency-updates.yml` — name: `Dependency Updates`
+### 1.4 `dependency-updates.yml`, name `Dependency Updates`
 
 | Property | Value |
 |---|---|
@@ -70,7 +70,7 @@ All evidence was collected with `gh run list` / `gh run view <id> --log-failed` 
 | Jobs | `rust-dependencies` (45m), `github-actions-dependencies` (15m), `security-audit` (30m) |
 | Est. cost | ~45 min/week (job `rust-dependencies` alone 45m) |
 
-### 1.5 `devcontainer-test.yml` — name: `DevContainer Test`
+### 1.5 `devcontainer-test.yml`, name `DevContainer Test`
 
 | Property | Value |
 |---|---|
@@ -84,7 +84,7 @@ All evidence was collected with `gh run list` / `gh run view <id> --log-failed` 
 | Jobs | `devcontainer-test` (30m) |
 | Est. cost | 0 (has **never run** — 0 runs on record) |
 
-### 1.6 `release.yml` — name: `Release Automation`
+### 1.6 `release.yml`, name `Release Automation`
 
 | Property | Value |
 |---|---|
@@ -102,7 +102,7 @@ All evidence was collected with `gh run list` / `gh run view <id> --log-failed` 
 
 ## 2. Run history per workflow
 
-### 2.1 `ci.yml` — `PDN CI/CD` — 6 success / 9 failure = **40.0% success** (last 15)
+### 2.1 `ci.yml`, `PDN CI/CD`. 6 success, 9 failure = **40.0% success** in the last 15 runs
 
 | Run | Conclusion | SHA | Event | Date (UTC) | URL |
 |---|---|---|---|---|---|
@@ -122,9 +122,9 @@ All evidence was collected with `gh run list` / `gh run view <id> --log-failed` 
 | 41695506735 | **failure** | a97fa13 | push | 2026-11-03T18:36Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41695506735 |
 | 41694273236 | **failure** | 2636960 | push | 2026-11-03T18:29Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41694273236 |
 
-Failing job/step (runs `41744808292` and `41731786571`): **`Rust Host Build` → `Run tests`**.
+The job that fails is **`Rust Host Build`**. The step is **`Run tests`**. This applies to runs `41744808292` and `41731786571`.
 
-### 2.2 `cross-compile.yml` — `Android Cross-Compile Matrix` — 8 success / 7 failure = **53.3% success** (last 15)
+### 2.2 `cross-compile.yml`, `Android Cross-Compile Matrix`. 8 success, 7 failure = **53.3% success** in the last 15 runs
 
 | Run | Conclusion | SHA | Date (UTC) | URL |
 |---|---|---|---|---|
@@ -144,9 +144,9 @@ Failing job/step (runs `41744808292` and `41731786571`): **`Rust Host Build` →
 | 41695506509 | **failure** | a97fa13 | 2026-11-03T18:36Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41695506509 |
 | 41694273312 | **failure** | 2636960 | 2026-11-03T18:29Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41694273312 |
 
-Failing job/step: the two aarch64 matrix cells → step `Run tests for aarch64-linux-android`. x86_64 cells always passed.
+The failure is in the two aarch64 matrix cells. The failing step is `Run tests for aarch64-linux-android`. The x86_64 cells always passed.
 
-### 2.3 `benchmark.yml` — `Benchmark` — 15 success / 0 failure = **100% success** (last 15)
+### 2.3 `benchmark.yml`, `Benchmark`. 15 success, 0 failure = **100% success** in the last 15 runs
 
 | Run | Conclusion | SHA | Date (UTC) | URL |
 |---|---|---|---|---|
@@ -166,21 +166,21 @@ Failing job/step: the two aarch64 matrix cells → step `Run tests for aarch64-l
 | 41695506444 | success | a97fa13 | 2026-11-03T18:36Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41695506444 |
 | 41694273486 | success | 2636960 | 2026-11-03T18:29Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41694273486 |
 
-(100% here is misleading: `cargo bench` finds no benchmarks, so the job is effectively a no-op build. See defect D12.)
+The value 100% above gives a false impression. `cargo bench` finds no benchmarks, so the job is effectively a no-op build. Refer to defect D12.
 
-### 2.4 `dependency-updates.yml` — `Dependency Updates` — 0 success / 1 failure = **0% success** (all runs on record)
+### 2.4 `dependency-updates.yml`, `Dependency Updates`. 0 success, 1 failure = **0% success** in all runs on record
 
 | Run | Conclusion | SHA | Event | Date (UTC) | URL |
 |---|---|---|---|---|---|
 | 41424692889 | **failure** | 87fdf58 | schedule | 2026-11-02T09:56Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41424692889 |
 
-Failing job/step: `Update Rust Dependencies` → `Run tests`.
+The failing job is `Update Rust Dependencies`. The failing step is `Run tests`.
 
-### 2.5 `devcontainer-test.yml` — `DevContainer Test` — **0 runs ever**.
+### 2.5 `devcontainer-test.yml`, `DevContainer Test`. **0 runs ever**.
 
-`gh run list --workflow=devcontainer-test.yml` returned `[]`. The workflow has never executed (no `.devcontainer/**` change since it was added, and no `workflow_dispatch`).
+The command `gh run list --workflow=devcontainer-test.yml` returned `[]`. The workflow has never executed. No change to `.devcontainer/**` occurred since the addition of the workflow. No `workflow_dispatch` occurred.
 
-### 2.6 `release.yml` — `Release Automation` — 1 success / 14 failure = **6.7% success** (last 15)
+### 2.6 `release.yml`, `Release Automation`. 1 success, 14 failure = **6.7% success** in the last 15 runs
 
 | Run | Conclusion | SHA | Date (UTC) | URL |
 |---|---|---|---|---|
@@ -200,16 +200,16 @@ Failing job/step: `Update Rust Dependencies` → `Run tests`.
 | 41213132429 | **failure** | 71df242 | 2026-10-31T15:05Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41213132429 |
 | 41208989281 | **failure** | a86aee2 | 2026-10-31T14:11Z | https://github.com/michaelamoetoevsky/PDN/actions/runs/41208989281 |
 
-Failing job/step: `Build and Test (stable, aarch64-linux-android)` → `Build workspace` (41208989281) or `Run tests` (41246007829, exit 101). Note 41213132811/41213132429 are two runs of the same SHA pushed seconds apart (duplicate runs — see D2).
+The failing job is `Build and Test (stable, aarch64-linux-android)`. The failing step is `Build workspace` in run 41208989281, or `Run tests` in run 41246007829, exit 101. Runs 41213132811 and 41213132429 are two runs of the same SHA, pushed seconds apart. These are duplicate runs. Refer to D2.
 
 ---
 
-## 3. Defects (each with file:line + verbatim proof)
+## 3. Defects, each with file:line and verbatim proof
 
-### D1 — Flaky test with fixed sleeps fails master (ROOT CAUSE of run 41744808292) — HIGH
-- File: `tests/supervisor_e2e.rs:302` (the failing assert); fixed sleeps at `tests/supervisor_e2e.rs:288` and `:298` (`sleep(Duration::from_millis(3000)).await;`); assertion under test begins `tests/supervisor_e2e.rs:278` (`test_restart_policy_unless_stopped`).
-- Runs: `41744808292`, `41731786571` (failure); `41741331011`, `41734184181` (success) — same suite, opposite outcome ⇒ timing-dependent.
-- Verbatim log (`gh run view 41744808292 --log-failed`):
+### D1. Flaky test with fixed sleeps fails master, ROOT CAUSE of run 41744808292. HIGH severity
+- File: `tests/supervisor_e2e.rs:302`, the failing assert. Fixed sleeps occur at `tests/supervisor_e2e.rs:288` and `:298`. The call is `sleep(Duration::from_millis(3000)).await;`. The assertion under test starts at `tests/supervisor_e2e.rs:278`, in `test_restart_policy_unless_stopped`.
+- Runs: `41744808292`, `41731786571` failed. `41741331011`, `41734184181` passed. The suite is the same, but the outcome is opposite. The test depends on timing.
+- Verbatim log from `gh run view 41744808292 --log-failed`:
 ```
 test test_restart_policy_unless_stopped ... FAILED
 thread 'test_restart_policy_unless_stopped' (4095) panicked at tests/supervisor_e2e.rs:302:5:
@@ -220,95 +220,95 @@ test result: FAILED. 18 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out;
 test failed, to rerun pass `-p pdn-integration-tests --test supervisor_e2e`
 ##[error]Process completed with exit code 101.
 ```
-- Corroborating log line proving the timing/orphan-process nature:
+- This log line corroborates the timing and orphan-process nature:
 ```
 Cleaning up orphan processes
 Terminate orphan process: pid (4034) (sleep)
 ```
-- Triggering step: `ci.yml:80-81` (`Run tests` → `cargo test --workspace --release -- --test-threads=4`).
+- The triggering step is `ci.yml:80-81`. The step is `Run tests`, and the command is `cargo test --workspace --release -- --test-threads=4`.
 
-### D2 — No `concurrency:` control anywhere; duplicate runs pile up — HIGH
-- Files: `ci.yml` (insert after `on:` block, before `jobs:` at `ci.yml:23`); same for `cross-compile.yml:25`, `benchmark.yml:10`, `dependency-updates.yml:18`, `devcontainer-test.yml:13`, `release.yml:23`.
-- Proof: `grep -rn "concurrency\|cancel-in-progress" .github/workflows/` → `NONE`.
-- Symptom: run `41213132811` and `41213132429` are two runs of the **same SHA `71df242`** created at the same minute (`2026-10-31T15:05:06Z`) — duplicated/queued runs with no cancellation. Every master push fans out to ~58.6 job-minutes (D8) without dedupe.
+### D2. No `concurrency:` control anywhere. Duplicate runs pile up. HIGH severity
+- Files: `ci.yml`, with the insert after the `on:` block and before `jobs:` at `ci.yml:23`. The same change applies at `cross-compile.yml:25`, `benchmark.yml:10`, `dependency-updates.yml:18`, `devcontainer-test.yml:13`, and `release.yml:23`.
+- Proof: `grep -rn "concurrency\|cancel-in-progress" .github/workflows/` returns `NONE`.
+- Symptom: run `41213132811` and `41213132429` are two runs of the **same SHA `71df242`**. Both started in the same minute, at `2026-10-31T15:05:06Z`. The runs are duplicated and queued, with no cancellation. Every master push expands to ~58.6 job-minutes, see D8, with no dedupe.
 
-### D3 — Node.js 20 deprecation warning for `actions/cache@v4` / `actions/checkout@v4` — MEDIUM
-- Files/lines: `actions/checkout@v4` at `ci.yml:31,100,171,226,259,285,366`; `actions/cache@v4` at `ci.yml:42,53,116,294,374`; `cross-compile.yml:53,76,154`; `benchmark.yml:17,27,60`; `dependency-updates.yml:26,34,85,104,122`; `release.yml:34,128,232,244,271,284,290,369`.
-- Verbatim (present in **every** captured failed log):
+### D3. Node.js 20 deprecation warning for `actions/cache@v4` and `actions/checkout@v4`. MEDIUM severity
+- Files and lines: `actions/checkout@v4` at `ci.yml:31,100,171,226,259,285,366`. `actions/cache@v4` at `ci.yml:42,53,116,294,374`, `cross-compile.yml:53,76,154`, `benchmark.yml:17,27,60`, `dependency-updates.yml:26,34,85,104,122`, `release.yml:34,128,232,244,271,284,290,369`.
+- Verbatim line, present in **every** captured failed log:
 ```
 ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@v4, actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
 ```
 - Not yet fatal, but these actions will break on Node 20 removal. `actions/checkout` and `actions/cache` must be bumped to versions that target Node.js 24.
 
-### D4 — Default-branch mismatch: `main` referenced but only `master` exists — HIGH
-- File:line: `dependency-updates.yml:74` → `base: main`; `benchmark.yml:49-51` → `git fetch origin main:main` / `git checkout main`; also the `base` for any PR.
-- Proof (`gh api repos/michaelamoetoevsky/PDN/branches --jq '.[].name'`):
+### D4. Default-branch mismatch. `main` is referenced, but only `master` exists. HIGH severity
+- File and line: `dependency-updates.yml:74` gives `base: main`. `benchmark.yml:49-51` gives `git fetch origin main:main` and `git checkout main`. This is also the `base` for any PR.
+- Proof, from `gh api repos/michaelamoetoevsky/PDN/branches --jq '.[].name'`:
 ```
 master
 ```
-  and `git branch -r` → `  origin/master` (no `main`).
-- Consequence: `peter-evans/create-pull-request@v6` cannot target a nonexistent `base: main`; the benchmark baseline step `git checkout main` will fail on any PR that reaches it. The workflows are otherwise guarded by `branches: [master, main, develop]`, so this is a *latent* break — the branch list is permissive (fine), but the hard-coded `main` target inside steps is wrong.
+  and `git branch -r` gives `  origin/master`, with no `main`.
+- Consequence: `peter-evans/create-pull-request@v6` cannot target a nonexistent `base: main`. The benchmark baseline step `git checkout main` will fail on any PR that reaches it. The workflows are otherwise guarded by `branches: [master, main, develop]`, so this is a *latent* break. The branch list is permissive and correct, but the hard-coded `main` target inside steps is wrong.
 
-### D5 — Error swallowing via `|| true` hides real failures (security gates are no-ops) — HIGH
+### D5. Error swallowing via `|| true` hides real failures. Security gates are no-ops. HIGH severity
 - Counts: `ci.yml` 20, `cross-compile.yml` 10, `dependency-updates.yml` 4, `release.yml` 8, `benchmark.yml` 0, `devcontainer-test.yml` 0.
-- Worst instances (security):
+- Worst instances, in security:
   - `ci.yml:192` `run: cargo audit || true`
   - `ci.yml:196-199` `cargo deny init || true` / `cargo deny check licenses || true` / `... bans || true` / `... advisories || true`
   - `ci.yml:208` `cargo geiger --workspace --output-format json > geiger-report.json || true`
   - `dependency-updates.yml:113` `cargo audit --workspace --json > audit-report.json || true`
   - `dependency-updates.yml:119` `cargo deny check advisories bans licenses sources || true`
   - `release.yml:255,261` same pattern.
-- Proof the gate is vacuous — **no `deny.toml` is committed**, so `cargo deny init` generates a default config at runtime that always passes:
+- Proof that the gate is vacuous: **no `deny.toml` is committed**. Thus `cargo deny init` generates a default config at runtime that always passes:
 ```
 $ ls -la deny.toml .cargo/
 ls: cannot access 'deny.toml': No such file or directory
 ls: cannot access '.cargo/': No such file or directory
 ```
-- Also `cargo geiger` is never installed (`ci.yml` installs `cargo-audit`/`cargo-deny` only), so line 208 is `command not found` masked by `|| true`.
+- In addition, `cargo geiger` is never installed. `ci.yml` installs `cargo-audit` and `cargo-deny` only. Thus line 208 is `command not found`, masked by `|| true`.
 
-### D6 — Deprecated/unmaintained `actions-rs/install@v0.1` — MEDIUM
-- File:line: `ci.yml:180` and `ci.yml:186` (`uses: actions-rs/install@v0.1`).
-- `actions-rs/*` is archived and unmaintained; the same tool install is already done safely via `cargo install cargo-audit` in `dependency-updates.yml:110`. Replace with `cargo install` or `taiki-e/install-action`.
+### D6. Deprecated and unmaintained `actions-rs/install@v0.1`. MEDIUM severity
+- File and line: `ci.yml:180` and `ci.yml:186`, with `uses: actions-rs/install@v0.1`.
+- `actions-rs/*` is archived and unmaintained. The same tool install is already done safely with `cargo install cargo-audit` in `dependency-updates.yml:110`. Replace it with `cargo install` or `taiki-e/install-action`.
 
-### D7 — Missing `cargo --locked` / lockfile drift — MEDIUM
-- Proof: `grep -rn "\-\-locked\|--frozen" .github/workflows/` → `NONE`.
-- `Cargo.lock` is committed (`ls -la Cargo.lock` → `137166` bytes) but every build/test step (`ci.yml:78,81`, `ci.yml:147`, `release.yml:179`, …) runs `cargo build`/`cargo test` **without `--locked`**, so CI may silently resolve newer deps than the committed lock. `dependency-updates.yml:51` runs `cargo update --workspace` and then commits only via PR — combined with un-locked builds, CI results are not reproducible against the lockfile.
+### D7. Missing `cargo --locked` and lockfile drift. MEDIUM severity
+- Proof: `grep -rn "\-\-locked\|--frozen" .github/workflows/` returns `NONE`.
+- `Cargo.lock` is committed, at `137166` bytes from `ls -la Cargo.lock`. Every build and test step, such as `ci.yml:78,81`, `ci.yml:147`, and `release.yml:179`, runs `cargo build` and `cargo test` **without `--locked`**. Thus CI can resolve newer deps than the committed lock, without a warning. `dependency-updates.yml:51` runs `cargo update --workspace` and then commits via PR only. With un-locked builds, CI results are not reproducible against the lockfile.
 
-### D8 — Missing path filters → wasteful full-pipeline runs on every push — MEDIUM
-- Only `devcontainer-test.yml:6,9` has `paths:`. `ci.yml`, `cross-compile.yml`, `benchmark.yml` have **no** `paths:` — every docs-only push runs the full ~58.6 job-minute pipeline.
-- Measured cost per push (successful runs):
-  - `ci.yml` `41741331011`: 34.4 job-minutes (Security 6.5 + Docs 1.4 + Android 3.6 + Integration 7.5 + Fuzz 7.2 + Host 8.2).
-  - `cross-compile.yml` `41744808230`: 22.3 job-minutes (4 matrix cells 4.7–6.4 + aggregate 0.1).
+### D8. Missing path filters cause wasteful full-pipeline runs on every push. MEDIUM severity
+- Only `devcontainer-test.yml:6,9` has `paths:`. `ci.yml`, `cross-compile.yml`, and `benchmark.yml` have **no** `paths:`. Every docs-only push runs the full ~58.6 job-minute pipeline.
+- Measured cost per push, from successful runs:
+  - `ci.yml` `41741331011`: 34.4 job-minutes. Security 6.5, Docs 1.4, Android 3.6, Integration 7.5, Fuzz 7.2, Host 8.2.
+  - `cross-compile.yml` `41744808230`: 22.3 job-minutes. The 4 matrix cells take 4.7 to 6.4, and the aggregate takes 0.1.
   - `benchmark.yml` `41744808339`: 1.9 job-minutes.
   - **Total ≈ 58.6 billable minutes per master push**, multiplied across 9×/hour commit patterns observed on 2026-11-03.
 
-### D9 — Conditional steps in `release.yml` are dead (tests/clippy/fmt never execute) — MEDIUM
-- File:line: `release.yml:191`, `:204`, `:217` all use `if: matrix.target != 'aarch64-linux-android' && matrix.target != 'x86_64-linux-android'`.
-- The matrix (`release.yml:31`) is `target: [aarch64-linux-android, x86_64-linux-android]` — the condition is **never true**, so `Run tests`, `Run clippy`, `Check formatting` are permanently skipped. The release pipeline ships untested/unlinted Android binaries.
+### D9. Conditional steps in `release.yml` are dead. Tests, clippy, and fmt never execute. MEDIUM severity
+- File and line: `release.yml:191`, `:204`, `:217` all use `if: matrix.target != 'aarch64-linux-android' && matrix.target != 'x86_64-linux-android'`.
+- The matrix at `release.yml:31` is `target: [aarch64-linux-android, x86_64-linux-android]`. The condition is **never true**, so `Run tests`, `Run clippy`, and `Check formatting` are permanently skipped. The release pipeline ships untested and unlinted Android binaries.
 
-### D10 — Cross-compiled aarch64 tests executed on x86_64 host → `Exec format error` — HIGH (historical, since remediated in current file)
-- File:line (current file, post-fix): `cross-compile.yml:126-129` builds tests for aarch64 with `--no-run` (execution moved to x86_64+qemu at `:131-134`). In the failing runs the step `Run tests for aarch64-linux-android` actually executed the binaries.
+### D10. Cross-compiled aarch64 tests ran on an x86_64 host, giving `Exec format error`. HIGH severity. Historical, remediated in the current file
+- File and line, current file after the fix: `cross-compile.yml:126-129` builds tests for aarch64 with `--no-run`. Execution moved to x86_64 plus qemu at `:131-134`. In the failing runs, the step `Run tests for aarch64-linux-android` did execute the binaries.
 - Runs: `41700546290`, `41699129722`, `41697027258`, `41696785498`, `41696185515`, `41695506509`, `41694273312`.
-- Verbatim (`gh run view 41700546290 --log-failed`):
+- Verbatim, from `gh run view 41700546290 --log-failed`:
 ```
   Exec format error (os error 8)
 ##[error]Process completed with exit code 101.
 ```
-- Also note the same log shows `##[error]Process completed with exit code 101.` for **both** aarch64 cells (`NDK r27c` and `NDK r30`) while x86_64 cells pass.
+- The same log shows `##[error]Process completed with exit code 101.` for **both** aarch64 cells, `NDK r27c` and `NDK r30`, while x86_64 cells pass.
 
-### D11 — Duplicate Android cross-compile work — LOW (cost)
-- `ci.yml:94-162` (`rust-android-cross-compile`, NDK r27c) re-implements a subset of `cross-compile.yml` (full r27c+r30 matrix). Same target, same API 34, same NDK — the aarch64 compile runs twice per push.
+### D11. Duplicate Android cross-compile work. LOW cost severity
+- `ci.yml:94-162`, the `rust-android-cross-compile` job with NDK r27c, repeats a subset of `cross-compile.yml`, which has the full r27c and r30 matrix. The target, the API 34 level, and the NDK are the same. Thus the aarch64 compile runs twice per push.
 
-### D12 — `benchmark.yml` reported success while the benchmarks could not build — HIGH
+### D12. `benchmark.yml` reported success while the benchmarks failed to build. HIGH severity
 - **Corrected 2026-11-04 after direct verification.** The original text of this entry said
-  "`cargo bench --workspace` finds no `[[bench]]` targets ... exits 0 without measuring
-  anything". That is wrong on the mechanism, and the error was in the *safe-looking*
+  "`cargo bench --workspace` finds no `[[bench]]` targets ... exits 0 and measures nothing".
+  That is wrong on the mechanism, and the error was in the *safe-looking*
   direction: it implied nothing was there to run, when in fact there is a benchmark suite
   that **fails to compile**.
-- File:line: `benchmark.yml:67-70` (the `Run benchmarks` step). `crates/pn-gateway/Cargo.toml:32`
+- File and line: `benchmark.yml:67-70`, the `Run benchmarks` step. `crates/pn-gateway/Cargo.toml:32`
   and `crates/pn-next/Cargo.toml:73` DO declare `[[bench]] name = "benchmarks" path =
-  "benches/benchmarks.rs" harness = false`, with real criterion code (`criterion_group!`,
-  `criterion_main!`, `bench_function`) in both `benches/benchmarks.rs` files.
+  "benches/benchmarks.rs" harness = false`, with real criterion code: `criterion_group!`,
+  `criterion_main!`, and `bench_function` in both `benches/benchmarks.rs` files.
 - Verbatim, on this revision:
 ```text
 $ cargo bench --workspace --locked --no-run
@@ -319,8 +319,8 @@ error[E0599]: no method named `unwrap` found for struct `FailSafeManager` in the
 error: could not compile `pn-gateway` (bench "benchmarks") due to 12 previous errors
 error: could not compile `pn-next` (bench "benchmarks") due to 14 previous errors
 ```
-  (26 errors total across the two targets: 8× E0422, 6× E0560, 6× E0599, 5× E0432, 1× E0433.)
-- **Why the workflow stayed green** — this is the actual defect, and it is the same class as
+  26 errors total across the two targets: 8× E0422, 6× E0560, 6× E0599, 5× E0432, 1× E0433.
+- **Why the workflow stayed green**. This is the actual defect, and it is the same class as
   the `|| true` gates: the step piped every command.
 ```yaml
       - name: Run benchmarks
@@ -331,30 +331,30 @@ error: could not compile `pn-next` (bench "benchmarks") due to 14 previous error
   GitHub Actions runs `run:` steps with `bash -e` and **without `pipefail`**, so a pipeline's
   status is the *last* command's: `tail`/`tee` exit 0 and the compile failure never reached
   the job. Hence 15/15 "success" in section 2.3 with a benchmark target that cannot build.
-- Correction to section 2.3's interpretation: "100% success here is misleading" was right, but not
-  because `cargo bench` was a no-op — it is misleading because the run failed and reported
+- Correction to section 2.3's interpretation: "100% success here gives a false impression" was right, but not
+  because `cargo bench` was a no-op. The value is wrong because the run failed and reported
   success.
-- Fixed by: adding `set -euo pipefail` to the benchmark steps, and strengthening the guard
-  step to build the targets (`cargo bench --workspace --locked --no-run`) rather than only
-  grepping for the `[[bench]]` marker — a guard that passes while the target cannot compile
+- Fix: add `set -euo pipefail` to the benchmark steps, and strengthen the guard
+  step to build the targets with `cargo bench --workspace --locked --no-run`, rather than only
+  a grep for the `[[bench]]` marker. A guard that passes while the target cannot compile
   is worth nothing. The 26 compile errors were then repaired in
-  `crates/{pn-gateway,pn-next}/benches/benchmarks.rs` so the workflow is green *and* means
-  something.
+  `crates/{pn-gateway,pn-next}/benches/benchmarks.rs` so the workflow is green *and* it
+  has meaning.
 
 Additional latent issues observed:
-- `ci.yml:466-474` publish step is disabled via `if: false` and its `run:` block has broken indentation (continuation lines indented 18 spaces). Harmless today, but will fail if re-enabled.
-- `release.yml:151-176` ("Install Android OpenSSL") sets `OPENSSL_LIB_DIR=.../usr/lib/$TARGET` where `$TARGET` is `aarch64-linux-android` — the NDK sysroot uses the triple without `-linux-android` trieze ordering variations; and path built as `/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang` with an empty `$ANDROID_NDK_HOME` produced the literal `/toolchains/...` error in run `41208989281`:
+- `ci.yml:466-474` publish step is disabled via `if: false`, and its `run:` block has broken indentation. The continuation lines are indented 18 spaces. The step is harmless today, but it will fail if re-enabled.
+- `release.yml:151-176`, the "Install Android OpenSSL" step, sets `OPENSSL_LIB_DIR=.../usr/lib/$TARGET`. Here `$TARGET` is `aarch64-linux-android`. The NDK sysroot uses the triple without `-linux-android` trieze ordering variations. Also the path is built as `/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang`. An empty `$ANDROID_NDK_HOME` produced the literal `/toolchains/...` error in run `41208989281`:
 ```
 error occurred in cc-rs: failed to find tool "/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang": No such file or directory (os error 2)
 ```
-- `dependency-updates.yml:113` security job `if:` gate on `github.event.inputs.dependency-type` means the `security-audit` job always runs (no `if:` on job `security-audit:98`), which is fine, but `github-actions-dependencies` (`:81`) is skipped whenever the schedule fires (no input) — scheduled run `41424692889` shows `Update GitHub Actions Dependencies | skipped`.
+- The security job `if:` gate at `dependency-updates.yml:113` uses `github.event.inputs.dependency-type`. Thus the `security-audit` job always runs, because job `security-audit:98` has no `if:`. That is correct. However job `github-actions-dependencies` at `:81` is skipped when the schedule fires, because no input exists. Scheduled run `41424692889` shows `Update GitHub Actions Dependencies | skipped`.
 
 ---
 
-## 4. Prioritised fixes (precise YAML edits)
+## 4. Prioritised fixes, as precise YAML edits
 
-### P0 — Fix the flaky test (unblocks `master`)
-`tests/supervisor_e2e.rs:288,298` — replace fixed `sleep(Duration::from_millis(3000)).await;` with a polling wait on the supervisor state, e.g.:
+### P0. Fix the flaky test to unblock `master`
+`tests/supervisor_e2e.rs:288,298`: replace fixed `sleep(Duration::from_millis(3000)).await;` with a polling wait on the supervisor state, as in this example:
 ```rust
 // before line 288
 let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -365,39 +365,39 @@ loop {
     sleep(Duration::from_millis(100)).await;
 }
 ```
-Then at line 298, poll until `state == ServiceState::Stopped` with the same deadline loop instead of a bare sleep. (Optional CI-side mitigation: `ci.yml:81` — `cargo test --workspace --release -- --test-threads=1` reduces lock contention the test comments already worry about.)
+Then at line 298, poll until `state == ServiceState::Stopped` with the same deadline loop, instead of a bare sleep. Optional CI-side mitigation: `ci.yml:81` uses `cargo test --workspace --release -- --test-threads=1`. That change reduces lock contention, which the test comments already mention.
 
-### P0 — Add concurrency control to all six workflows
+### P0. Add concurrency control to all six workflows
 Insert once, immediately after the `on:` block in `ci.yml`, `cross-compile.yml`, `benchmark.yml`, `dependency-updates.yml`, `devcontainer-test.yml`, `release.yml`:
 ```yaml
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 ```
-(for `release.yml` use `cancel-in-progress: false` so a release is never cancelled mid-upload.)
+For `release.yml`, use `cancel-in-progress: false` so a release is never cancelled mid-upload.
 
-### P1 — Correct the branch mismatch
-- `dependency-updates.yml:74` — change `base: main` → `base: master`.
-- `benchmark.yml:49` — change `git fetch origin main:main` → `git fetch origin master:master`, and `:51` `git checkout main` → `git checkout master`.
+### P1. Correct the branch mismatch
+- `dependency-updates.yml:74`: change `base: main` to `base: master`.
+- `benchmark.yml:49`: change `git fetch origin main:main` to `git fetch origin master:master`. At `:51`, change `git checkout main` to `git checkout master`.
 
-### P1 — Make security gates real
-- Add a committed `deny.toml` at repo root and delete `cargo deny init || true` (`ci.yml:196`).
-- `ci.yml:192,197,198,199` — remove `|| true` so a finding fails the job; if advisory noise must be tolerated, use `cargo deny check advisories --deny warnings` with a curated `deny.toml` `[advisories] ignore` list instead of blanket `|| true`.
-- Install `cargo-geiger` before `ci.yml:208` (`run: cargo install cargo-geiger`) or drop the step.
-- `ci.yml:180,186` — replace `actions-rs/install@v0.1` with:
+### P1. Make security gates real
+- Add a committed `deny.toml` at the repo root, and delete `cargo deny init || true` from `ci.yml:196`.
+- `ci.yml:192,197,198,199`: remove `|| true` so a finding fails the job. If advisory noise is tolerable, use `cargo deny check advisories --deny warnings` with a curated `deny.toml` `[advisories] ignore` list. Do not use a blanket `|| true`.
+- Install `cargo-geiger` before `ci.yml:208` with `run: cargo install cargo-geiger`, or drop the step.
+- `ci.yml:180,186`: replace `actions-rs/install@v0.1` with:
 ```yaml
       - name: Install cargo audit & deny
         run: cargo install cargo-audit cargo-deny --locked
 ```
 
-### P1 — Pin the lockfile
+### P1. Pin the lockfile
 Add `--locked` to every `cargo build`/`cargo test`/`cargo bench` invocation:
-`ci.yml:78,81,84,147,318,332-336,340,344,348,352,390,402`; `cross-compile.yml:124,129,134`; `benchmark.yml:42,43,52`; `release.yml:179,192`; `dependency-updates.yml:54`. Example: `cargo build --workspace --release --locked`.
+`ci.yml:78,81,84,147,318,332-336,340,344,348,352,390,402`, `cross-compile.yml:124,129,134`, `benchmark.yml:42,43,52`, `release.yml:179,192`, and `dependency-updates.yml:54`. Example: `cargo build --workspace --release --locked`.
 
-### P1 — Bump actions for Node.js 24
-Upgrade `actions/checkout@v4` → `@v5` and `actions/cache@v4` → `@v4` (Node24 build) / `actions/cache@v5` where available, across all five files listed in D3. Also bump `actions/upload-artifact@v4` / `download-artifact@v4` and `softprops/action-gh-release@v1` (`ci.yml:437`) → `@v2` (matching `release.yml:323`).
+### P1. Bump actions for Node.js 24
+Upgrade `actions/checkout@v4` to `@v5`, and `actions/cache@v4` to `@v4` with a Node24 build, or to `actions/cache@v5` where available. Apply this change across all five files listed in D3. Also bump `actions/upload-artifact@v4` and `download-artifact@v4`, and `softprops/action-gh-release@v1` at `ci.yml:437` to `@v2`, which matches `release.yml:323`.
 
-### P2 — Add path filters (cut ~58 min/push)
+### P2. Add path filters to cut ~58 min per push
 Add to `ci.yml` and `cross-compile.yml` under both `push` and `pull_request`:
 ```yaml
     paths:
@@ -406,20 +406,20 @@ Add to `ci.yml` and `cross-compile.yml` under both `push` and `pull_request`:
       - 'Cargo.lock'
       - '.github/workflows/**'
 ```
-Add to `benchmark.yml` a narrower filter (`crates/**`, `benches/**`) or restrict it to `workflow_dispatch` + PRs.
+Add to `benchmark.yml` a narrower filter: `crates/**` and `benches/**`. Or restrict it to `workflow_dispatch` and PRs.
 
-### P2 — Fix dead conditions in `release.yml`
-`release.yml:191,204,217` — replace the never-true condition. To run tests/clippy/fmt on the host, add a separate `runs-on: ubuntu-latest` job, or change to `if: matrix.target == 'aarch64-linux-android'` plus a host-target matrix entry. Do not ship untested Android binaries.
+### P2. Fix dead conditions in `release.yml`
+`release.yml:191,204,217`: replace the never-true condition. To run tests, clippy, and fmt on the host, add a separate `runs-on: ubuntu-latest` job. Or change to `if: matrix.target == 'aarch64-linux-android'` plus a host-target matrix entry. Do not ship untested Android binaries.
 
-### P2 — De-duplicate Android compile
-Remove the `rust-android-cross-compile` job (`ci.yml:93-162`) since `cross-compile.yml` already builds aarch64 + x86_64 for r27c/r30, or make `ci.yml` depend on `cross-compile.yml` artifacts instead of rebuilding.
+### P2. De-duplicate Android compile
+Remove the `rust-android-cross-compile` job at `ci.yml:93-162`. The `cross-compile.yml` workflow already builds aarch64 and x86_64 for r27c and r30. Or make `ci.yml` depend on `cross-compile.yml` artifacts instead of a rebuild.
 
-### P3 — Stop the benchmark workflow reporting success for a failed run (CORRECTED)
-`benchmark.yml:67-70` — add `set -euo pipefail` so `cargo bench ... | tee` cannot mask the
+### P3. Stop the benchmark workflow that reports success for a failed run. CORRECTED
+`benchmark.yml:67-70`: add `set -euo pipefail` so `cargo bench ... | tee` cannot mask the
 exit status, and make the guard step actually build the targets
-(`cargo bench --workspace --locked --no-run`) instead of only grepping for `[[bench]]`. Then
-repair the 26 compile errors in `crates/{pn-gateway,pn-next}/benches/benchmarks.rs` (see D12)
-— the benchmarks exist and are worth keeping; they had simply drifted away from the crate APIs.
+with `cargo bench --workspace --locked --no-run`, instead of only a grep for `[[bench]]`. Then
+repair the 26 compile errors in `crates/{pn-gateway,pn-next}/benches/benchmarks.rs`, see D12.
+The benchmarks exist and are worth keeping. They had simply drifted away from the crate APIs.
 
 ---
 

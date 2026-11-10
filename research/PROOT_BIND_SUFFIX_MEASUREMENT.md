@@ -1,6 +1,6 @@
 # Why `--volume` and `--bind` did nothing, and what PRoot's bind syntax actually is
 
-Measured on this device (Termux/Android 16, aarch64), `podnext 0.1.8`, `proot 5.1.107.101`.
+Measured on this device, Termux/Android 16, aarch64, with `podnext 0.1.8` and `proot 5.1.107.101`.
 Tool: the in-tree debug binary `target/debug/podnext`, container `test-alpine`.
 
 ## 1. The symptom
@@ -11,17 +11,17 @@ $ podnext run test-alpine --volume $PREFIX/tmp/pdn-mnt-probe:/mnt -- cat /mnt/ma
 cat: /mnt/marker.txt: No such file or directory
 ```
 
-Same result for `--volume`, for the global `-b/--bind`, and via `login`. No warning on stderr.
+The result is the same for `--volume`, for the global `-b/--bind`, and for `login`. No warning appears on stderr.
 
 ## 2. Two independent defects
 
 ### 2.1 The flag never reached the runtime
 
-`cmd_run` took its bind arguments as `_volume: Vec<String>` and never read them;
-`ProotDistroCore::login` loaded the container and called `execute_container` without ever
-folding `LoginOptions.bind_mounts` into `container.config.bind_mounts`, which is the field
-the runtime renders (`crates/proot-distro-core/src/runtime.rs:115`).
-So even a correct argument list would not have been passed to PRoot.
+`cmd_run` took its bind arguments as `_volume: Vec<String>` and never read them.
+`ProotDistroCore::login` loaded the container and called `execute_container`. That call never
+folded `LoginOptions.bind_mounts` into `container.config.bind_mounts`. The runtime renders that field.
+See `crates/proot-distro-core/src/runtime.rs:115`.
+Even a correct argument list did not reach PRoot.
 
 ### 2.2 The rendered argument used a bind syntax this PRoot does not have
 
@@ -40,7 +40,7 @@ $ podnext run test-alpine --volume $PREFIX/tmp/pdn-mnt-probe:/mnt -- ls -l /mnt
 total 0                                                              <- the requested path is empty
 ```
 
-The argv PDN built (captured with `PN_DEBUG=1`, see section 4):
+The argv that PDN built, captured with `PN_DEBUG=1`. See section 4:
 
 ```
 proot --kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=. --cwd=/ \
@@ -48,10 +48,10 @@ proot --kill-on-exit --link2symlink --sysvipc -L --change-id=0:0:0 --rootfs=. --
       "--bind=/data/data/com.termux/files/usr/tmp/pdn-mnt-probe:/mnt:rw" ...
 ```
 
-Note the contrast inside the same argv: the `/proc` stubs use
-`--bind=.../sysdata/mounts:/proc/mounts!`. The `!` suffix is a real PRoot feature (do not
-resolve the final component) and is unaffected by this finding - it is not a read-only
-marker.
+Note the contrast inside the same argv. The `/proc` stubs use
+`--bind=.../sysdata/mounts:/proc/mounts!`. The `!` suffix is a real PRoot feature. It tells PRoot
+not to resolve the final component. This finding does not affect that suffix.
+The `!` suffix is not a read-only marker.
 
 ## 3. Why the bug survived
 
@@ -61,7 +61,7 @@ The suffix was asserted by tests, never exercised against a guest:
 - `crates/podnext/src/native.rs` asserted the rendered string ends with `:ro`.
 
 A test that encodes the renderer's output can only prove the renderer agrees with itself.
-Nothing asserted where the guest sees the mount, which is why a string that no PRoot has
+The suite asserted nothing about where the guest sees the mount. That is why a string that no PRoot has
 ever accepted looked green.
 
 ## 4. Reproducing the capture
@@ -70,23 +70,24 @@ ever accepted looked green.
 podnext run test-alpine --volume $PREFIX/tmp/pdn-mnt-probe:/mnt -- cat /mnt/marker.txt   # see the argv
 ```
 
-Requires `PN_DEBUG=1`. While chasing this, the argv print in `crates/proot-core/src/lib.rs`
-was reachable only when `config.verbose > 0`, which the container paths never set, so the
-one diagnostic that would have answered the question in seconds could not be printed at
-all. It now also fires when `PN_DEBUG` is set.
+This step needs `PN_DEBUG=1`. During this work, the argv print in `crates/proot-core/src/lib.rs`
+was reachable only when `config.verbose > 0`. The container paths never set that value.
+The one diagnostic that answered the question in seconds was unreachable.
+It now also fires when `PN_DEBUG` is set.
 
 ## 5. Fix and its evidence
 
-- The two flags are parsed, validated, and folded into `container.config.bind_mounts`; a
-  malformed spec is a hard error instead of a dropped mount.
-- `argument()` renders exactly `<source>:<target>`, and a read-only request is an error
-  naming where the mount would have landed. Read-only binds cannot be expressed by this
-  PRoot, so pretending otherwise would move the mount and silently make it writable.
-- New tests pin the rendering (one `:` only) and the refusal; the behavioural proof is the
-  run in `docs/src/known-limitations.md` and in the PoC for this round.
+- The two flags are parsed, validated, and folded into `container.config.bind_mounts`.
+  A malformed spec is a hard error, not a dropped mount.
+- `argument()` renders exactly `<source>:<target>`. A read-only request is an error, and the
+error names the mount point. This PRoot cannot express a read-only bind. To pretend otherwise
+moves the mount and makes it writable without a warning.
+- New tests pin the rendering to one `:` only. They also pin the refusal.
+The behavioural proof is the run in `docs/src/known-limitations.md` and in the PoC for this round.
 
 ## 6. Open item
 
-Read-only mounts need either a PRoot that supports them or a different mechanism (a
-read-only overlay, or an ownership/mode convention inside the guest). Until then
-`--volume HOST:GUEST:ro` is refused with a reason rather than mounted writable elsewhere.
+Read-only mounts need a PRoot that supports them, or a different mechanism.
+Two options are a read-only overlay, or an ownership and mode convention inside the guest.
+Until then, `--volume HOST:GUEST:ro` is refused with a reason.
+The tool never mounts it writable at another path.

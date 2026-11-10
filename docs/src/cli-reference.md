@@ -2,12 +2,12 @@
 
 ## Command stability
 
-Two labels, one measurable rule: **`[stable]` means at least one automated test in this
-repository exercises the command; `[experimental]` means no such test exists yet, or the
-command contains a path that refuses.** `[experimental]` is not a claim that the command is
-broken — `install`, `login` and `run` are the most-used paths in the project and sit here
-because the suite does not drive them yet. Re-derive this table with `podnext --help`;
-`crates/podnext/tests/cli_reference_contract.rs` fails when the two disagree.
+Two labels have one measurable rule. **`[stable]` means at least one automated test in this
+repository exercises the command.** **`[experimental]` means no such test exists yet.** A
+command that contains a refused path also gets `[experimental]`. `[experimental]` does not mean
+the command is broken. `install`, `login` and `run` are the most-used paths in the project. They
+sit here because the suite does not drive them yet. Re-derive this table with `podnext --help`.
+The file `crates/podnext/tests/cli_reference_contract.rs` fails when the two disagree.
 
 | Command | Label | Why |
 |---|---|---|
@@ -50,7 +50,7 @@ because the suite does not drive them yet. Re-derive this table with `podnext --
 | `podnext compose` | `[experimental]` | no automated test covers it yet |
 | `podnext completion` | `[experimental]` | no automated test covers it yet |
 
-`help`, which clap adds itself, carries no label.
+Clap adds `help` itself. `help` carries no label.
 
 ## Global Options
 
@@ -78,15 +78,16 @@ podnext [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS] [-- <CMD_ARGS>...]
 
 ### `podnext install`
 
-Install a container from an OCI/Docker image reference, a local rootfs archive
-(a plain tarball or an OCI image-layout tar), or an http(s) URL to one.
+Install a container from one of three sources. The first source is an OCI/Docker image
+reference. The second source is a local rootfs archive: a plain tarball or an OCI image-layout
+tar. The third source is an http or https URL to that archive.
 
 ```bash
 podnext install <SOURCE> [OPTIONS]
 ```
 
 **Arguments:**
-- `SOURCE` - One of: an OCI image reference (`ubuntu:22.04`, `docker.io/library/alpine:latest`); a local archive with explicit path syntax (`./rootfs.tar.gz`, `/path/image.oci.tar`, `~/x.tar.xz`); or an `http://`/`https://` URL. A local OCI image-layout tar has every blob verified against the digest its own manifest declares.
+- `SOURCE` is one of three forms. Form one is an OCI image reference, for example `ubuntu:22.04` or `docker.io/library/alpine:latest`. Form two is a local archive with explicit path syntax, for example `./rootfs.tar.gz`, `/path/image.oci.tar` or `~/x.tar.xz`. Form three is an `http://` or `https://` URL. A local OCI image-layout tar has every blob verified against the digest that its own manifest declares.
 
 **Options:**
 | Option | Description |
@@ -107,7 +108,7 @@ podnext install https://example.org/rootfs.tar.xz --checksum sha256:<hex>
 
 ### `podnext list`
 
-List created containers (`ls` is accepted as an alias).
+List created containers. The command accepts `ls` as an alias.
 
 ```bash
 podnext list [OPTIONS]
@@ -121,8 +122,8 @@ podnext ls [OPTIONS]
 | `--no-all` | Hide stopped containers |
 | `--format <FORMAT>` | Output format: table, json, yaml, text |
 
-**Output** (captured from `podnext list` on this device; one such block per container, separated
-by the `+---+` rules shown):
+**Output** captured from `podnext list` on this device. The command prints one such block per
+container, separated by the `+---+` rules shown:
 
 ```text
 +------------------+--------+---------+---------+---------+------------------+
@@ -140,7 +141,7 @@ fields.
 
 ### `podnext login`
 
-Start interactive shell inside a container.
+Start an interactive shell inside a container.
 
 ```bash
 podnext login <CONTAINER> [OPTIONS] [-- <SHELL_ARGS>...]
@@ -161,7 +162,7 @@ podnext login debian --isolated
 
 ### `podnext run`
 
-Run command in container.
+Run a command in a container.
 
 ```bash
 podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
@@ -186,8 +187,8 @@ podnext run <CONTAINER> [OPTIONS] -- <CMD> [ARGS...]
 | `--seccomp` | Refused: this PRoot build applies no seccomp filter, and the flag used to be accepted and dropped. The proot argv is byte-identical with and without it (0 seccomp tokens; 133 `--bind` entries either way) and `proot --help` lists no seccomp option at all (issue #62). A `security.seccomp_profile` in container metadata is refused for the same reason (issue #60) |
 | `--no-kill-on-exit` | Refused: `proot-core` passes `--kill-on-exit` to proot unconditionally, so the proot argv is byte-identical with and without this flag (issue #63). `--kill-on-exit` is the default and cannot be turned off |
 
-A **refused** flag exits 1 with the reason on stderr and does not run the command. Accepting a flag and
-then ignoring it is what `run` used to do, and a caller cannot tell that from success.
+A **refused** flag exits 1. The command writes the reason to stderr and does not run the command.
+`run` used to accept a flag and then ignore it. A caller cannot tell that result from success.
 
 **Examples:**
 ```bash
@@ -212,7 +213,7 @@ podnext ps [OPTIONS]
 
 ### `podnext sessions`
 
-List active sessions (better formatted).
+List active sessions with better formatting.
 
 ```bash
 podnext sessions [OPTIONS]
@@ -220,16 +221,16 @@ podnext sessions [OPTIONS]
 
 ### `podnext attach`
 
-Reconnect to a running detached session (started with `podnext run --detach <container>`).
-`attach` never starts a session: with none running for the container it exits 1 and names the
-command that starts one.
+Reconnect to a running detached session. Start that session with
+`podnext run --detach <container>`. `attach` never starts a session. When no session runs for
+the container, `attach` exits 1 and names the command that starts one.
 
 ```bash
 podnext attach <CONTAINER> [OPTIONS]
 ```
 
 The argument is the **container name**, not a session id. Inside the session, **Ctrl-P Ctrl-Q**
-detaches again and leaves the guest running; the same guest shell answers the next `attach`.
+detaches again and leaves the guest running. The same guest shell answers the next `attach`.
 
 ```sh
 $ podnext run --detach alpine -- sh -c 'echo hello-detached; sleep 6'
@@ -240,32 +241,32 @@ $ podnext attach no-such-container
 Error: No running session for container 'no-such-container'. Start one with `podnext run --detach no-such-container -- <command>`.
 ```
 
-`run --detach` prints the supervisor pid and returns; the guest's output is appended to
-`~/.podnext/sessions/<pid>.log`. `attach <container>` reconnects to that session, and **Ctrl-P
-Ctrl-Q** detaches again leaving the guest running. Measured in #57 (not re-run here): two `attach`
-connections are answered by the same guest shell pid, a marker written while attached survives a
-detach, and no `podnext` or `proot` process is left after the guest exits.
+`run --detach` prints the supervisor pid and returns. The guest output is appended to
+`~/.podnext/sessions/<pid>.log`. `attach <container>` reconnects to that session. **Ctrl-P
+Ctrl-Q** detaches again and leaves the guest running. Measurement in #57, not re-run here: two
+`attach` connections are answered by the same guest shell pid. A marker written while attached
+survives a detach. No `podnext` or `proot` process is left after the guest exits.
 
-Two **declared simplifications** of the current supervisor (not defects it reports): a resize of the
-attaching terminal while attached is not re-forwarded to the guest, and output produced while
-detached is appended to the session log (`~/.podnext/sessions/<pid>.log`) but not replayed on
-reconnect.
+The current supervisor has two **declared simplifications**. The supervisor does not report them
+as defects. First, the supervisor does not re-forward a resize of the attaching terminal while
+attached. Second, the supervisor appends output produced while detached to the session log
+`~/.podnext/sessions/<pid>.log`. The supervisor does not replay that output on reconnect.
 
 ### `podnext kill`
 
-Stop container.
+Stop a container.
 
 ```bash
 podnext kill <CONTAINER>
 ```
 
-There are no `--signal` or `--timeout` options: the teardown sequence (SIGQUIT to the traced root,
-then a scan of `/proc/*/fd` for inherited session inodes) is fixed. Selecting the signal is listed in
-`known-limitations.md`.
+There are no `--signal` or `--timeout` options. The teardown sequence is fixed. The sequence sends
+SIGQUIT to the traced root. Then it scans `/proc/*/fd` for inherited session inodes.
+`known-limitations.md` lists signal selection.
 
 ### `podnext remove`
 
-Delete a container (`rm` is accepted as an alias).
+Delete a container. The command accepts `rm` as an alias.
 
 ```bash
 podnext remove <CONTAINER> [OPTIONS]
@@ -292,7 +293,7 @@ podnext rename debian deb-production
 
 ### `podnext copy`
 
-Copy files or directories between the host and containers. Paths take the form `[CONTAINER:]PATH`. A path without a container prefix is treated as a host path. Path traversals (e.g., `..`) are strictly verified and rejected.
+Copy files or directories between the host and containers. Paths take the form `[CONTAINER:]PATH`. The command treats a path without a container prefix as a host path. The command strictly verifies path traversals such as `..` and rejects them.
 
 ```bash
 podnext copy <SOURCE> <DESTINATION> [OPTIONS]
@@ -318,7 +319,7 @@ podnext copy debian:/var/log/app.log ./app.log -m
 
 ### `podnext sync`
 
-Mirror files between host and containers using content hashing (SHA256). Only differing files are transferred, so subsequent runs are zero-overhead no-ops.
+Mirror files between the host and containers with content hashing. The hash is SHA256. The command transfers only differing files. A later run is a no-op with zero overhead.
 
 ```bash
 podnext sync <SOURCE> <DESTINATION> [OPTIONS]
@@ -337,7 +338,7 @@ podnext sync ./src debian:/root/src -d
 
 ### `podnext reset`
 
-Reset an installed container to a clean install of the original OCI image it came from. Deletes current rootfs modifications and reinstalls cleanly.
+Reset an installed container to a clean install of the original OCI image. The command deletes current rootfs modifications and reinstalls cleanly.
 
 ```bash
 podnext reset <CONTAINER>
@@ -373,16 +374,16 @@ podnext search debian --format json
 
 ### `podnext image ls`
 
-List local images (`list` is accepted as an alias).
+List local images. The command accepts `list` as an alias.
 
 ```bash
 podnext image ls [OPTIONS]
 podnext image list [OPTIONS]
 ```
 
-Lists what `~/.podnext/images` holds. An image produced by `podnext build local` lives in the
-container store instead (see [`podnext build local`](#podnext-build-local)) and does not appear here;
-`podnext image inspect <tag>` does read it.
+The command lists what `~/.podnext/images` holds. An image produced by `podnext build local` lives
+in the container store instead. See [`podnext build local`](#podnext-build-local). That image does
+not appear here. `podnext image inspect <tag>` does read it.
 
 ### `podnext build local`
 
@@ -393,13 +394,12 @@ podnext build local [TAG] [OPTIONS]
 podnext build local -t myapp:latest ./context
 podnext build local --file ./context/Dockerfile.myapp ./context
 ```
+The build context must exist. The build context must contain a Dockerfile. A missing context is an
+error that writes nothing. The command reports success only after the image is on disk.
 
-The build context must exist and must contain a Dockerfile; a missing context is an error that
-writes nothing, and success is reported only after the image is on disk.
-
-**Where the image goes.** A built image *is* a container directory,
-`~/.podnext/containers/<store-key>/rootfs`. The store key is derived from the tag by dropping
-everything from the first colon, so `myapp:latest` is stored as `myapp`:
+**Where the image goes.** A built image *is* a container directory at
+`~/.podnext/containers/<store-key>/rootfs`. The command derives the store key from the tag. It
+drops everything from the first colon. Thus it stores `myapp:latest` as `myapp`:
 
 ```bash
 podnext build local -t myapp:latest ./context
@@ -407,31 +407,31 @@ podnext build local -t myapp:latest ./context
 #   Run it with: podnext run myapp
 ```
 
-The tag itself is recorded in the container's `metadata.json`. A tag is not used verbatim as a
-directory name because PRoot splits `--bind` arguments on `:`, so a colon in a host path silently
-drops the binding - a container stored as `myapp:latest` would lose `/dev/shm` and the `/proc`
-stubs, and applications needing shared memory (Chromium, PostgreSQL) would fail with unrelated
+The container records the tag itself in `metadata.json`. The command does not use a tag verbatim
+as a directory name. PRoot splits `--bind` arguments on `:`. Thus a colon in a host path silently
+drops the binding. A container stored as `myapp:latest` can lose `/dev/shm` and the `/proc` stubs.
+Applications that need shared memory, such as Chromium and PostgreSQL, fail with unrelated
 errors. `podnext run` therefore takes the store key, not the tag. A colon anywhere in a bind
-source is now a hard error rather than a silently dropped mount, which also covers bind mounts you
+source is now a hard error, not a silently dropped mount. That rule also covers bind mounts you
 configure yourself.
 
-Rebuilding the same tag replaces its image. A *different* tag that derives to the same key
-(`myapp:v1` then `myapp:v2`) is refused rather than silently destroying the first image; remove the
-container or choose another tag.
+A rebuild of the same tag replaces its image. A *different* tag that derives to the same key is
+refused. For example, `myapp:v1` then `myapp:v2` is refused. The refusal stops the silent
+destruction of the first image. Remove the container or choose another tag.
 
 ### `podnext config validate`
 
-Check a gateway configuration file before deploying it.
+Check a gateway configuration file before deployment.
 
 ```bash
 podnext config validate [PATH]
 PN_GATEWAY_CONFIG=./gateway.toml podnext config validate
 ```
 
-Reads the file with the same loader the gateway uses. A valid file prints the resolved values and
-exits 0; an invalid one names the offending key with its line and column and exits 2. Without a
-`PATH` argument the file is taken from `PN_GATEWAY_CONFIG`; if neither is given the command fails,
-because there is no implicit search path.
+The command reads the file with the same loader that the gateway uses. A valid file prints the
+resolved values and exits 0. An invalid file names the offending key with its line and column and
+exits 2. Without a `PATH` argument the command takes the file from `PN_GATEWAY_CONFIG`. If the
+operator gives neither, the command fails, because there is no implicit search path.
 
 ### `podnext image inspect`
 
@@ -439,17 +439,17 @@ because there is no implicit search path.
 podnext image inspect <IMAGE>... [--format table|json|yaml|text]
 ```
 
-Reports a pulled image from `~/.podnext/images`, or a locally built one from the container store —
-accepting either the tag (`myapp:latest`) or the store key (`myapp`). A built image is reported with
-its base image, creation time, working dir, command, and its `EXPOSE`/`USER` values labelled as
-recorded rather than enforced.
+The command reports a pulled image from `~/.podnext/images`. It also reports a locally built
+image from the container store. It accepts either the tag `myapp:latest` or the store key
+`myapp`. The report gives the base image, creation time, working dir and command of a built
+image. It labels the `EXPOSE` and `USER` values as recorded rather than enforced.
 
-A reference that neither source knows is an error naming both locations, rather than an empty result
-with a successful exit status.
+A reference that neither source knows is an error. The error names both locations. The command
+does not return an empty result with a successful exit status.
 
 ### `podnext image rm`
 
-Remove local image (`remove` is accepted as an alias).
+Remove a local image. The command accepts `remove` as an alias.
 
 ```bash
 podnext image rm <IMAGE> [OPTIONS]
@@ -458,7 +458,7 @@ podnext image remove <IMAGE> [OPTIONS]
 
 ### `podnext image pull`
 
-Pull image from registry.
+Pull an image from a registry.
 
 ```bash
 podnext image pull <IMAGE> [OPTIONS]
@@ -466,7 +466,7 @@ podnext image pull <IMAGE> [OPTIONS]
 
 ### `podnext image push`
 
-Push image to registry.
+Push an image to a registry.
 
 ```bash
 podnext image push <IMAGE> [OPTIONS]
@@ -493,7 +493,7 @@ IP-range carving inside a subnet is not implemented.
 
 ### `podnext network ls`
 
-List networks (`list` is accepted as an alias).
+List networks. The command accepts `list` as an alias.
 
 ```bash
 podnext network ls [OPTIONS]
@@ -502,7 +502,7 @@ podnext network list [OPTIONS]
 
 ### `podnext network rm`
 
-Remove network (`remove` is accepted as an alias).
+Remove a network. The command accepts `remove` as an alias.
 
 ```bash
 podnext network rm <NAME> [OPTIONS]
@@ -521,7 +521,7 @@ podnext network inspect <NAME> [OPTIONS]
 
 ### `podnext volume create`
 
-Create volume.
+Create a volume.
 
 ```bash
 podnext volume create <NAME> [OPTIONS]
@@ -533,12 +533,12 @@ podnext volume create <NAME> [OPTIONS]
 | `--driver <DRIVER>` | Volume driver (default: `local`) |
 | `--opts <KEY=VALUE>` | Driver options |
 
-Volume size and storage-pool selection are not implemented; a volume is a directory under
+Volume size and storage-pool selection are not implemented. A volume is a directory under
 `$HOME/.podnext/volumes`.
 
 ### `podnext volume ls`
 
-List volumes (`list` is accepted as an alias).
+List volumes. The command accepts `list` as an alias.
 
 ```bash
 podnext volume ls [OPTIONS]
@@ -547,7 +547,7 @@ podnext volume list [OPTIONS]
 
 ### `podnext volume rm`
 
-Remove volume (`remove` is accepted as an alias).
+Remove a volume. The command accepts `remove` as an alias.
 
 ```bash
 podnext volume rm <NAME> [OPTIONS]
@@ -572,7 +572,7 @@ Show system information.
 podnext info [OPTIONS]
 ```
 
-**Output** (captured; a single-row table, not a feature list):
+**Output** captured here. The command prints a single-row table, not a feature list:
 
 ```text
 +---------+----------------+--------------+-------------------+------------------------------------------+
@@ -582,9 +582,10 @@ podnext info [OPTIONS]
 +---------+----------------+--------------+-------------------+------------------------------------------+
 ```
 
-The five fields are `VERSION PLATFORM RUST VERSION BACKEND ISOLATION`; `--format json|yaml|text`
-emits the same. An earlier version of this page showed a multi-section feature report (`PDN
-Version: 1.0.0`, `GPU: ✓`, `CRIU: ✓`, cgroups), which no code path printed.
+The five fields are `VERSION PLATFORM RUST VERSION BACKEND ISOLATION`. The flag
+`--format json|yaml|text` emits the same. An earlier version of this page showed a multi-section
+feature report. That report had `PDN Version: 1.0.0`, `GPU: ✓`, `CRIU: ✓` and cgroups. No code
+path printed that report.
 
 ### `podnext dbus`
 
@@ -601,12 +602,13 @@ podnext dbus list
 podnext dbus call org.pnnext.Service /org/pnnext/Service org.pnnext.Service GetStatus --socket $PREFIX/tmp/pn-dbus.sock
 ```
 
-The socket value is an explicit **host** path, so it uses the host temp base. `podnext dbus serve`
-is a host process and PDN's temp base is `$PREFIX/tmp`, never `/tmp` (see the `TMPDIR` row) — on
-Android `/tmp` is not writable on the host. `/tmp` is only meaningful *inside* a guest, where PDN
-binds a per-container directory; an earlier version of this page used `/tmp/pn-dbus.sock`, which is
-the guest's temp base, not the host's. Without `--socket`, `dbus serve` uses its own compiled
-default of `/run/pn-next/dbus/session` (`crates/pn-next/src/dbus/mod.rs`).
+The socket value is an explicit **host** path. Thus it uses the host temp base.
+`podnext dbus serve` is a host process. The PDN temp base is `$PREFIX/tmp`, never `/tmp`. See the
+`TMPDIR` row. On Android `/tmp` is not writable on the host. `/tmp` is only meaningful *inside* a
+guest. There PDN binds a per-container directory. An earlier version of this page used
+`/tmp/pn-dbus.sock`. That path is the guest temp base, not the host temp base. Without
+`--socket`, `dbus serve` uses its own compiled default of `/run/pn-next/dbus/session` at
+`crates/pn-next/src/dbus/mod.rs`.
 
 ### `podnext gitops`
 
@@ -634,17 +636,19 @@ Report host and guest diagnostics.
 podnext doctor [--container <NAME>] [--format <FORMAT>]
 ```
 
-Host checks: the proot binary and its version (path resolved the same way the run path resolves it),
-the temporary directory (`TMPDIR` and whether it is writable), shared memory (`/dev/shm`, or the
-directory PDN binds in its place), DNS (the nameserver list from `$PREFIX/etc/resolv.conf`,
-`/etc/resolv.conf` or `/system/etc/resolv.conf`), the kernel (`uname -a`) and cgroups
-(`/proc/self/cgroup`). With `--container <NAME>` the guest is probed from the inside for `os-release`,
-architecture, `/dev/shm`, the mount count, `resolv.conf` and the **proot command line that ran**
-(captured from the probe, 12,371 characters with 125 `--bind=` arguments for a typical container —
-elided in the table, whole in `--format json`).
+Host checks cover the following items. The first item is the proot binary and its version. The
+run path resolves that path the same way. The second item is the temporary directory: `TMPDIR`
+and whether it is writable. The third item is shared memory: `/dev/shm`, or the directory PDN
+binds in its place. The fourth item is DNS: the nameserver list from `$PREFIX/etc/resolv.conf`,
+`/etc/resolv.conf` or `/system/etc/resolv.conf`. The fifth item is the kernel: `uname -a`. The
+sixth item is cgroups: `/proc/self/cgroup`. With `--container <NAME>` the command probes the
+guest from the inside. The probe reads `os-release`, architecture, `/dev/shm`, the mount count
+and `resolv.conf`. It also captures the **proot command line that ran**. For a typical container
+that command line has 12,371 characters with 125 `--bind=` arguments. The table elides it, and
+`--format json` gives it whole.
 
-Every row carries the value or command it came from. A check that cannot be run reports `unknown`
-instead of passing, and a check that fails is the only thing that changes the exit status:
+Every row carries the value or command it came from. A check that cannot run reports `unknown`
+instead of a pass. Only a failed check changes the exit status:
 
 ```sh
 $ podnext doctor
@@ -660,16 +664,17 @@ unknown    guest             no container named; pass one (podnext doctor --cont
 7 checks: 0 failed, 0 warnings, 1 unknown
 ```
 
-`--format json` and `--format yaml` emit the same list as structured records. Exit status: `0` when no
-check failed, `1` when at least one did, `2` for invalid arguments.
+`--format json` and `--format yaml` emit the same list as structured records. Exit status is `0`
+when no check failed. Exit status is `1` when at least one check failed. Exit status is `2` for
+invalid arguments.
 
 ### Path defaults
 
-The daemon's socket, service, runtime and log directories are resolved at start from
-`TERMUX__HOME`/`HOME`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` rather than being
-compiled in, so a relocated home or a second profile takes them along. `podnext-daemon --help` prints
-the values it resolved on this machine, and `crates/podnext/tests/relocated_paths.rs` drives the binary
-with a relocated home to check it.
+The daemon resolves its socket, service, runtime and log directories at start. It reads
+`TERMUX__HOME`/`HOME`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME`. It does not
+compile those paths in. Thus a relocated home or a second profile takes them along.
+`podnext-daemon --help` prints the values it resolved on this machine. The test
+`crates/podnext/tests/relocated_paths.rs` drives the binary with a relocated home to check it.
 
 ### `podnext version`
 
@@ -684,11 +689,11 @@ podnext version [OPTIONS]
 |--------|-------------|
 | `-f, --format <FORMAT>` | Output format: `table` (default), `json`, `yaml`, `text` |
 
-There is no `--short` and no `--json`; `podnext version --format json` is the JSON form.
+There is no `--short` and no `--json`. The JSON form is `podnext version --format json`.
 
-## Direct Execution (proot-compatible)
+## Direct Execution with PRoot
 
-Run commands directly with PRoot (bypassing container management):
+Run commands directly with PRoot. This path bypasses container management:
 
 ```bash
 # Basic execution
@@ -713,15 +718,15 @@ podnext -r /path/to/rootfs -q qemu-aarch64 -- /bin/bash
 | 2 | Invalid arguments (unknown subcommand, missing or conflicting flags) |
 | *n* | The command's own exit status, passed through unchanged |
 
-Three classes are asserted by `crates/podnext/tests/automation_contract.rs`. A command executed inside
-a container (`podnext run … -- cmd`, `podnext login … -- cmd`) propagates the guest's status verbatim,
-including `128 + signal` for a signal death — a wrapper script can test `$?` against the real code.
-Codes 3–12 were documented here but are not produced by any code path; the table above is the
-contract.
+Three classes are asserted by `crates/podnext/tests/automation_contract.rs`. A command executed
+inside a container propagates the guest status verbatim. For example, `podnext run ... -- cmd`
+and `podnext login ... -- cmd`. A signal death gives `128 + signal`. A wrapper script can test
+`$?` against the real code. Codes 3-12 were documented here but no code path produces them. The
+table above is the contract.
 
 ## Environment Variables
 
-These are the variables the code actually reads. Each row names the site that reads it, so the table
+These are the variables that the code reads. Each row names the site that reads it. The reader can re-verify the table with `grep`.
 can be re-verified with `grep`.
 
 | Variable | Effect | Read at |
@@ -747,14 +752,14 @@ can be re-verified with `grep`.
 | `XDG_CONFIG_HOME` | Configuration base (`pn-next/services`, …) | `crates/proot-distro-core/src/paths.rs` (`paths::host::config_dir`), `crates/podnext/src/commands/mod.rs` |
 | `XDG_STATE_HOME` | Log base when set; otherwise `$HOME/.local/log` | `crates/podnext/src/daemon.rs` (`default_log_dir`) |
 
-`PN_CONFIG_DIR`, `PN_DATA_DIR`, `PN_CACHE_DIR`, `PN_LOG_LEVEL`, `PN_GATEWAY_ADDR`, `PN_RUNTIME`,
-`PN_SECURITY_PROFILE` and `PN_NO_COLOR` were documented here and appear nowhere in `crates/`: nothing
-reads them. They have been removed rather than implemented — a variable that is documented but inert
-is worse than an absent one.
+The page once documented `PN_CONFIG_DIR`, `PN_DATA_DIR`, `PN_CACHE_DIR`, `PN_LOG_LEVEL`,
+`PN_GATEWAY_ADDR`, `PN_RUNTIME`, `PN_SECURITY_PROFILE` and `PN_NO_COLOR`. They appear nowhere in
+`crates/`, and nothing reads them. The project removed them rather than implemented them. A
+variable that is documented but inert is worse than an absent one.
 
 ## Configuration Files
 
-### Container Config (`~/.config/pn-next/containers/<name>.toml`)
+### Container Config at `~/.config/pn-next/containers/<name>.toml`
 
 ```toml
 [container]

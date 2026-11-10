@@ -1,11 +1,11 @@
-# PRoot-Distro 5.10.3 — User-Facing Capability Inventory
+# PRoot-Distro 5.10.3: User-Facing Capability Inventory
 
 Evidence-based. Every claim cites the exact `--help` output or source file/line observed on this host.
-Read-only research; nothing outside this file was modified.
+Read-only research. Nothing outside this file was modified.
 
-- Host: Termux / Android 16, aarch64, kernel `6.17.0-PRoot-Distro` (faked; see section 6)
+- Host: Termux / Android 16, aarch64, kernel `6.17.0-PRoot-Distro`. The kernel string is faked. See section 6.
 - Python: 3.14.6
-- Tool: `proot-distro` 5.10.3, author "Termux (@sylirre)"
+- Tool: `proot-distro` 5.10.3, author `"Termux (@sylirre)"`
 - Captured: Tue Nov 3 02:39:23 WIB 2026
 
 ---
@@ -13,7 +13,7 @@ Read-only research; nothing outside this file was modified.
 ## 1. Version, install path, package layout
 
 ### Version string
-`proot-distro --version` is **not** a valid command; it prints `Error: unknown command '--version'.` and the help page. The version is instead printed as the last line of every help page:
+`proot-distro --version` is **not** a valid command. It prints `Error: unknown command '--version'.` and the help page. The version is instead printed as the last line of every help page:
 
 ```
 PRoot-Distro version '5.10.3' by Termux (@sylirre).
@@ -37,7 +37,7 @@ pd = proot_distro.cli:main
 proot-distro = proot_distro.cli:main
 ```
 
-Both launcher files exist and are byte-identical size (193 bytes):
+Both launcher files exist and have the same byte size of 193 bytes:
 
 ```
 -rwx------. 1 u0_a396 u0_a396 193 ... /data/data/com.termux/files/usr/bin/pd
@@ -49,7 +49,7 @@ Both launcher files exist and are byte-identical size (193 bytes):
 ### Python package layout
 Package root: `/data/data/com.termux/files/usr/lib/python3.14/site-packages/proot_distro/`
 
-Top-level modules (from `ls -la` and `find`):
+Top-level modules from `ls -la` and `find`:
 
 ```
 __init__.py        arch.py       atomic.py     cli.py        compress.py
@@ -59,14 +59,14 @@ progress.py        session.py    shm.py        statedir.py   sysdata.py
 ```
 
 Subpackages:
-- `commands/` — one module/subpackage per subcommand:
+- `commands/`: one module or subpackage per subcommand:
   `backup.py build.py clear_cache.py copy.py install.py install_local.py kill.py list.py ps.py push.py remove.py rename.py reset.py restore.py run.py search.py sync.py`
   - `commands/help/` → `__init__.py`, `pages.py`, `render.py`
   - `commands/login/` → `__init__.py`, `bindings.py`, `detach.py`, `env.py`, `migrate.py`, `passwd.py`, `proot_cmd.py`, `quoting.py`
 - `helpers/` → `build_cache.py dockerfile.py download.py layer_diff.py oci_writer.py rootfs.py tar_extract.py`
   - `helpers/build_engine/` → `constants.py copy_step.py dockerignore.py engine.py errors.py handlers.py parsing.py run_step.py stage.py users.py`
   - `helpers/docker/` → `cache.py layers.py media.py pull.py push.py refs.py search.py transport.py`
-- `completions/` → `_proot-distro` (zsh), `proot-distro.bash`, `proot-distro.fish`
+- `completions/` → `_proot-distro` for zsh, `proot-distro.bash`, `proot-distro.fish`
 
 Dist-info directory `proot_distro-5.10.3.dist-info/` contains `METADATA RECORD REQUESTED WHEEL direct_url.json entry_points.txt top_level.txt licenses/LICENSE INSTALLER`. RECORD lists 171 entries. RECORD also installs shell completions outside the package:
 ```
@@ -81,7 +81,7 @@ Dist-info directory `proot_distro-5.10.3.dist-info/` contains `METADATA RECORD R
 ```
 Contents observed: `cache/  containers/  locks/  sessions/`.
 
-EVIDENCE: `proot-distro --help` (footer line), `proot-distro --version` (error), `cat .../METADATA`, `cat .../entry_points.txt`, `find .../proot_distro/ -type f`, `ls -la .../var/lib/proot-distro/`.
+EVIDENCE: `proot-distro --help` footer line, `proot-distro --version` error, `cat .../METADATA`, `cat .../entry_points.txt`, `find .../proot_distro/ -type f`, `ls -la .../var/lib/proot-distro/`.
 
 ---
 
@@ -127,7 +127,7 @@ GETTING HELP
   Run 'proot-distro <command> --help' for details on any command.
 ```
 
-Aliases (from `parser.py` `ALIAS_TO_CANONICAL`): `add/i/in/ins`→install, `rm`→remove, `sh`→login, `li/ls`→list, `bak/bkp`→backup, `clear/cl`→clear-cache, `cp`→copy, `s/se`→search, `h/he/hel`→help.
+Aliases from `parser.py` `ALIAS_TO_CANONICAL`: `add/i/in/ins`→install, `rm`→remove, `sh`→login, `li/ls`→list, `bak/bkp`→backup, `clear/cl`→clear-cache, `cp`→copy, `s/se`→search, `h/he/hel`→help.
 
 ### `install`
 
@@ -169,7 +169,7 @@ OPTIONS
   -q, --quiet               Suppress non-error output.
 ```
 
-Hidden alias from parser: `--override-alias` is a mutually-exclusive synonym of `-n/--name` (`dest=custom_container_name`).
+Hidden alias from parser: `--override-alias` is a mutually-exclusive synonym of `-n/--name` with `dest=custom_container_name`.
 
 ### `list`
 
@@ -282,7 +282,7 @@ OPTIONS
                          and exit without running it.
 ```
 
-Hidden aliases from parser: `--fix-low-ports` (mutually exclusive synonym of `-P/--redirect-ports`), `--termux-home` (mutually exclusive synonym of `--shared-home`).
+Hidden aliases from parser: `--fix-low-ports` is a mutually exclusive synonym of `-P/--redirect-ports`, and `--termux-home` is a mutually exclusive synonym of `--shared-home`.
 
 ### `run`
 
@@ -322,7 +322,7 @@ OPTIONS
                          and exit without running it.
 ```
 
-(`run` shares the exact option set of `login` via `_add_login_or_run_common`; the abbreviated lines above are the same verbatim text as `login`'s full block.)
+`run` shares the exact option set of `login` via `_add_login_or_run_common`. The abbreviated lines above are the same verbatim text as `login`'s full block.
 
 ### `ps`
 
@@ -639,13 +639,13 @@ OPTIONS
                    the table. Suitable for piping into other commands.
 ```
 
-EVIDENCE: `proot-distro help`; `proot-distro <cmd> --help` for each of install, list, login, run, ps, kill, remove, rename, reset, backup, restore, clear-cache, copy, sync, build, push, search; alias table in `parser.py` (`ALIAS_TO_CANONICAL`, `_install`, `_login`, `_run`).
+EVIDENCE: `proot-distro help`. `proot-distro <cmd> --help` for install, list, login, run, ps, kill, remove, rename, reset, backup, restore, clear-cache, copy, sync, build, push, search. Alias table in `parser.py` gives `ALIAS_TO_CANONICAL`, `_install`, `_login`, `_run`.
 
 ---
 
-## 3. Per-command behavior and defaults (from source)
+## 3. Per-command behavior and defaults from source
 
-Defaults and mutually-exclusive groups read from `proot_distro/parser.py`; behavior read from the module in `proot_distro/commands/`.
+Read defaults and mutually-exclusive groups from `proot_distro/parser.py`. Read behavior from the module in `proot_distro/commands/`.
 
 | Command | Module | Defaults / notes from parser.py | Behavior (from module) |
 |---|---|---|---|
@@ -667,16 +667,16 @@ Defaults and mutually-exclusive groups read from `proot_distro/parser.py`; behav
 | `push` | `commands/push.py` | `image_ref` positional; `-a/--architecture`; `--allow-insecure`; `-q` | Reads manifest+blobs from the local cache and pushes to a registry; `:latest` appended if no tag; digest references refused; pre-flight refuses when no cached manifest exists. |
 | `search` | `commands/search.py` | `query` positional; `-l/--limit` (string, validated: 1..`SEARCH_LIMIT_MAX`); `-q` | Queries Docker Hub and prints a NAME/DESCRIPTION/STARS/PULLS/OFFICIAL table (or stacked); `--quiet` prints bare names. Only Docker Hub is searchable. |
 
-Command dispatch table `_COMMAND_HANDLERS` in `cli.py` maps every canonical name (incl. `help`) to its handler.
+Command dispatch table `_COMMAND_HANDLERS` in `cli.py` maps every canonical name to its handler, including `help`.
 
-EVIDENCE: `parser.py` (all `_add_*` builders + `REQUIRED_ARGS`); each `commands/*.py` module read in full or in the relevant command function; `cli.py` `_COMMAND_HANDLERS`.
+EVIDENCE: `parser.py` with all `_add_*` builders and `REQUIRED_ARGS`. Each `commands/*.py` module was read in full or in the relevant command function. `cli.py` `_COMMAND_HANDLERS`.
 
 ---
 
 ## 4. Container storage layout
 
 ### Directory tree
-Runtime root `DATA_LOCATION = /data/data/com.termux/files/usr/var/lib/proot-distro` (from `--help`):
+Runtime root `DATA_LOCATION = /data/data/com.termux/files/usr/var/lib/proot-distro` from `--help`:
 
 ```
 cache/
@@ -694,7 +694,7 @@ sessions/
   <pid>.json             # one registry record per live session
 ```
 
-Observed with a real installed container (`alpine`):
+Observed with a real installed container, `alpine`:
 
 ```
 $ ls -la containers/alpine/
@@ -706,7 +706,7 @@ drwx------. sysdata
 
 Path helpers from `paths.py`: `container_dir(name)=CONTAINERS_DIR/name`, `container_rootfs(name)=container_dir/rootfs`, `container_manifest(name)=container_dir/manifest.json`.
 
-`CONTAINERS_DIR = RUNTIME_DIR/containers` (`constants.py`). Legacy layout `RUNTIME_DIR/installed-rootfs/<name>` is migrated to `containers/<name>/rootfs` on first `login` (`commands/login/migrate.py`).
+`CONTAINERS_DIR = RUNTIME_DIR/containers` comes from `constants.py`. The legacy layout `RUNTIME_DIR/installed-rootfs/<name>` is migrated to `containers/<name>/rootfs` on the first `login` in `commands/login/migrate.py`.
 
 ### `manifest.json` fields
 Written by `install._run_install` as:
@@ -719,7 +719,7 @@ manifest_data = {
 }
 ```
 
-Verbatim example — `containers/alpine/manifest.json`:
+Verbatim example: `containers/alpine/manifest.json`:
 
 ```json
 {
@@ -767,10 +767,10 @@ Verbatim example — `containers/alpine/manifest.json`:
 }
 ```
 
-Accessed via: `read_container_manifest` → dict; `manifest_image_config` → `image_config.config`; `container_image_config` (forgiving) → same; `container_image_origin` → `(image_ref, arch)`.
+Accessed: `read_container_manifest` → dict. `manifest_image_config` → `image_config.config`. `container_image_config` is lenient and gives the same. `container_image_origin` → `(image_ref, arch)`.
 
-### `sysdata/` stubs (fake `/proc`, `/sys`)
-Files written by `sysdata.setup_fake_sysdata` into `containers/<name>/sysdata/` (dir mode 0700). Contents observed:
+### `sysdata/` stubs, fake `/proc` and `/sys`
+Files written by `sysdata.setup_fake_sysdata` into `containers/<name>/sysdata/` with dir mode 0700. Contents observed:
 
 ```
 loadavg                           0.12 0.07 0.02 2/165 765
@@ -785,7 +785,7 @@ sysctl_kernel_overflowgid         65534
 sys_empty/                        (empty dir, bound at /sys/fs/selinux)
 ```
 
-`stat` and `uptime` are regenerated to match the host's current CPU list; the rest are written once.
+`stat` and `uptime` are regenerated to match the host's current CPU list. The rest are written once.
 
 ### Session registry record
 Verbatim `sessions/11589.json`:
@@ -794,15 +794,15 @@ Verbatim `sessions/11589.json`:
 ```
 
 ### Lock file
-`locks/alpine.lock` held an flock; contents are `<pid> <command>` (`"15249 login\n"` observed).
+`locks/alpine.lock` held an flock. The contents are `<pid> <command>`. Observed value: `"15249 login\n"`.
 
-EVIDENCE: `proot-distro --help` (DATA LOCATION); `ls -la`/`find` of `/data/data/com.termux/files/usr/var/lib/proot-distro/`; `cat containers/alpine/manifest.json`; `cat containers/alpine/sysdata/*`; `cat sessions/11589.json`; `cat locks/alpine.lock`; `paths.py` (`container_dir`, `container_rootfs`, `container_manifest`); `commands/install.py` (manifest_data); `constants.py` (`CONTAINERS_DIR`).
+EVIDENCE: `proot-distro --help` DATA LOCATION. `ls -la`/`find` of `/data/data/com.termux/files/usr/var/lib/proot-distro/`. `cat containers/alpine/manifest.json`. `cat containers/alpine/sysdata/*`. `cat sessions/11589.json`. `cat locks/alpine.lock`. `paths.py` with `container_dir`, `container_rootfs`, `container_manifest`. `commands/install.py` manifest_data. `constants.py` `CONTAINERS_DIR`.
 
 ---
 
 ## 5. proot invocation details
 
-Source: `proot_distro/commands/login/proot_cmd.py`. The argv is assembled in a fixed order (module header comment):
+Source: `proot_distro/commands/login/proot_cmd.py`. The module header comment gives the fixed argv order:
 
 ```
 1. proot binary + emulator flags (when cross-arch).
@@ -820,25 +820,25 @@ Source: `proot_distro/commands/login/proot_cmd.py`. The argv is assembled in a f
 ### Exact proot flags passed
 From `build_proot_args`, `_add_proot_extensions`, `_add_non_minimal_binds`, `_add_termux_dev_binds`, `_add_custom_binds`:
 
-- `-q <emulator>` — only when cross-arch emulation is needed (first, before extensions). Emulator adds extra binds (section 8).
-- `--kill-on-exit` — appended unless `--no-kill-on-exit` (which instead warns). Termux only.
-- `--link2symlink` — unless `dist_type=="termux"` or `--no-link2symlink`.
-- `--sysvipc` — unless `--no-sysvipc` (and only when not minimal).
-- `"--kernel-release=\\Linux\\<hostname>\\<kernel_release>\\<DEFAULT_FAKE_KERNEL_VERSION>\\<uname_m>\\localdomain\\-1\\"` — only when not minimal (`DEFAULT_FAKE_KERNEL_VERSION = "#1 SMP PREEMPT_DYNAMIC Fri, 10 Oct 2025 00:00:00 +0000"`; `uname_m` = `ARCH_UNAME_M[target_arch]`).
-- `-L` — always (fix lstat for dpkg symlink warnings).
-- `--change-id=<uid>:<gid>` — appended only when `dist_type != "termux"`.
-- `--rootfs=<path>` — `--rootfs=.` for a real session (chdir into the pinned fd), the real path for `--get-proot-cmd`.
+- `-q <emulator>`: only when cross-arch emulation is needed, first, before extensions. The emulator adds extra binds. See section 8.
+- `--kill-on-exit`: appended unless `--no-kill-on-exit`, which instead warns. Termux only.
+- `--link2symlink`: unless `dist_type=="termux"` or `--no-link2symlink`.
+- `--sysvipc`: unless `--no-sysvipc`, and only when not minimal.
+- `"--kernel-release=\\Linux\\<hostname>\\<kernel_release>\\<DEFAULT_FAKE_KERNEL_VERSION>\\<uname_m>\\localdomain\\-1\\"` only when not minimal, with `DEFAULT_FAKE_KERNEL_VERSION = "#1 SMP PREEMPT_DYNAMIC Fri, 10 Oct 2025 00:00:00 +0000"` and `uname_m` = `ARCH_UNAME_M[target_arch]`.
+- `-L`: always, to fix lstat for dpkg symlink warnings.
+- `--change-id=<uid>:<gid>`: appended only when `dist_type != "termux"`.
+- `--rootfs=<path>`: `--rootfs=.` for a real session, after a chdir into the pinned fd, and the real path for `--get-proot-cmd`.
 - `--cwd=<login_wd>`.
-- `--bind=/dev`, `--bind=/proc`, `--bind=/sys` — the baseline binds, always.
-- `-p` — appended when `--redirect-ports`.
+- `--bind=/dev`, `--bind=/proc`, `--bind=/sys`: the baseline binds, always.
+- `-p`: appended when `--redirect-ports`.
 
-`_add_proot_extensions` returns early on non-Termux hosts (`if not IS_TERMUX: return`), so the extension block is Termux-specific.
+`_add_proot_extensions` returns early on non-Termux hosts. The code is `if not IS_TERMUX: return`, so the extension block is Termux-specific.
 
 ### Full bind list logic
 
-**(a) Baseline (always):** `--bind=/dev --bind=/proc --bind=/sys`.
+**(a) Baseline, always:** `--bind=/dev --bind=/proc --bind=/sys`.
 
-**(b) Non-minimal, non-termux, Termux host** — `_add_termux_dev_binds`:
+**(b) Non-minimal, non-termux, Termux host:** `_add_termux_dev_binds`:
 ```
 --bind=/dev/urandom:/dev/random
 --bind=/proc/self/fd:/dev/fd                     (only if /dev/fd absent)
@@ -848,7 +848,7 @@ From `build_proot_args`, `_add_proot_extensions`, `_add_non_minimal_binds`, `_ad
 <fake_sysdata_bindings>                          (see below)
 --bind=<containers/<name>/shm>:/dev/shm          (only if shm dir validates)
 ```
-sysdata bindings emitted when the real `/proc` entry is unreadable on the host (`fake_sysdata_bindings`):
+The code emits sysdata bindings when the real `/proc` entry is unreadable on the host, in `fake_sysdata_bindings`:
 ```
 --bind=<container>/sysdata/sys_empty:/sys/fs/selinux
 --bind=<container>/sysdata/loadavg:/proc/loadavg
@@ -862,7 +862,7 @@ sysdata bindings emitted when the real `/proc` entry is unreadable on the host (
 --bind=<container>/sysdata/sysctl_kernel_overflowgid:/proc/sys/kernel/overflowgid
 ```
 
-**(c) Non-minimal, not isolated, Termux host** — `_add_dalvik_cache_binds` + `storage_bindings()` + `_add_termux_app_binds` (app binds only when `dist_type != "termux"`):
+**(c) Non-minimal, not isolated, Termux host:** adds `_add_dalvik_cache_binds`, `storage_bindings()` and `_add_termux_app_binds`. App binds occur only when `dist_type != "termux"`:
 ```
 --bind=/data/app                                  (dalvik dirs, only if mode last digit in 1/5/7)
 --bind=/data/dalvik-cache
@@ -872,7 +872,7 @@ sysdata bindings emitted when the real `/proc` entry is unreadable on the host (
 --bind=/data/data/com.termux/cache
 --bind=/data/data/com.termux/files/home
 ```
-`storage_bindings()` (from `bindings.py`): if `/storage` readable →
+`storage_bindings()` from `bindings.py`: if `/storage` readable →
 ```
 --bind=/storage
 --bind=/storage/emulated/0:/sdcard
@@ -886,7 +886,7 @@ else it probes `/storage/self/primary`, `/storage/emulated/0`, `/sdcard` and, fo
 --bind=<p>:/storage/self/primary
 ```
 
-**(d) Non-minimal, Termux host, (not isolated OR emulating)** — `system_bindings()` + (if non-termux) the Termux prefix. `system_bindings()` (from `bindings.py`) iterates `/apex`, `/odm`, `/product`, `/system`, `/system_ext`, `/vendor`, `/linkerconfig/ld.config.txt`, `/linkerconfig/com.android.art/ld.config.txt`, `/plat_property_contexts`, `/property_contexts`; dirs must carry world-execute (mode 1/5/7) and files must be readable, else skipped:
+**(d) Non-minimal, Termux host, not isolated or emulating:** `system_bindings()` plus the Termux prefix when the type is not termux. `system_bindings()` from `bindings.py` iterates `/apex`, `/odm`, `/product`, `/system`, `/system_ext`, `/vendor`, `/linkerconfig/ld.config.txt`, `/linkerconfig/com.android.art/ld.config.txt`, `/plat_property_contexts`, `/property_contexts`. Directories must carry world-execute in mode 1/5/7 and files must be readable, else skipped:
 ```
 --bind=/apex
 --bind=/odm
@@ -901,7 +901,7 @@ else it probes `/storage/self/primary`, `/storage/emulated/0`, `/sdcard` and, fo
 --bind=/data/data/com.termux/files/usr            (TERMUX_PREFIX; non-termux only)
 ```
 
-**(e) Shared dirs (any mode that reaches here):**
+**(e) Shared dirs, any mode that reaches here:**
 ```
 --shared-home:
     termux-type → --bind=$TERMUX_HOME:$TERMUX_HOME
@@ -911,12 +911,12 @@ else it probes `/storage/self/primary`, `/storage/emulated/0`, `/sdcard` and, fo
 --shared-x11 (Termux, non-termux type) → --bind=$TERMUX_PREFIX/tmp/.X11-unix:/tmp/.X11-unix
 ```
 
-**(f) User `-b/--bind` entries** appended last (with overlap warning if a destination duplicates an existing one).
+**(f) User `-b/--bind` entries** come last, with an overlap warning if a destination duplicates an existing one.
 
-**Isolated mode** skips (c) entirely and (d) unless emulating; **minimal** skips the whole non-minimal block, so only `/dev /proc /sys` remain.
+**Isolated mode** skips (c) entirely and (d) unless it emulates. **minimal** skips the whole non-minimal block, so only `/dev /proc /sys` remain.
 
-### Observed assembled command (`--get-proot-cmd`)
-Default `proot-distro login alpine --get-proot-cmd -- true` produced (verbatim proot segment, binds elided where repeated above):
+### Observed assembled command for `--get-proot-cmd`
+Default `proot-distro login alpine --get-proot-cmd -- true` produced this. The proot segment is verbatim. Binds are elided where they repeat above:
 
 ```
 /data/data/com.termux/files/usr/bin/proot \
@@ -957,21 +957,21 @@ Default `proot-distro login alpine --get-proot-cmd -- true` produced (verbatim p
   true
 ```
 
-`--minimal` reduced it to exactly: `--kill-on-exit --link2symlink -L --change-id=0:0 --rootfs=... --cwd=/root --bind=/dev --bind=/proc --bind=/sys /bin/sh -c true` (no `--sysvipc`, no `--kernel-release`, no extra binds).
+`--minimal` reduced it to exactly `--kill-on-exit --link2symlink -L --change-id=0:0 --rootfs=... --cwd=/root --bind=/dev --bind=/proc --bind=/sys /bin/sh -c true`. It has no `--sysvipc`, no `--kernel-release`, and no extra binds.
 
 `--isolated` kept `--sysvipc`+`--kernel-release`+`-L` and the `/dev /proc /sys` + sysdata + shm binds, but dropped all Android/Termux app/storage/system binds.
 
-`-u nobody` produced `--change-id=65534:65534`, `--cwd=/`, and inner `/sbin/nologin -c true` (the user's shell).
+`-u nobody` produced `--change-id=65534:65534`, `--cwd=/`, and inner `/sbin/nologin -c true`, which is the user's shell.
 
-EVIDENCE: `commands/login/proot_cmd.py`; `commands/login/bindings.py`; `sysdata.py` (`fake_sysdata_bindings`); `shm.py`; `proot-distro login alpine --get-proot-cmd -- true` plus the `--isolated`, `--minimal`, `-u nobody` variants.
+EVIDENCE: `commands/login/proot_cmd.py`. `commands/login/bindings.py`. `sysdata.py` with `fake_sysdata_bindings`. `shm.py`. `proot-distro login alpine --get-proot-cmd -- true` plus the `--isolated`, `--minimal`, `-u nobody` variants.
 
 ---
 
 ## 6. Environment variables set inside the guest
 
-Captured from `env -i ... proot ...` in the `--get-proot-cmd` output. The child env is built by `_build_normal_env` / `_build_termux_env` (`commands/login/__init__.py`) and passed to `execvpe`.
+Captured from `env -i ... proot ...` in the `--get-proot-cmd` output. The child env is built by `_build_normal_env` / `_build_termux_env` in `commands/login/__init__.py` and passed to `execvpe`.
 
-### Default mode, normal-type container, root (from get-proot-cmd)
+### Default mode, normal-type container, root from get-proot-cmd
 ```
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/data/data/com.termux/files/usr/bin
 MOZ_FAKE_NO_SANDBOX=1
@@ -997,65 +997,65 @@ PROOT_L2S_DIR=/data/data/com.termux/files/usr/var/lib/proot-distro/containers/al
 ```
 
 ### `--isolated`
-Same identity + `HOME=/root`, `USER=root`, `TERM`, `COLORTERM`, `PROOT_L2S_DIR`, `MOZ_FAKE_NO_SANDBOX/MOZ_SHM_NO_SEALS/PULSE_SERVER` — but **no** `ANDROID_*`/`BOOTCLASSPATH`/`EXTERNAL_STORAGE`, and PATH is the plain image/baseline `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` (no Termux bin).
+Same identity plus `HOME=/root`, `USER=root`, `TERM`, `COLORTERM`, `PROOT_L2S_DIR`, `MOZ_FAKE_NO_SANDBOX/MOZ_SHM_NO_SEALS/PULSE_SERVER`. It has **no** `ANDROID_*`/`BOOTCLASSPATH`/`EXTERNAL_STORAGE`, and PATH is the plain image/baseline `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with no Termux bin.
 
 ### `--minimal`
-Only `PATH` (plain), `PD_CONTAINER`, `container`, `PD_IMAGE`, `PD_IMAGE_ID`, `TERM`, `COLORTERM`, `PROOT_L2S_DIR`. No `HOME`, no `USER`, no Android vars, no Mozilla/Pulse hints.
+Only `PATH`, which is plain, plus `PD_CONTAINER`, `container`, `PD_IMAGE`, `PD_IMAGE_ID`, `TERM`, `COLORTERM`, `PROOT_L2S_DIR`. No `HOME`, no `USER`, no Android vars, no Mozilla/Pulse hints.
 
-### Non-root (`-u nobody`)
-`HOME=/`, `USER=nobody`, PATH gains Termux bin, Android vars present (default mode).
+### Non-root with `-u nobody`
+`HOME=/`, `USER=nobody`, PATH gains Termux bin, Android vars present in default mode.
 
-### Env sources and rules (`commands/login/env.py`)
-- **Identity vars** (`identity_env_pairs`): `PD_CONTAINER` (always = container name), `container=proot-distro` (constant `CONTAINER_MARKER`), and — read from `manifest.json` — `PD_IMAGE` (the `image_ref`) and `PD_IMAGE_ID` (the image config digest). `PD_IMAGE`/`PD_IMAGE_ID` are absent for a plain-tarball/legacy container.
-- **Image Env**: `image_path_env_pairs` harvests `manifest.json` `image_config.config.Env` entries, but blocks `IMAGE_ENV_BLOCKED` = {all `ANDROID_HOST_ENV_VARS` (ANDROID_ART_ROOT, ANDROID_DATA, ANDROID_I18N_ROOT, ANDROID_ROOT, ANDROID_RUNTIME_ROOT, ANDROID_TZDATA_ROOT, BOOTCLASSPATH, DEX2OATBOOTCLASSPATH, EXTERNAL_STORAGE), the identity keys, MOZ_FAKE_NO_SANDBOX, MOZ_SHM_NO_SEALS, PULSE_SERVER, TERM, COLORTERM} plus any `LD_*`/`PROOT_*` names. An image cannot override these; user `-e/--env` can.
-- **Android host vars** inherited only in default mode (not isolated, not minimal).
+### Env sources and rules in `commands/login/env.py`
+- **Identity vars** in `identity_env_pairs`: `PD_CONTAINER` always equals the container name, `container=proot-distro` is the constant `CONTAINER_MARKER`, and `PD_IMAGE` and `PD_IMAGE_ID` come from `manifest.json`. `PD_IMAGE` is the `image_ref` and `PD_IMAGE_ID` is the image config digest. `PD_IMAGE`/`PD_IMAGE_ID` are absent for a plain-tarball/legacy container.
+- **Image Env**: `image_path_env_pairs` harvests `manifest.json` `image_config.config.Env` entries, but blocks `IMAGE_ENV_BLOCKED`. That set holds all `ANDROID_HOST_ENV_VARS` such as ANDROID_ART_ROOT, ANDROID_DATA, ANDROID_I18N_ROOT, ANDROID_ROOT, ANDROID_RUNTIME_ROOT, ANDROID_TZDATA_ROOT, BOOTCLASSPATH, DEX2OATBOOTCLASSPATH and EXTERNAL_STORAGE. It also holds the identity keys, MOZ_FAKE_NO_SANDBOX, MOZ_SHM_NO_SEALS, PULSE_SERVER, TERM and COLORTERM, plus any `LD_*`/`PROOT_*` names. An image cannot override these. User `-e/--env` entries can.
+- **Android host vars** are inherited only in default mode, not isolated and not minimal.
 - **`--env VAR=VALUE`** user entries override everything except the final Termux-bin PATH append.
-- **PROOT_* passthrough**: `PROOT_NO_SECCOMP`, `PROOT_VERBOSE` are forwarded if set (non-minimal only). `PROOT_L2S_DIR` is always pinned to `<rootfs>/.l2s` for non-termux Termux containers.
-- **profile.d snippet**: every normal-type session writes `/etc/profile.d/termux-profile.sh` re-exporting these vars so `su - <user>` in the guest keeps them.
+- **PROOT_* passthrough**: `PROOT_NO_SECCOMP` and `PROOT_VERBOSE` are forwarded if set, in non-minimal mode only. `PROOT_L2S_DIR` is always pinned to `<rootfs>/.l2s` for non-termux Termux containers.
+- **profile.d snippet**: every normal-type session writes `/etc/profile.d/termux-profile.sh`, which re-exports these vars so `su - <user>` in the guest keeps them.
 
-EVIDENCE: `proot-distro login alpine [--isolated|--minimal|-u nobody] --get-proot-cmd -- true` (env block); `commands/login/env.py` (`ANDROID_HOST_ENV_VARS`, `IMAGE_ENV_BLOCKED`, `identity_env_pairs`, `_PROFILE_SNIPPET`, `inject_termux_profile`); `commands/login/__init__.py` (`_build_normal_env`, `_build_termux_env`).
+EVIDENCE: the env block of `proot-distro login alpine [--isolated|--minimal|-u nobody] --get-proot-cmd -- true`. In `commands/login/env.py`: `ANDROID_HOST_ENV_VARS`, `IMAGE_ENV_BLOCKED`, `identity_env_pairs`, `_PROFILE_SNIPPET` and `inject_termux_profile`. In `commands/login/__init__.py`: `_build_normal_env` and `_build_termux_env`.
 
 ---
 
 ## 7. Backup / restore implementation
 
-### `backup` (`commands/backup.py`)
-- **Archive structure:** `<name>/manifest.json` (optional, legacy containers have none) followed by `<name>/rootfs/...`. Written by `_each_entry`.
+### `backup` in `commands/backup.py`
+- **Archive structure:** `<name>/manifest.json` followed by `<name>/rootfs/...`. The manifest is optional and legacy containers have none. Written by `_each_entry`.
 - **Tar writers:**
   - file output: `tarfile.open(path, mode=f'w:{comp}')`
   - stdout output: `tarfile.open(fileobj=sys.stdout.buffer, mode=f'w|{comp}')`
-  - zstd file output uses a special `compress.open_tar_writer(...)` (tarfile's `w|zst` refuses a level).
+- zstd file output uses a special `compress.open_tar_writer(...)`. Here tarfile's `w|zst` refuses a level.
   - `comp` ∈ `{'gz','bz2','xz','zst',''}`.
-- **Compression mapping** `_COMPRESS_EXTS` (by extension): `.tar.gz/.tgz`→gz, `.tar.bz2/.tbz2`→bz2, `.tar.xz/.txz/.tar.lzma/.tlzma`→xz, `.tar.zst/.tzst`→zst, `.tar`→none. `_UNSUPPORTED_EXTS = ('.tar.lz4', '.tar.lz')` are rejected. `_COMPRESSION_ARG_MAP`: gzip→gz, bzip2→bz2, xz→xz, zstd→zst, none→''.
-- **Permission handling:** three passes over the tree, all descriptor-relative: `_fix_permissions` (chmod owner-readable/executable on the way in via `dirfd.chmod_at`, skipping regular files with `st_nlink != 1`), `_measure`, then the archive pass. Refuses to run with `--output` on an existing file or a directory, and refuses to print to a TTY without `--output`.
+- **Compression mapping** `_COMPRESS_EXTS` by extension: `.tar.gz/.tgz`→gz, `.tar.bz2/.tbz2`→bz2, `.tar.xz/.txz/.tar.lzma/.tlzma`→xz, `.tar.zst/.tzst`→zst, `.tar`→none. `_UNSUPPORTED_EXTS = ('.tar.lz4', '.tar.lz')` are rejected. `_COMPRESSION_ARG_MAP`: gzip→gz, bzip2→bz2, xz→xz, zstd→zst, none→''.
+- **Permission handling:** three passes over the tree, all descriptor-relative. `_fix_permissions` does chmod owner-readable/executable on the way in via `dirfd.chmod_at` and skips regular files with `st_nlink != 1`. Then `_measure` runs, then the archive pass. The tool refuses to run with `--output` on an existing file or a directory. It also refuses to print to a TTY without `--output`.
 - **Ownership stripped:** `_strip_owner` sets `info.uid=0, gid=0, uname='', gname=''` on every member.
-- **What is included:** manifest.json (regular file only) + every rootfs entry.
-- **What is excluded/skipped:** `.l2s/` at the rootfs top level (its backing files are inlined into their referring symlinks); block/char devices, FIFOs and sockets (`_add_path` returns early); `.l2s` symlinks resolved to the backing file's content and packed as regular files (self-contained archive); other symlinks stored as symlinks, not followed.
-- **Hard links:** same-inode files become hard-link members via `tf.gettarinfo(fileobj=fh)`; multiple l2s names sharing a backing file become independent regular files.
-- **stdout discipline:** progress goes to stderr; archive bytes to stdout.
+- **What is included:** manifest.json as a regular file only, plus every rootfs entry.
+- **What is excluded/skipped:** `.l2s/` at the rootfs top level, whose backing files are inlined into their referring symlinks. Block/char devices, FIFOs and sockets are skipped, and `_add_path` returns early. `.l2s` symlinks become the backing file's content packed as regular files, so the archive is self-contained. Other symlinks are stored as symlinks and not followed.
+- **Hard links:** same-inode files become hard-link members via `tf.gettarinfo(fileobj=fh)`. Multiple l2s names that share a backing file become independent regular files.
+- **stdout discipline:** progress goes to stderr. Archive bytes go to stdout.
 
-### `restore` (`commands/restore.py`)
-- **Tar readers:** file input: `tarfile.open(fileobj=<ByteCounter>, mode='r|*')` (auto-detect). stdin input: magic-byte sniff (`_MAGIC_COMPRESS`) then `tarfile.open(fileobj=sys.stdin.buffer, mode=f'r|{comp}')`.
-- **Magic detection** `(: gz \x1f\x8b, bz2 BZh, xz \xfd7zXZ\x00, lzma 5d00→xz, zstd ZSTD_MAGIC)`. A zstd archive on an interpreter without zstd is named as such before opening.
-- **Accepted layouts:** `<name>/manifest.json`, `<name>/rootfs/...`, legacy `installed-rootfs/<name>/...` (re-rooted to `rootfs`), and very-old `<name>/<other>` treated as inside rootfs. Members with `..`/`.`/empty components are rejected (path traversal blocked); member with no subdir (bare name) rejected.
-- **Single container only:** the first valid member fixes the target and takes an exclusive lock; a member naming a different container aborts.
-- **Included/excluded:** only `manifest.json` (buffered, capped at `_MAX_MANIFEST_BYTES = 16 MiB`, written only on success) and rootfs content. Block/char/FIFO members skipped. Hardlink members copied (`_write_hardlink` via `dirfd.copy_data`); symlinks recreated; dirs created (`_write_directory` defers owner-rwx modes until the end); regular files written through `dirfd.open_new_at` (O_EXCL, fresh inode — never through a hardlink).
-- **Permission handling:** directories whose archived mode lacks owner rwx are temporarily widened `mode | S_IRWXU` and the final mode reapplied in reverse insertion order after extraction; regular files get `fchmod(member.mode)`.
-- **Destructive clear deferred:** `_clear_existing_rootfs` runs only at the first materialised rootfs member; shm store is removed too; a rootfs-less archive leaves the target untouched, and a broken (non-directory) rootfs result is removed.
-- All writes are descriptor-relative (`(dir_fd, name)` via `dirfd.descend_at`); final components are not dereferenced.
+### `restore` in `commands/restore.py`
+- **Tar readers:** for file input it uses `tarfile.open(fileobj=<ByteCounter>, mode='r|*')` with auto-detect. For stdin input it does a magic-byte sniff in `_MAGIC_COMPRESS`, then `tarfile.open(fileobj=sys.stdin.buffer, mode=f'r|{comp}')`.
+- **Magic detection** `(: gz \x1f\x8b, bz2 BZh, xz \xfd7zXZ\x00, lzma 5d00→xz, zstd ZSTD_MAGIC)`. A zstd archive on an interpreter without zstd is named as such before it opens.
+- **Accepted layouts:** `<name>/manifest.json`, `<name>/rootfs/...`, legacy `installed-rootfs/<name>/...` re-rooted to `rootfs`, and very-old `<name>/<other>` as inside rootfs. Members with `..`/`.`/empty components are rejected, so path traversal is blocked. A member with no subdir and a bare name is rejected.
+- **Single container only:** the first valid member fixes the target and takes an exclusive lock. A member that names a different container aborts.
+- **Included/excluded:** only `manifest.json`, buffered and capped at `_MAX_MANIFEST_BYTES = 16 MiB`, written only on success, plus rootfs content. Block/char/FIFO members are skipped. Hardlink members are copied with `_write_hardlink` via `dirfd.copy_data`. Symlinks are recreated. Dirs are created, and `_write_directory` defers owner-rwx modes until the end. Regular files go through `dirfd.open_new_at` with O_EXCL and a fresh inode, never through a hardlink.
+- **Permission handling:** directories whose archived mode lacks owner rwx are temporarily widened to `mode | S_IRWXU`. The final mode is reapplied in reverse insertion order after extraction. Regular files get `fchmod(member.mode)`.
+- **Destructive clear deferred:** `_clear_existing_rootfs` runs only at the first materialised rootfs member. The shm store is also removed. A rootfs-less archive leaves the target untouched. A broken rootfs result that is not a directory is removed.
+- All writes are descriptor-relative with `(dir_fd, name)` via `dirfd.descend_at`. Final components are not dereferenced.
 
-EVIDENCE: `commands/backup.py`; `commands/restore.py`; `compress.py` (`open_tar_writer`, `ZSTD_AVAILABLE`); `shm.py` (`SHM_DIR_NAME`).
+EVIDENCE: `commands/backup.py`. `commands/restore.py`. `compress.py` with `open_tar_writer` and `ZSTD_AVAILABLE`. `shm.py` with `SHM_DIR_NAME`.
 
 ---
 
 ## 8. User-visible limitations and hard-coded constraints
 
-**Nested-proot refusal** — `cli._refuse_nested_proot()` reads `/proc/<pid>/status`; if `TracerPid` points at a process whose `Name:` contains `proot`, it errors and exits 1:
+**Nested-proot refusal**: `cli._refuse_nested_proot()` reads `/proc/<pid>/status`. If `TracerPid` points at a process whose `Name:` contains `proot`, it errors and exits 1:
 ```
 attempted to run proot-distro in a proot session. Please check your system configuration to ensure that this program does not run under any other proot instance. Additionally check the target container to ensure it does not invoke proot-distro on a loop basis. With 100% confidence this is not a mistake. Do not send bug reports!
 ```
 
-**Container-name validation** — `names.py`:
+**Container-name validation** in `names.py`:
 ```python
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*\Z")
 NAME_RULE_HINT = ("It must begin with a letter or digit and contain only letters, "
@@ -1063,28 +1063,28 @@ NAME_RULE_HINT = ("It must begin with a letter or digit and contain only letters
 ```
 Enforced by `require_valid_name` in install, remove, rename, reset, login, run, backup, restore, kill.
 
-**Architecture detection / emulation** — `arch.py`:
+**Architecture detection and emulation** in `arch.py`:
 - `get_device_cpu_arch()` collapses `armv7l`/`armv8l` to `arm`.
-- `detect_installed_arch()` reads ELF `e_machine` from the first usable of `/usr/bin/bash, /usr/bin/sh, /usr/bin/su, /usr/bin/busybox, $PREFIX/bin/bash, /bin/bash, /bin/sh, /bin/su, /bin/busybox`; `_ELF_MACHINE_MAP` covers i686/arm/x86_64/aarch64/riscv64; else `"unknown"`.
-- `_KNOWN_ARCHS = {aarch64, arm, i686, riscv64, x86_64}`; `normalize_arch` also accepts `linux/`-prefixed Docker strings and bare `arm64/amd64/386/arm/v7`.
-- `get_emulator_args`: native when archs match; aarch64 host runs `arm` natively iff `supports_32bit()` (personality `PER_LINUX32` probe), x86_64 runs `i686` natively; otherwise requires `qemu-<arch>` on PATH, else errors naming the missing `qemu-user-*` package. Emulator adds binds `/apex`, `/linkerconfig/ld.config.txt`, `$PREFIX`, `/system`, `/vendor`, `/plat_property_contexts`, `/property_contexts` when present.
-- Termux-type containers **cannot be emulated** (error, exit 1).
-- `PD_PROOT_BIN` override is validated (must be an existing executable file).
+- `detect_installed_arch()` reads ELF `e_machine` from the first usable of `/usr/bin/bash, /usr/bin/sh, /usr/bin/su, /usr/bin/busybox, $PREFIX/bin/bash, /bin/bash, /bin/sh, /bin/su, /bin/busybox`. `_ELF_MACHINE_MAP` covers i686/arm/x86_64/aarch64/riscv64, else `"unknown"`.
+- `_KNOWN_ARCHS = {aarch64, arm, i686, riscv64, x86_64}`. `normalize_arch` also accepts `linux/`-prefixed Docker strings and bare `arm64/amd64/386/arm/v7`.
+- `get_emulator_args`: native when the archs match. An aarch64 host runs `arm` natively iff `supports_32bit()` passes, which probes personality `PER_LINUX32`, and x86_64 runs `i686` natively. Otherwise it requires `qemu-<arch>` on PATH, else it errors and names the missing `qemu-user-*` package. The emulator adds binds `/apex`, `/linkerconfig/ld.config.txt`, `$PREFIX`, `/system`, `/vendor`, `/plat_property_contexts`, `/property_contexts` when present.
+- Termux-type containers **cannot be emulated**. The code gives an error and exit 1.
+- `PD_PROOT_BIN` override is validated. It must be an existing executable file.
 
-**`build` proot requirement** — only RUN-family instructions need proot; a Dockerfile of FROM/COPY/ADD/ENV/ARG/LABEL/USER/WORKDIR/CMD/ENTRYPOINT/EXPOSE/VOLUME/STOPSIGNAL/HEALTHCHECK/SHELL/MAINTAINER/ONBUILD<non-RUN> builds in pure Python. `--no-cache` disables step caching. BuildKit-only directives (`RUN --mount/--network/--security`, `COPY --link/--parents`) are rejected. No multi-platform manifest lists.
+**`build` proot requirement**: only RUN-family instructions need proot. A Dockerfile of FROM/COPY/ADD/ENV/ARG/LABEL/USER/WORKDIR/CMD/ENTRYPOINT/EXPOSE/VOLUME/STOPSIGNAL/HEALTHCHECK/SHELL/MAINTAINER/ONBUILD<non-RUN> builds in pure Python. `--no-cache` disables step caching. BuildKit-only directives such as `RUN --mount/--network/--security` and `COPY --link/--parents` are rejected. No multi-platform manifest lists.
 
-**`restore` single-container limit** — exactly one container per archive; more than one or a rootfs-less archive is rejected. Legacy `installed-rootfs/<name>` layout is accepted.
+**`restore` single-container limit**: exactly one container per archive. The tool rejects more than one container or a rootfs-less archive. It accepts the legacy `installed-rootfs/<name>` layout.
 
-**`search` scope** — Docker Hub only; custom registries cannot be queried. Not part of the OCI distribution protocol. Private repos never appear even with `PD_DOCKER_AUTH` configured. `--limit` range 1..1000.
+**`search` scope**: Docker Hub only. Custom registries cannot be queried. It is not part of the OCI distribution protocol. Private repos never appear even with `PD_DOCKER_AUTH` configured. `--limit` range 1..1000.
 
-**`backup` stdout** — refuses to write archive bytes to a TTY without `--output`.
+**`backup` stdout**: the tool refuses to write archive bytes to a TTY without `--output`.
 
-**Guest-access limits (from the `login --help` NOTES)** — cannot deliver restricted `/dev`, `/proc`, `/sys` interfaces required by udev, or cgroups/namespaces required by bwrap. ARMv9 CPUs need QEMU for 32-bit programs.
+**Guest-access limits from the `login --help` NOTES**: the guest cannot have restricted `/dev`, `/proc`, `/sys` interfaces that udev requires, or cgroups/namespaces that bwrap requires. ARMv9 CPUs need QEMU for 32-bit programs.
 
-**Isolated/minimal semantics** — minimal disables all proot extensions except link2symlink, no `/proc` workarounds, no kernel-release override. `--shared-home/-tmp/-x11` and `-b` take priority over isolated; isolated disables storage/app/system binds unless emulating.
+**Isolated/minimal semantics**: minimal disables all proot extensions except link2symlink, with no `/proc` workarounds and no kernel-release override. `--shared-home/-tmp/-x11` and `-b` take priority over isolated. Isolated mode disables storage/app/system binds unless it emulates.
 
-**Default constants** — `constants.py`: `DEFAULT_FAKE_KERNEL_RELEASE = "6.17.0-PRoot-Distro"`; `DEFAULT_FAKE_KERNEL_VERSION = "#1 SMP PREEMPT_DYNAMIC Fri, 10 Oct 2025 00:00:00 +0000"`; `DEFAULT_PATH_ENV` (Termux) ends with `:$PREFIX/bin:/system/bin:/system/xbin`; DNS defaults `8.8.8.8` / `8.8.4.4`.
+**Default constants** in `constants.py`: `DEFAULT_FAKE_KERNEL_RELEASE = "6.17.0-PRoot-Distro"`. `DEFAULT_FAKE_KERNEL_VERSION = "#1 SMP PREEMPT_DYNAMIC Fri, 10 Oct 2025 00:00:00 +0000"`. `DEFAULT_PATH_ENV` for Termux ends with `:$PREFIX/bin:/system/bin:/system/xbin`. DNS defaults are `8.8.8.8` and `8.8.4.4`.
 
-**Troubleshooting knobs** (from `--help`): `PD_FORCE_NO_COLORS=true` disables colors; `PD_DOCKER_AUTH="user:password"` supplies private-registry credentials.
+**Troubleshooting knobs** from `--help`: `PD_FORCE_NO_COLORS=true` disables colors. `PD_DOCKER_AUTH="user:password"` supplies private-registry credentials.
 
-EVIDENCE: `cli.py` (`_refuse_nested_proot`); `names.py` (`_NAME_RE`, `require_valid_name`); `arch.py` (`_ELF_MACHINE_MAP`, `_KNOWN_ARCHS`, `_DOCKER_TO_PROOT`, `get_emulator_args`, `get_proot_bin`); `commands/login/__init__.py` (termux-emulation refusal); `commands/build.py` header + `--help` (PROOT REQUIREMENT / LIMITATIONS); `commands/restore.py`; `commands/search.py`; `constants.py`; `proot-distro --help` (TROUBLESHOOTING).
+EVIDENCE: `cli.py` with `_refuse_nested_proot`. `names.py` with `_NAME_RE` and `require_valid_name`. `arch.py` with `_ELF_MACHINE_MAP`, `_KNOWN_ARCHS`, `_DOCKER_TO_PROOT`, `get_emulator_args` and `get_proot_bin`. `commands/login/__init__.py` termux-emulation refusal. `commands/build.py` header and `--help` PROOT REQUIREMENT / LIMITATIONS. `commands/restore.py`. `commands/search.py`. `constants.py`. `proot-distro --help` TROUBLESHOOTING.

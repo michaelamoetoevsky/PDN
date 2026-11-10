@@ -1,11 +1,11 @@
-# Internal Capability Tests (Run 2) — `deb-pdn` vs Host Environment
+# Internal Capability Tests Run 2 - `deb-pdn` vs Host Environment
 
-- Date: 2026-11-04 (WIB)
-- Host: Android 16 (aarch64), Kernel `6.1.157-android14-11-g78a0a76cd7b7-ab15497637`
-- Tool: PodNext (`podnext`) v0.1.7 (`/data/data/com.termux/files/home/workspace/PDN/target/release/podnext`)
-- Target Container: `deb-pdn` (Debian GNU/Linux 13 / trixie rootfs at `~/.podnext/containers/deb-pdn/rootfs`)
-- Host UID: `10396` (`u0_a396`)
-- Container Fake UID: `0` (`root`)
+- Date: 2026-11-04 WIB
+- Host: Android 16 aarch64, Kernel `6.1.157-android14-11-g78a0a76cd7b7-ab15497637`
+- Tool: PodNext `podnext` v0.1.7, path `/data/data/com.termux/files/home/workspace/PDN/target/release/podnext`
+- Target Container: `deb-pdn`, Debian GNU/Linux 13 / trixie rootfs at `~/.podnext/containers/deb-pdn/rootfs`
+- Host UID: `10396` = `u0_a396`
+- Container Fake UID: `0` = `root`
 
 ---
 
@@ -53,7 +53,7 @@ os.uname(): posix.uname_result(sysname='Linux', nodename='localhost', release='6
 ```
 Exit Code: `0`
 
-#### Outside Container (Host)
+#### Outside Container - Host
 Command:
 ```bash
 env -u LD_LIBRARY_PATH python3 -c "import sys, platform, os, pprint; print('sys.platform:', sys.platform); print('platform.uname():', platform.uname()); print('os.uname():', os.uname()); print('os.environ count:', len(os.environ)); print('Sample environ:', {k: os.environ[k] for k in ['HOME', 'PATH', 'PREFIX', 'TMPDIR'] if k in os.environ})"
@@ -87,7 +87,7 @@ OpenAI SDK: 2.24.0
 ```
 Exit Code: `0`
 
-#### Outside Container (Host)
+#### Outside Container - Host
 Command:
 ```bash
 hermes --version
@@ -147,7 +147,7 @@ api_key: gzi_...ef50
 api_mode: chat_completions
 ```
 
-#### Outside Container (Host)
+#### Outside Container - Host
 Command:
 ```bash
 env -u LD_LIBRARY_PATH python3 -c "
@@ -191,7 +191,7 @@ Output:
 ```
 Exit Code: `0`
 
-#### Outside Container (Host)
+#### Outside Container - Host
 Command:
 ```bash
 /data/data/com.termux/files/usr/lib/chromium/chrome --headless=new --no-sandbox --disable-gpu --user-data-dir=/data/data/com.termux/files/home/.podnext/cud-host --dump-dom "data:text/html,<h1>PDN_BROWSER_VERIFIED</h1>"
@@ -206,7 +206,7 @@ Exit Code: `0`
 
 ### 2.2 Playwright Automation via Node.js
 
-Script (`/root/pwtest.js`):
+Script: `/root/pwtest.js`
 ```javascript
 const { chromium } = require('playwright-core');
 (async () => {
@@ -238,7 +238,7 @@ UA=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Headle
 ```
 Exit Code: `0`
 
-#### Outside Container (Host)
+#### Outside Container - Host
 Command:
 ```bash
 NODE_PATH=/data/data/com.termux/files/usr/lib/node_modules node /data/data/com.termux/files/home/.podnext/containers/deb-pdn/rootfs/root/pwtest.js
@@ -255,10 +255,10 @@ Exit Code: `0`
 ### 2.3 `/dev/shm` Access & POSIX Shared Memory
 
 #### Status & Permissions
-- Host: `/dev/shm` does not exist (`ls: cannot access '/dev/shm': No such file or directory`, exit code 2).
+- Host: `/dev/shm` does not exist. The command `ls: cannot access '/dev/shm': No such file or directory` gives exit code 2.
 - Inside `deb-pdn`: `/dev/shm` exists as `drwxrwxrwt 2 root root 3452`, bound to host directory `~/.podnext/containers/deb-pdn/shm`.
 
-#### Functional POSIX Shared Memory Test (Python `multiprocessing.shared_memory`)
+#### Functional POSIX Shared Memory Test with Python `multiprocessing.shared_memory`
 Command inside `deb-pdn`:
 ```bash
 /data/data/com.termux/files/home/workspace/PDN/target/release/podnext login deb-pdn -- \
@@ -284,7 +284,7 @@ Exit Code: `0`
 
 ## 4. Test 3: Docker Capability Forensics Inside PRoot / PDN
 
-### 3.1 Namespace Isolation (`unshare`)
+### 3.1 Namespace Isolation with `unshare`
 
 Raw libc syscall probe:
 ```python
@@ -324,7 +324,7 @@ unshare: unshare failed: Invalid argument
 
 ---
 
-### 3.2 Filesystem Mount & OverlayFS (`mount`)
+### 3.2 Filesystem Mount & OverlayFS with `mount`
 
 #### Host Syscall Termination by Android Seccomp
 Command on host:
@@ -339,8 +339,8 @@ Output:
 ```text
 /data/data/com.termux/files/usr/bin/bash: line 12: 13847 Unknown signal 31
 ```
-Exit Code: `159` (`128 + 31` = **SIGSYS**)
-The Android kernel seccomp filter intercepts the `mount(2)` syscall from an application UID and terminates the process immediately with signal 31 (`SIGSYS`).
+Exit Code: `159`. The sum `128 + 31` equals **SIGSYS**.
+The Android kernel seccomp filter intercepts the `mount(2)` syscall from an application UID. It terminates the process at once with signal 31, `SIGSYS`.
 
 #### Container Mount Interception & OverlayFS Proof of Fake
 Inside `deb-pdn`, PRoot intercepts `SYS_mount` and returns `0` to prevent the host kernel from terminating the process. However, **no mount is established**.
@@ -360,18 +360,18 @@ drwx------. 2 root root 3452 Nov  3 20:02 .
 drwxr-xr-x. 7 root root 3452 Nov  3 20:02 ..
 ```
 Exit Code: `0`
-**Outcome:** `mount` returned `0`, but `/tmp/merged` contains nothing (`total 7`, only `.` and `..`). The lower file `file.txt` is completely missing. Docker's storage driver (`overlay2`) cannot assemble layer hierarchies under PRoot.
+**Outcome:** `mount` returned `0`. But `/tmp/merged` contains nothing. The listing `total 7` shows only `.` and `..`. The lower file `file.txt` is completely missing. Docker's storage driver `overlay2` cannot assemble layer hierarchies under PRoot.
 
 ---
 
 ### 3.3 Linux Capabilities & Privilege Elevation
 
-#### Capability Set (`/proc/self/status`)
-Inspecting capabilities both outside and inside container:
+#### Capability Set in `/proc/self/status`
+The probe inspects capabilities on the host and in the container.
 ```bash
 grep -E "Cap(Inh|Prm|Eff|Bnd|Amb)" /proc/self/status
 ```
-Output (identical on host and inside `deb-pdn`):
+Output is identical on the host and inside `deb-pdn`:
 ```text
 CapInh:	0000000000000000
 CapPrm:	0000000000000000
@@ -396,11 +396,11 @@ Output inside `deb-pdn`:
 ```text
 prctl PR_CAP_AMBIENT_RAISE CAP_SYS_ADMIN: res=-1, errno=1 (Operation not permitted)
 ```
-Exit Code: `0` (`res=-1`, `errno=1` `EPERM`).
+Exit Code: `0`. Values: `res=-1`, `errno=1`, `EPERM`.
 
 ---
 
-### 3.4 Control Groups (Cgroups)
+### 3.4 Control Groups and Cgroups
 
 #### Directory Access & Kernel Visibility
 1. Host `/sys/fs/cgroup`:
@@ -415,14 +415,14 @@ Exit Code: `0` (`res=-1`, `errno=1` `EPERM`).
    # Output: ls: cannot open directory '/sys/fs/cgroup': Permission denied
    # Exit code: 2
    ```
-3. `/proc/cgroups` (both host and container):
+3. `/proc/cgroups`, both host and container:
    ```bash
    cat /proc/cgroups
    # Output: cat: /proc/cgroups: Permission denied
    # Exit code: 1
    ```
 
-Dockerd and container runtimes (such as `runc`) depend strictly on writing to cgroup controllers (`cpu`, `memory`, `pids`). On Android 16 without root, cgroup hierarchies are inaccessible.
+Dockerd and container runtimes such as `runc` depend strictly on writing to cgroup controllers. The controllers are `cpu`, `memory`, and `pids`. On Android 16 without root, cgroup hierarchies are inaccessible.
 
 ---
 
@@ -454,11 +454,11 @@ Exit Code: `0`
 1. **Host-bound AI & Browser Stack: Fully Operational**
    - Headless Chromium and Playwright run with 100% parity inside `deb-pdn` and outside.
    - `/dev/shm` is correctly provisioned by PDN with `01777` permissions, fixing standard Linux POSIX IPC crashes.
-   - Hermes Agent CLI and configuration resolution work inside `deb-pdn`. Platform detection routines correctly distinguish the container environment (`is_termux() == False`).
+   - Hermes Agent CLI and configuration resolution work inside `deb-pdn`. Platform detection routines correctly distinguish the container environment. The result is `is_termux() == False`.
 
 2. **Native In-PRoot Docker: Structurally Impossible**
-   - **Kernel namespaces**: Blocked with `EINVAL` (`CLONE_NEWUSER`) and `EPERM`. PRoot fakes `rc=0`, meaning no actual isolation occurs.
-   - **Filesystems (`mount`)**: Host kernel enforces seccomp `SIGSYS` (exit code 159). PRoot suppresses `SIGSYS` and fakes `rc=0`, but OverlayFS layer merging does not occur (`/tmp/merged` remains empty).
+   - **Kernel namespaces**: Blocked with `EINVAL` for `CLONE_NEWUSER` and with `EPERM`. PRoot fakes `rc=0`. No actual isolation occurs.
+   - **Filesystems, `mount`**: The host kernel enforces seccomp `SIGSYS` with exit code 159. PRoot suppresses `SIGSYS` and fakes `rc=0`. OverlayFS layer merging does not occur. `/tmp/merged` remains empty.
    - **Capabilities**: Effective and permitted capabilities are strictly `0`. Elevation attempts fail with `EPERM`.
-   - **Cgroups**: Inaccessible (`Permission denied`, exit codes 1 and 2).
-   - **Path forward**: Docker inside PDN requires an independent guest kernel in user-space (such as `uml4termux` User-Mode Linux) as documented in `DOCKER_IN_PDN_ARCHITECTURE.md`.
+   - **Cgroups**: Inaccessible. The command gives `Permission denied`, exit codes 1 and 2.
+   - **Path forward**: Docker inside PDN requires an independent guest kernel in user-space. One option is `uml4termux` User-Mode Linux, as documented in `DOCKER_IN_PDN_ARCHITECTURE.md`.

@@ -1,16 +1,17 @@
 # Gateway configuration TOML loader
 
-Department: Platform Configuration Engineering (PCE)
-Branch: `dept/gateway-loader` (base `72ef9d6`)
+Department: Platform Configuration Engineering.
+
+Branch: `dept/gateway-loader`, base `72ef9d6`.
 Owner files: `crates/pn-gateway/src/**`, `crates/pn-gateway/Cargo.toml`,
 `crates/pn-gateway/tests/config_loader*.rs`.
 
-## 1. The gap (proof, before any change)
+## 1. The gap and its proof
 
 `crates/pn-gateway/src/config.rs` carries `#[serde(deny_unknown_fields)]` on its
-structs and the documented key names were reconciled (issue #27), but nothing
-reads a config file. The corrected key names are inert: they exist only as a
-struct shape, never as a loaded document.
+structs. Issue #27 reconciled the documented key names. However, no code reads a
+config file. The corrected key names are inert. They exist only as a struct
+shape, and never as a loaded document.
 
 ```
 $ grep -rn "toml" crates/pn-gateway/Cargo.toml
@@ -35,30 +36,30 @@ $ grep -rn "GatewayConfig\|env::var\|std::env\|config.toml" crates/pn-gateway/sr
 ```
 
 `PnGateway::new` receives an already-built `GatewayConfig`. No caller, and no
-binary in this crate, ever loads one from disk. The crate has no `[[bin]]`; it is
+binary in this crate, ever loads one from disk. The crate has no `[[bin]]`. It is
 a library only.
 
 ## 2. Design choice and reason
 
-Two entry points on `GatewayConfig` (in the new `src/config_loader.rs`):
+Two entry points exist on `GatewayConfig` in the new `src/config_loader.rs`:
 
 - `GatewayConfig::from_toml_str(&str) -> Result<Self, ConfigError>`
 - `GatewayConfig::from_toml_file(path) -> Result<Self, ConfigError>`
 
-**The document is expected to carry a top-level `[gateway]` table.** This matches
-the file shape in `docs/src/configuration.md` (`[gateway.fail_safe]`,
-`[gateway.guardrails]`, ...). The internal wrapper `GatewaySection` is
-deliberately **not** `deny_unknown_fields`: the same documented global file also
-holds `[general]`, `[grpc]`, `[api]`, `[tracing]`, `[plugin]`, which the gateway
-does not own, so a stricter top level would refuse a valid file. Strictness is
-kept where issue #27 put it — *inside* `[gateway]`, where every struct is
-`deny_unknown_fields`.
+**The document must carry a top-level `[gateway]` table.** This shape matches
+the file in `docs/src/configuration.md`, which uses `[gateway.fail_safe]`,
+`[gateway.guardrails]`, and more. The internal wrapper `GatewaySection` is
+deliberately **not** `deny_unknown_fields`. The same documented global file also
+holds `[general]`, `[grpc]`, `[api]`, `[tracing]`, and `[plugin]`. The gateway
+does not own those tables, so a stricter top level refuses a valid file.
+Strictness stays where issue #27 put it, *inside* `[gateway]`. Inside there,
+every struct is `deny_unknown_fields`.
 
-There is no implicit search path (`~/.config/pn-next/...`): the caller passes the
-path explicitly, so a wrong location fails as `NotFound` rather than silently
-loading nothing.
+There is no implicit search path, for example `~/.config/pn-next/...`. The caller
+passes the path explicitly. A wrong location fails as `NotFound`. It does not load
+an empty document in silence.
 
-Error type (single `ConfigError`, `thiserror`):
+The error type is one `ConfigError` from `thiserror`:
 
 | Variant | Meaning | Message |
 |---|---|---|
@@ -71,9 +72,9 @@ distinguishable both by `match` and by message. `deny_unknown_fields` errors are
 **surfaced, not swallowed**: `Parse` wraps the raw `toml::de::Error`, which names
 the offending key and its line/column.
 
-Dependency: `toml = "0.8"` added to `crates/pn-gateway/Cargo.toml` (0.8 already
-resolved in `Cargo.lock`); `tempfile` added as a dev-dependency for the file
-tests (already a workspace dependency).
+Dependency: the change adds `toml = "0.8"` to `crates/pn-gateway/Cargo.toml`.
+Version 0.8 was already resolved in `Cargo.lock`. The change adds `tempfile` as a
+dev-dependency for the file tests. `tempfile` was already a workspace dependency.
 
 ## 3. Raw evidence
 
@@ -83,8 +84,8 @@ $ git diff --stat Cargo.lock
  Cargo.lock | 2 ++
 ```
 
-Test run (shared `CARGO_TARGET_DIR`, serialised via the cargo mutex, under
-`heavy`; `--locked`):
+The test run used a shared `CARGO_TARGET_DIR`. It was serialised through the
+cargo mutex, under `heavy`, with `--locked`:
 
 ```
 $ flock $HOME/.hermes/cache/scratch/cargo-mutex.lock -c \
@@ -103,7 +104,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 # heavy status: outcome=completed exit_code=0 peak_rss_mb=905 duration_s=35
 ```
 
-Raw error strings (one-off `--nocapture` probe, removed before commit):
+Raw error strings from a one-off `--nocapture` probe, removed before commit:
 
 ```
 PROBE unknown-key => cannot parse gateway configuration: TOML parse error at line 38, column 1
@@ -128,30 +129,32 @@ The documented fail-safe fields populate the struct:
 `max_retries = 7`, `circuit_breaker.failure_threshold = 9`,
 `circuit_breaker.timeout = 90s`.
 
-## 4. What a maintainer must decide (NOT done here)
+## 4. What a maintainer must decide, not done here
 
-1. **Startup wiring.** There is no obvious load site to wire into:
-   `PnGateway::new(config)` takes an already-built config, the crate has no
-   binary, and inventing a `main`/env lookup would be a search-path decision the
-   task forbids. The loader is therefore **unused but fully tested**. A
-   maintainer must decide *who* calls `from_toml_file` (a new `pn-gateway` bin?
-   `podnext`/`pn-next` bootstrap? `--config` CLI flag?) and what path policy
-   applies. Recommendation: a `--config <path>` flag on the eventual binary,
-   passing straight into `from_toml_file`.
+1. **Startup wiring.** No obvious load site exists to wire into.
+   `PnGateway::new(config)` takes an already-built config. The crate has no
+   binary. A new `main` or env lookup is a search-path decision, and the task
+   forbids that. The loader is therefore **unused but fully tested**. A
+   maintainer must decide *who* calls `from_toml_file`. The choices are a new
+   `pn-gateway` bin, a `podnext` or `pn-next` bootstrap, or a `--config` CLI flag.
+   The maintainer must also decide the path policy. Recommendation: a
+   `--config <path>` flag on the eventual binary, passed straight into
+   `from_toml_file`.
 2. **Duration encoding drift.** `docs/src/configuration.md` writes durations as
-   strings (`retry_delay = "5s"`, `timeout = "60s"`), but the structs use
-   `std::time::Duration`, whose serde encoding is a table (`{ secs = 5, nanos = 0 }`).
-   The loader therefore parses the table form, and the *documented* string form
-   would not load as written. This is a docs-vs-code mismatch for Documentation
-   Engineering + a decision: either add a `#[serde(with = "...")]` duration-string
-   deserializer on every `Duration` field, or change the docs to the table form.
-   Docs are outside this department's file ownership, so nothing was changed there.
+   strings, for example `retry_delay = "5s"` and `timeout = "60s"`. The structs
+   use `std::time::Duration`, and its serde encoding is a table, such as
+   `{ secs = 5, nanos = 0 }`. The loader therefore parses the table form. The
+   *documented* string form does not load as written. This is a docs-vs-code
+   mismatch for Documentation Engineering, and a decision is necessary. Add a
+   `#[serde(with = "...")]` duration-string deserializer on every `Duration`
+   field, or change the docs to the table form. Docs are outside this
+   department's file ownership, so nothing was changed there.
 3. **Env-var entry point.** The task allowed "explicit path argument/env var".
-   Only the explicit path argument was implemented (no env-var name is defined
-   anywhere in the tree, and inventing one risks colliding with
-   `PN_CONFIG_DIR`). An env-var convenience can be added once a name is agreed.
+   Only the explicit path argument was implemented. No env-var name is defined
+   anywhere in the tree, and a new name risks a collision with
+   `PN_CONFIG_DIR`. An env-var convenience can be added once a name is agreed.
 
-### Resolved (follow-up commit)
+### Resolved in the follow-up commit
 
 The duration question was decided in favour of the documentation: `crates/pn-gateway/src/duration_fmt.rs`
 parses `"30s"` / `"500ms"` / `"2m"` / `"1h"` / `"1d"`, still accepts bare integer seconds and the
@@ -161,11 +164,12 @@ load, round-trip, and are asserted by four integration tests in `crates/pn-gatew
 
 ## 5. Residual gaps
 
-- No serializer (`to_toml_str`); the "round-trip" covered is file→struct. Adding
-  serialization would require exposing the `[gateway]` wrapper publicly.
-- Top-level keys outside `[gateway]` are not validated (by design, see section 2).
-- `Cargo.lock` changed (pn-gateway added to `toml` and `tempfile` edges). The
-  integrator must commit it.
+- No serializer exists, such as `to_toml_str`. The covered "round-trip" goes from
+  file to struct. Serialization needs the `[gateway]` wrapper to be public.
+- Top-level keys outside `[gateway]` are not validated. This is by design, see
+  section 2.
+- `Cargo.lock` changed. The change adds pn-gateway to the `toml` and `tempfile`
+  edges. The integrator must commit it.
 
 ## 6. Reproduction
 

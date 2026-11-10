@@ -1,31 +1,31 @@
 # PATH translation, shim integrity, and where the next releases can go
 
 **Status**: research dossier, 6 Nov 2026. Nothing in here is implemented. Every claim is marked
-**measured** (with the command that produced it), **read** (from a source file on this device), or
-**unknown** - because the interesting part of a plan is which of its parts are guesses.
+**measured** with the command that produced it, **read** from a source file on this device, or
+**unknown**. The interesting part of a plan is which of its parts are guesses.
 
 **Scope**: four questions, asked together because they constrain each other.
 
-1. feature expansion - where `podnext` is behind the reference, and what is worth taking;
-2. ecosystem and infrastructure - what has to exist for the project to be usable and releasable by someone
-   other than its author;
-3. user-facing simplification - what the current surface costs a person who just wants a shell;
-4. **PATH translation and shim integrity** - the one with a demonstrable security edge, and the reason this
+1. feature expansion. This asks where `podnext` is behind the reference, and what is worth taking.
+2. ecosystem and infrastructure. This asks what has to exist for the project to be usable and releasable by someone
+   other than its author.
+3. user-facing simplification. This asks what the current surface costs a person who just wants a shell.
+4. **PATH translation and shim integrity**. This is the one with a demonstrable security edge, and the reason this
    document leads with evidence rather than with a roadmap.
 
-**Companion document**: `research/PDN_vs_PROOT_PROOTDISTRO_DOCKER.md` - the same three questions measured
-against proot, proot-distro and Docker, whose features, ecosystem and infrastructure are more mature, with the
+**Companion document**: `research/PDN_vs_PROOT_PROOTDISTRO_DOCKER.md`. That document measures the same three questions
+against proot, proot-distro and Docker. These features, ecosystem and infrastructure are more mature. It holds the
 ordered list of what to take from whom.
 
-The fourth is first because it has a proof, and because it silently constrains the first three: any
-convenience that reaches from the guest back to the host tools is a convenience built on a name, and a name
-can be taken.
+The fourth question is first because it has a proof. It also silently constrains the first three. Any
+convenience that reaches from the guest back to the host tools is a convenience built on a name. An attacker
+can take a name.
 
 ---
 
 ## 1. The demonstration: PATH resolution in `podnext` is name-based, and it can be hijacked
 
-**Measured.** `podnext` resolves its container runtime by scanning `PATH` for a file called `proot`:
+**Measured.** `podnext` resolves its container runtime. It scans `PATH` for a file called `proot`:
 
 ```
 $ sed -n '70,86p' crates/proot-core/src/lib.rs
@@ -60,7 +60,7 @@ $ echo $?
 **Measured, and this is the part that matters**: `rc=7` is the shim's exit status, delivered to the caller
 as the container's result. A caller cannot tell this from a genuine container failure that happened to exit
 7. No confirmation was asked for, no file outside the container was touched, and the container was never
-entered - the hijack happens **before** `proot` confines anything, on the host side.
+entered. The hijack happens **before** `proot` confines anything, on the host side.
 
 The severity on this device is bounded by the fact that the host user already owns `$PREFIX/bin`, so a host
 attacker who can write there does not need this trick. What the trick *does* establish is the property:
@@ -69,17 +69,16 @@ stand in for identity.**
 
 ### 1.1 The reference implementation already treats this as a design constraint
 
-**Read**, `$PREFIX/lib/python3.14/site-packages/proot_distro/arch.py:221-244`, docstring of
-`get_proot_bin()`:
+**Read**, `$PREFIX/lib/python3.14/site-packages/proot_distro/arch.py:221-244`, docstring of `get_proot_bin()`:
 
 > The answer is always absolute, and a lookup that finds nothing is a refusal rather than the bare name
 > "proot". Both callers hand this string to an exec that resolves it against an environment the *image* has
 > a say in -- `login` to `os.execvpe(child_env)`, the build's RUN step to `subprocess.Popen(env=child_env)`,
 > which looks a name with no directory in it up in that environment's PATH. PATH is deliberately not blocked
-> there, being the guest's to choose, so a bare name meant an image's `ENV PATH=/tmp/mine` could decide
-> which binary this process became -- **outside any container, before proot had confined anything.** A
-> relative name is the same hole one step removed, and worse once `login` chdirs into the rootfs: it would
-> resolve against a file the guest wrote.
+> there, being the guest's to choose, so a bare name meant an image's `ENV PATH=/tmp/mine` decides which
+> binary this process became -- **outside any container, before proot had confined anything.** A
+> relative name is the same hole one step removed, and worse once `login` chdirs into the rootfs. It resolves
+> against a file the guest wrote.
 
 That is the same failure this document measured against `podnext`, and the reference closed it three ways
 that `podnext` has not:
@@ -106,10 +105,10 @@ so the guest is invited to call host tools by name. **Read**, `proot_distro/atom
 > On Termux the directory really is shared: RUNTIME_DIR and BASE_CACHE_DIR both sit under the
 > `$TERMUX_PREFIX` **bound read-write into every non-isolated container.**
 
-So in the reference's design the guest can write into the host prefix - and the reference's own authors
-defend a TOCTOU/symlink-swap in their cache write against exactly that ("a process sharing the directory
-reads it out of readdir(), unlinks it and puts a symlink in its place"). They defend the *cache* with
-`O_EXCL` descriptors; the general property remains: a guest process can create a file that a later **host**
+So in the reference's design the guest can write into the host prefix. The reference's own authors
+defend a TOCTOU/symlink-swap in their cache write against exactly that. Their words: a process sharing the directory
+reads it out of readdir(), unlinks it and puts a symlink in its place. They defend the *cache* with
+`O_EXCL` descriptors. The general property remains. A guest process can create a file that a later **host**
 invocation will find by name and run.
 
 **Measured, today's `podnext`**: it does **not** do the translation, and it does **not** bind the prefix.
@@ -122,26 +121,25 @@ $ podnext run alpine -- sh -c 'ls -d /data/data/com.termux/files/usr; touch /dat
 touch: /data/data/com.termux/files/usr/tmp/_w: No such file or directory
 ```
 
-The path exists inside the guest as the guest's **own empty directory** (the #66 finding, confirmed here:
-the host's `$PREFIX/tmp` exists, so if this were the host prefix through a bind, `touch` would have
-succeeded). This is a **useful accident of the current state**: `podnext` cannot yet be attacked from inside
-a guest by writing a host tool, because it exposes no host path into the guest. Adding PATH translation -
-the obvious convenience, and the thing the reference does - would create that surface.
+The path exists inside the guest as the guest's **own empty directory**. This is the #66 finding, confirmed here.
+The host's `$PREFIX/tmp` exists. If this were the host prefix through a bind, the `touch` command succeeds. This is a
+**useful accident of the current state**. An attacker cannot yet attack `podnext` from inside
+a guest with a host tool, because it exposes no host path into the guest. Adding PATH translation, the obvious convenience, and the thing the reference does, creates
+that surface.
 
 ### 1.3 What PRoot cannot do about it
 
 **Measured**: proot 5.1.107.101 has no read-only bind form. `podnext` documents the consequence it already
-hit (`--volume HOST:GUEST:ro` is refused rather than silently mounted writable, known-limitations). So:
+hit. The flag `--volume HOST:GUEST:ro` is refused rather than silently mounted writable, known-limitations. So:
 
-- a bind cannot be made immutable from the host side;
+- a bind cannot be made immutable from the host side.
 - ids inside the container are mapped to the host uid, so file ownership cannot distinguish a file the guest
-  wrote from one the host wrote;
+  wrote from one the host wrote.
 - binds are resolved by path string, not by identity.
 
 **Therefore**: under this PRoot, for any integration that puts host files where the guest can see them,
-**prevention is impossible**. The honest goals are *validation* (refuse to run something that is not what we
-mean) and *detection* (notice that it changed), plus *not creating the surface at all* where the convenience
-does not justify it.
+**prevention is impossible**. The honest goals are *validation* and *detection*, plus *not creating the surface at all* where the convenience
+does not justify it. Validation refuses to run something that is not what we mean. Detection notices that it changed.
 
 ### 1.4 The prefix path already exists inside the guest as an empty tree the host cannot read
 
@@ -168,15 +166,15 @@ SHIM-BISA
 
 Three consequences, all of them design-relevant:
 
-1. **A naive PATH translation is inert, not dangerous.** `PATH=$PATH:$TERMUX_PREFIX/bin`, using the host
-   string, resolves *inside the guest* to that empty guest-owned tree. It would look implemented and do
-   nothing, because the host prefix is not bound there.
-2. **Making it work requires a bind** (`-b $TERMUX_PREFIX:$TERMUX_PREFIX`, which is what the reference
-   does), and a bind here is read-write with no read-only form (section 1.3) - so the guest can rewrite
+1. **A naive PATH translation is inert, not dangerous.** The value `PATH=$PATH:$TERMUX_PREFIX/bin` uses the
+   host string, and that resolves *inside the guest* to the empty guest-owned tree. It looks implemented and
+   does nothing, because the host prefix is not bound there.
+2. **Making it work requires a bind**. The flag is `-b $TERMUX_PREFIX:$TERMUX_PREFIX`, which is what the reference
+   does. A bind here is read-write with no read-only form, as section 1.3 shows. So the guest can rewrite
    whatever the translation put there.
 3. **The shim can live where the host cannot look.** Once the guest creates
-   `.../usr/bin/pkg`, a guest-authored file stands at exactly the path string a translation would trust -
-   and the host's own audit tools cannot enumerate it, because the parent is mode 000 on the host side. The
+   `.../usr/bin/pkg`, a guest-authored file stands at exactly the path string a translation trusts, and
+   the host's own audit tools cannot enumerate it, because the parent is mode 000 on the host side. The
    sentence in the reference's own source, that "on Termux the directory really is shared", is an
    understatement in this configuration: it is shared *and* the host half is dark.
 
@@ -204,29 +202,29 @@ from one the host wrote. The `s0:` category set does not carry the distinction e
 | C | **Do not expose host tools by name at all.** Put the interface on the IPC surface `podnext` already has (`podnext dbus serve`, socket activation), and have the guest-side entry point be a generated shim that speaks the protocol | T2, T3 by construction | weeks | the guest can list what the host offers through the socket; a guest-written file named like a host tool is never executed by the host; the socket rejects a peer without the per-session token |
 | D | If PATH translation is still wanted: **generate** the shim directory from a committed manifest with digests, bind it read-write (unavoidable), and re-verify the digests on every `podnext` invocation | detection only | days | deleting or editing one shim makes the next `podnext` invocation fail with the digest that changed, and the message says "detection, not prevention" |
 
-**Recommended order**: **A now** (it is small, it closes the demonstrated hole, and it needs no new surface),
-**B next** (identity, so the answer is a number rather than a promise), **C as the direction for v0.3.0**
-(the mobility polygon will want host integration anyway, and an authenticated protocol is the only variant
-that cannot be defeated by a file), **D only if someone insists on PATH translation**, labelled in its own
+**Recommended order**: **A now**, because it is small, it closes the demonstrated hole, and it needs no new surface.
+Then **B next**, identity, so the answer is a number rather than a promise. Then **C as the direction for v0.3.0**.
+The mobility polygon will want host integration anyway, and an authenticated protocol is the only variant
+that cannot be defeated by a file. Use **D only if someone insists on PATH translation**, labelled in its own
 documentation as detection.
 
 Two design rules fall out of the measurements, and they are cheap to hold:
 
-- **Nothing the guest can write may be found by name by the host.** That is option C stated as a rule.
+- **The host must find nothing by name that the guest can write.** That is option C stated as a rule.
 - **`--isolated` must never receive host PATH translation or host binds.** The reference has the same flag
-  for the same reason; if translation lands, the flag becomes the security boundary and deserves a test that
+  for the same reason. If translation lands, the flag becomes the security boundary and deserves a test that
   asserts the guest sees `$TERMUX_PREFIX/bin` as empty.
 
 ---
 
 ## 3. Feature expansion - measured against the reference, not against a wish list
 
-The reference ships **18 commands** (**measured**, `proot-distro --help`):
+The reference ships **18 commands**. This is **measured** with `proot-distro --help`:
 
     help search install list login run ps kill remove rename reset backup restore clear-cache copy sync build push
 
-`podnext` ships **39** (**measured**, `podnext --help`). The parity question is therefore not "what is
-missing" but "which of the missing ones change what a user can do", and the answer is a short list:
+`podnext` ships **39**, **measured** with `podnext --help`. The parity question is therefore not "what is absent"
+but "which of the missing ones change what a user can do". The answer is a short list:
 
 | reference capability | `podnext` today | evidence | why it matters |
 |---|---|---|---|
@@ -239,22 +237,22 @@ missing" but "which of the missing ones change what a user can do", and the answ
 **And the other direction, which the roadmap does not record.** `podnext` has fourteen commands the
 reference has no equivalent for - `doctor`, `service`, `daemon`, `watchdog`, `quota`, `log`, `dbus`, `socket`,
 `boot`, `wakelock`, `policy`, `config`, `gitops`, `dashboard` - plus `network`, `volume` and a Dockerfile
-`build`. That is where its own feature expansion should be judged: not by closing a parity table, but by
-whether a supervision surface (`service`/`watchdog`/`quota`) is worth 39 commands of discovery cost. Section
+`build`. That is where we must judge its own feature expansion. We do not close a parity table. We ask
+whether a supervision surface of `service`, `watchdog` and `quota` is worth 39 commands of discovery cost. Section
 5 measures that cost.
 
 **A structural observation that decides sequencing.** `install` is a single large function over the registry
-path, and the three missing install sources are three different *shapes* of input (a tarball, an OCI layout,
-a URL with a checksum) that all end in the same place: "unpack into a clean rootfs". The cheapest expansion
+path, and the three missing install sources are three different *shapes* of input. These shapes are a tarball, an OCI layout,
+and a URL with a checksum. All of them end in the same place: "unpack into a clean rootfs". The cheapest expansion
 is to make the parse step explicit and add the shapes one at a time, each with the test that refuses a bad
-digest - which is what section 10.1 already asks for, with the difference that the OCI-layout case should
+digest. Section 10.1 already asks for this test. One difference: the OCI-layout case must
 come **before** the URL case: a local file can be verified byte-for-byte, a remote one only by the checksum
 the user supplies, and the local case is therefore both easier and stronger evidence.
 
 ## 4. Ecosystem and infrastructure - what this round measured, including two live defects
 
-The project's infrastructure is not thin; **measured**, `.github/workflows/` holds eight workflows: `ci.yml`
-(PDN CI/CD), `cross-compile.yml` (Android Cross-Compile Matrix), `benchmark.yml`, `benchmark-report.yml`,
+The project's infrastructure is not thin. This is **measured**. The directory `.github/workflows/` holds eight workflows: `ci.yml`
+for PDN CI/CD, `cross-compile.yml` for the Android Cross-Compile Matrix, `benchmark.yml`, `benchmark-report.yml`,
 `dependency-updates.yml`, `devcontainer-test.yml`, `issue-ledger.yml`, `release.yml`. Fuzzing, security
 audit, cross-compilation for four targets, benchmarks and a documentation build all run. The gaps found
 while making a release are specific:
@@ -269,43 +267,43 @@ integrity story.
 `grep -rn "\.deb" .github/workflows/*.yml` matches **nothing** - no workflow produces a `.deb`. The release's
 real assets for `v0.1.8` are `install.sh`, `install-short.sh`, `podnext-aarch64-linux-android`,
 `podnext-x86_64-linux-android`. So the preferred path is dead code that falls through to the binary, and the
-preflight loop (`for cmd in curl tar dpkg`) still requires `dpkg` for a path that can never succeed.
+preflight loop still requires `dpkg` for a path that can never succeed. The loop runs `for cmd in curl tar dpkg`.
 
 **Measured, and this is the sharpest version of the problem**: checksums *are* produced - `cross-compile.yml`
 has a job named "Aggregate Artifacts & Checksums" that downloads every artifact and writes combined digests -
 and they are stored as a **workflow artifact**, not a release asset. The project computes the numbers a user
-would need to verify a download, and publishes them where only a maintainer with a GitHub login can find
+needs to verify a download, and publishes them where only a maintainer with a GitHub login can find
 them.
 
-**Fix, in that order**: publish `SHA256SUMS` as a release asset; make `install.sh` fetch it and verify before
-installing, refusing on mismatch; delete the `.deb` path or make the workflow produce the `.deb`; drop `dpkg`
-from the preflight if it goes. Acceptance: a tampered download fails with the digest it expected and the
+**Fix, in that order**. First, publish `SHA256SUMS` as a release asset. Second, make `install.sh` fetch it, verify before
+it installs, and refuse on a mismatch. Third, delete the `.deb` path, or make the workflow produce the `.deb`. Fourth, drop `dpkg`
+from the preflight if the `.deb` path goes. Acceptance: a tampered download fails with the digest it expected and the
 digest it got.
 
 ### 4.2 Documentation is built and never published
 
-**Measured**: `docs/book.toml` and `docs/src/SUMMARY.md` exist (so the mdBook scaffold is real, 16 pages
-including getting-started, architecture, roadmap, known limitations, CLI reference), and `ci.yml` has a "Build
+**Measured**. The files `docs/book.toml` and `docs/src/SUMMARY.md` exist. The mdBook scaffold is real, 16 pages.
+These pages cover getting-started, architecture, roadmap, known limitations and the CLI reference. The file `ci.yml` has a "Build
 Documentation" job - but nothing in `.github/workflows/` mentions `pages` or `deploy`. The documentation is
 proved to compile and is then thrown away with the runner.
 
 **Fix**: a Pages deployment from the tag or from `master`, one workflow file. This is worth more than most of
-section 10: a project whose whole argument is honesty about its own limits should have those limits reachable
+section 10: a project whose whole argument is honesty about its own limits must have those limits reachable
 at a URL.
 
 ### 4.3 No distribution channel
 
-**Measured**: `pkg show podnext` finds no such package; there is no Termux package, no Homebrew formula, no
-container image of `podnext` itself. Installation is a `curl | bash` of a script that verifies nothing
-(4.1). For a tool whose pitch is "the safe way to run a distro on Termux", that is the weakest link in the
+**Measured**. `pkg show podnext` finds no such package. There is no Termux package, no Homebrew formula, no
+container image of `podnext` itself. Installation is a `curl | bash` of a script that verifies nothing.
+This is item 4.1. For a tool whose pitch is "the safe way to run a distro on Termux", that is the weakest link in the
 chain, and it is the same link `install.sh` sits on.
 
 ### 4.4 `ci.yml` filters on paths, so a documentation-only push runs nothing
 
-**Measured, and corrected.** It triggers on push paths (`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`,
-`deny.toml`, `.github/workflows/**`). An earlier version of this section added "with no `workflow_dispatch`",
+**Measured, and corrected.** It triggers on push paths: `crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`,
+`deny.toml`, `.github/workflows/**`. An earlier version of this section added "with no `workflow_dispatch`",
 which is **false and was false when it was written**: `ci.yml` has carried `workflow_dispatch` since its
-first commit (`d35ec30`), and still did at `v0.1.8` (`git show v0.1.8:.github/workflows/ci.yml`, line 26).
+first commit `d35ec30`, and still did at `v0.1.8`. The command `git show v0.1.8:.github/workflows/ci.yml` shows this at line 26.
 What actually happened is the path filter alone: the release commit touched documentation only, so no run
 existed for it, and the pre-tag smoke test used the last commit that touched code - with
 `git diff --quiet <sha>..HEAD -- crates/ Cargo.toml Cargo.lock` as proof the code was identical. The
@@ -315,13 +313,13 @@ that touches `.github/workflows/**` triggers the workflow, which is how this was
 
 ### 4.5 Extension surface: none, and that may be right
 
-`podnext` has no plugin mechanism, no distro definition format and no template system; `install` takes a
+`podnext` has no plugin mechanism, no distro definition format and no template system. The command `install` takes a
 registry reference, `build` takes a Dockerfile, and everything else is a fixed subcommand. The reference's
 `$PREFIX/etc/proot-distro/` directory - historically the place distro plugins live - is **empty on this
-device** (**measured**), and no `PLUGINS` symbol appears in its Python package (**measured**, grep over
-`*.py`), so the "extensible distro plugin" story I expected to find as the reference's ecosystem advantage is
+device**, and this is **measured**. No `PLUGINS` symbol appears in its Python package, also **measured** with grep over
+`*.py`. So the "extensible distro plugin" story I expected to find as the reference's ecosystem advantage is
 not visible here. The honest conclusion is that neither tool has an extension surface today, and that adding
-one is a design question (what would a plugin be allowed to do, and who verifies it?) rather than a parity
+one is a design question. What can a plugin do, and who verifies it? This is not a parity
 gap. Given section 1, a plugin mechanism that runs third-party code as the host user is a decision to make
 with the shim findings in hand.
 
@@ -329,20 +327,20 @@ with the shim findings in hand.
 
 Two numbers decide this section, both **measured** over all 39 commands:
 
-- **16 of 39** commands have an `EXAMPLES` block in their own `--help`;
-- **21 of 39** repeat their `stable` / `experimental` label in their own `--help` (the label is always in the
-  parent listing, so this measures consistency, not absence).
+- **16 of 39** commands have an `EXAMPLES` block in their own `--help`.
+- **21 of 39** repeat their `stable` / `experimental` label in their own `--help`. The label is always in the
+  parent listing, so this measures consistency, not absence.
 
 And one comparison: the reference exposes **18** commands, `podnext` exposes **39**. The extra surface is not
-padding - it is supervision and observability the reference does not have - but it is 2.2x the discovery cost
+mere padding. It is supervision and observability the reference does not have - but it is 2.2x the discovery cost
 for a person who wants a shell, and nothing in the top-level `--help` says "start here".
 
-What is already good, **measured**: two steps to a shell on both tools (`install <name>` then `login <name>`);
+What is already good, and **measured**. Two steps reach a shell on both tools: `install <name>` then `login <name>`.
 `podnext search alpine` returns installable names with description, stars, pulls and an official flag, so the
-"curated distro names" item in section 10.4 is largely answered by search; every stub refuses with a named
-reason and a non-zero exit; and the `doctor` command exists, which the reference does not have at all.
+"curated distro names" item in section 10.4 is largely answered by search. Every stub refuses with a named
+reason and a non-zero exit. The `doctor` command exists, which the reference does not have at all.
 
-Friction found by using it, in the order a new user meets it:
+Friction appears in this order when a new user works:
 
 | friction | evidence | what to do |
 |---|---|---|
@@ -355,42 +353,42 @@ Friction found by using it, in the order a new user meets it:
 
 **The one simplification that is not cheap is the one this document leads with.** Every attempt to shorten
 the path between the guest and the host tools - a translated PATH, a shim directory, a shared prefix - lands
-in section 1: a name the guest can take. Any UX feature that reaches across that boundary should be designed
-as IPC with a token (option C), not as a file on a path.
+in section 1: a name the guest can take. Any UX feature that reaches across that boundary must be designed
+as IPC with a token, option C, not as a file on a path.
 
 ## 7. What to file first, in the order the measurements argue for
 
-1. **The installer verifies nothing, and its preferred path cannot exist** (section 4.1). Two defects in one
+1. **The installer verifies nothing, and its preferred path cannot exist**, as section 4.1 shows. Two defects in one
    file: no checksum, and a `.deb` download that no workflow produces while the preflight still requires
    `dpkg`. Filed as an issue from this document.
 2. **Publish the checksums the project already computes.** `cross-compile.yml` aggregates digests and leaves
    them as a workflow artifact. One step to attach `SHA256SUMS` to the release, and it is the piece that makes
-   (1) fixable rather than merely regrettable.
-3. **Deploy the documentation.** `docs/book.toml` and 16 pages exist; nothing publishes them (section 4.2).
-4. **~~`workflow_dispatch` on `ci.yml`~~** (section 4.4). Withdrawn: it is already there and always has been.
+   item 1 fixable rather than merely regrettable.
+3. **Deploy the documentation.** `docs/book.toml` and 16 pages exist. Nothing publishes them, as section 4.2 shows.
+4. **~~`workflow_dispatch` on `ci.yml`~~**, as section 4.4 shows. Withdrawn: it is already there and always has been.
    The real remedy for a release commit that touches no code is to dispatch the workflow by hand on that
    commit, so its own artifact exists and no diff proof is needed.
-5. **A `pd` alias and an example in the 23 commands that lack one** (section 5). The cheapest adoption work
+5. **A `pd` alias and an example in the 23 commands that lack one**, as section 5 shows. The cheapest adoption work
    in the document, and the CLI reference contract test already parses those blocks.
-6. **`restore`, `clear-cache`, and install from a local archive** (section 3), in that order: a backup without
+6. **`restore`, `clear-cache`, and install from a local archive**, as section 3 shows, in that order: a backup without
    a restore is the one that looks like a bug to a user.
 
 ## 6. Unknowns worth naming
 
 - **Whether a guest can be given a read-only view of any host directory under this PRoot.** Measured: no
   `:ro` bind form exists. Unknown: whether a nested PRoot inside the guest, or a bind onto a guest-side
-  tmpfs, could fake one. Worth 30 minutes before option C is designed in detail.
+  tmpfs, can fake one. Worth 30 minutes before option C is designed in detail.
 - ~~Whether Android SELinux contexts can distinguish guest-written files from host-written ones.~~
-  **Measured, section 1.4: they cannot.** Identical context (`app_data_file:s0:c140,c257,c512,c768`) and
-  identical ownership for both. Option B's digest is not a choice among signals - it is the only one.
+  **Measured, section 1.4: they cannot.** Identical context `app_data_file:s0:c140,c257,c512,c768` and
+  identical ownership for both. Option B's digest is not a choice among signals. It is the only one.
 - **The host cannot audit the guest's version of the prefix tree.** The lookalike is mode 000 on the host
-  side, so `find`/`ls` from the host report `Permission denied` rather than a listing (measured). That is
-  fine while nothing depends on the tree, and it becomes a problem the moment something does: a
+  side, so `find` and `ls` from the host report `Permission denied` rather than a listing, **measured**. That is
+  fine while nothing depends on the tree, and it becomes a problem the moment something does. A
   verification tool that cannot read what it verifies has to run inside the guest, where it can be
-  replaced. Worth settling before option D is designed, not after.
+  replaced. Settle this before option D is designed, not after.
 - **The reference's guest PATH was not measured** because no `proot-distro` container is installed on this
-  device; the claim about its binds and PATH comes from its source and its comments, which is *read* and not
-  *measured*. Installing a reference container (~100 MB) would settle it, and is not worth the download
+  device. The claim about its binds and PATH comes from its source and its comments, which is *read* and not
+  *measured*. Installing a reference container of about 100 MB settles it, and is not worth the download
   today.
 - **Whether `--change-id` can make a guest-created file distinguishable by ownership.** Read: ids are mapped
   to the single host uid, so probably not. Unmeasured.

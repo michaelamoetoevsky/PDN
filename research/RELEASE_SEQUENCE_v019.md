@@ -1,12 +1,14 @@
 # Release sequence for v0.1.9
 
-What has to happen, in what order, with what evidence, before `v0.1.9` can be tagged. Written to be
-read next to `docs/src/roadmap.md` section 9 (the criteria) and `research/ISSUE_INVENTORY.md` (the
-tickets). Every number here came from a command that is quoted beside it.
+This document states what must happen, in what order, and with what evidence, before
+the project can tag `v0.1.9`. Read it next to `docs/src/roadmap.md` section 9, which
+holds the criteria, and `research/ISSUE_INVENTORY.md`, which holds the tickets. Every
+number here came from a command. The command is quoted beside the number.
 
-A previous attempt at this release was tagged and withdrawn (`be4919d`, reverted in `ed7dc3f`)
-because the tag claimed a milestone whose criteria were largely unmet. This document exists so that
-does not happen twice: the sequence ends in a gate, not in an intention.
+A previous attempt at this release was tagged and withdrawn. That tag was `be4919d`,
+reverted in `ed7dc3f`. The tag claimed a milestone whose criteria were largely unmet.
+This document exists so that the same error does not happen twice. The sequence ends in
+a gate, not in an intention.
 
 ## 1. What "v0.1.9" means
 
@@ -20,10 +22,9 @@ itself checked:
 | 9.3 | 6 | the interactive shell: detach/attach, terminal fidelity, argv quoting, bindings and `USER`, session hygiene, doctor |
 | 9.4 | - | explicit non-goals, enforced by `scripts/check_non_goals.py` |
 
-Nothing outside section 9 is in scope. This release takes the tag `v0.2.0`, which the mobility polygon
-used to carry: roadmap section 10 is now `v0.3.0`, because a withdrawn tag cannot be reused and this
-work needs a number (section 10 records the same note);
-there is no `v0.1.10`.
+No item outside section 9 is in scope. This release takes the tag `v0.2.0`, which the mobility polygon
+used to carry. Roadmap section 10 is now `v0.3.0`, because the project cannot reuse a withdrawn tag
+and this work needs a number of its own. Section 10 records the same note. There is no `v0.1.10`.
 
 ## 2. Where the release stands, measured
 
@@ -49,15 +50,15 @@ there is no `v0.1.10`.
 **15 met, 1 recorded exception, 0 half, 0 not met.** The exception is the one a status paragraph tends
 to round up, which is why it is a row here: the daemon's latency independence, measured and left
 unmet on purpose with its numbers. The one place a criterion meets the letter of its ceiling rather
-than sitting comfortably under it is `commands/mod.rs` at 813 - stated with the number rather than
-smoothed, because a reader who counts the files should not have to discover it.
+than sitting comfortably under it is `commands/mod.rs` at 813. The document states the number rather
+than a smooth value, because a reader who counts the files must find the number here.
 
 ## 3. The sequence
 
-Each batch is a unit of work with its own gate. A batch is not done because the code is written; it
-is done when the gate has run and its output is in the ticket.
+Each batch is a unit of work with its own gate. A batch is not done because the code is written.
+A batch is done when the gate has run and its output is in the ticket.
 
-### S1 - done (wave 2, base `a0b4025`)
+### S1 - done, wave 2, base `a0b4025`
 
 | Ticket | Department | Landed | Outcome |
 |---|---|---|---|
@@ -66,11 +67,12 @@ is done when the gate has run and its output is in the ticket.
 | #59 | `dept/daemon` | `83827a1` | metadata routed; identical output, constant round trips, never stale; latency independence recorded as an exception |
 | #60 + #63 | `dept/honesty` | `255d25a` | seccomp profile refused with the decision measured; `--no-kill-on-exit` refused |
 
-`dept/build`'s extraction turned six file-pinned predicates red; it reported the repath instead of
-editing the parent-owned ledger, and the parent applied it in the same push. The parent also fixed
-the #68 regression the shell department found, using that department's harness as the oracle.
+The extraction by `dept/build` turned six file-pinned predicates red. It reported the repath instead
+of a change to the parent-owned ledger, and the parent applied it in the same push. The parent also
+fixed the #68 regression that the shell department found, and used that department's harness as the
+oracle.
 
-### S2 and S3 - landed as wave 3 (base `58636ee`, integrated on `master`)
+### S2 and S3 - landed as wave 3, base `58636ee`, integrated on `master`
 
 | Ticket | Department | Landed | Outcome |
 |---|---|---|---|
@@ -80,10 +82,11 @@ the #68 regression the shell department found, using that department's harness a
 | #67 | `dept/scanner` | `634bf3d` | 19 flags honoured or refused with the argv as evidence |
 
 Cherry-picked with no conflict: the four branches touched eleven distinct files. The parent added eleven
-predicates (three for #57, two each for #64 and #66, three for #67), deleted #67's now-stale decline reason,
-wired both new harnesses into CI, and filed #70 for a committed conflict marker found while integrating.
+predicates: three for #57, two each for #64 and #66, and three for #67. The parent deleted #67's now-stale
+decline reason, wired both new harnesses into CI, and filed #70 for a committed conflict marker that
+appeared during integration.
 
-### Wave 4 - landed (`ad123ef`, base `1fcba7d`)
+### Wave 4 - landed, `ad123ef`, base `1fcba7d`
 
 | Department | Landed | Outcome |
 |---|---|---|
@@ -101,65 +104,65 @@ wired both new harnesses into CI, and filed #70 for a committed conflict marker 
 | Two fabricated sample outputs in `cli-reference.md`; `config validate` exits 3 where the doc says 2 | doc plus contract question |
 | #65: `cli.rs` 1,450 and `main.rs` 1,170 above the ceiling | in flight (wave 6, `dept/split`); the tracked help fixture is its guard rail |
 
-### Wave 6 - landed (`fc6d288`, base `a6c8660`)
+### Wave 6 - landed, `fc6d288`, base `a6c8660`
 
-One department, 14 files, +1606/-1496. `cli.rs` 1450 -> **687** (the floor: the 453-line `Commands` enum
-cannot leave the root), `main.rs` 1170 -> **479**, and the Clap surface now lives in eight `cli/` domain
-modules. The 123-screen dump is byte-identical to the tracked fixture with **no regeneration**, which is
-the point: a pure move has no business changing rendered text, so the fixture documented itself as
-unnecessary rather than being quietly rewritten. 84 tests green, no test target edited, `podnext` bin
-warnings 26 -> 26 with a byte-identical per-message set.
+One department, 14 files, +1606/-1496. `cli.rs` moved from 1450 to **687**. That is the floor, because
+the 453-line `Commands` enum cannot leave the root. `main.rs` moved from 1170 to **479**. The Clap surface
+now lives in eight `cli/` domain modules. The 123-screen dump is byte-identical to the tracked fixture
+with **no regeneration**, which is the point. A pure move has no business to change rendered text, so the
+fixture documented itself as unnecessary. 84 tests are green, no test target is edited, and `podnext` bin
+warnings stay at 26 -> 26 with a byte-identical per-message set.
 
-It drove out two real compile errors: `E0425` (an extracted function stayed private, so the glob
-re-export did not carry it) and `E0616` x13 (`SystemInfo`'s private fields stopped being reachable from a
-sibling module). Both are the ordinary cost of a move and neither changed behaviour.
+It drove out two real compile errors. The first was `E0425`: an extracted function stayed private, so the
+glob re-export did not carry it. The second was `E0616` x13, where a sibling module can no longer reach
+`SystemInfo`'s private fields. Both errors are the ordinary cost of a move, and neither changed behaviour.
 
-The cherry-pick conflicted on `docs/src/roadmap.md` - the department and the parent had both edited the
-same status paragraph - and was resolved by taking the department's measured numbers and appending what the
-criterion actually says: it reads "no file over ~800 lines", and `native.rs` is 1,605, so the row stays
+The cherry-pick conflicted on `docs/src/roadmap.md`, because the department and the parent had both edited the
+same status paragraph. The parent resolved it with the department's measured numbers, and added what the
+criterion actually says. The criterion reads "no file over ~800 lines", and `native.rs` is 1,605, so the row stays
 **half** and **#72** carries the gap.
 
-### Wave 7 - in flight (`dept/native`, base `fc6d288`)
+### Wave 7 - in flight, `dept/native`, base `fc6d288`
 
-`native.rs` - the OCI install path (Docker Hub, manifests, layer download/extract, smoke test) plus the
-container/session path (`run`/`login`, metadata, mount specs) including the signal plumbing where
-regression #68 lived. Guard differences are stated in its brief: the help fixture proves nothing about a
-file with no Clap surface, so the load-bearing evidence is the 84 tests, `shell_fidelity.py`,
-`soak_sessions.py` and the detach/attach round trip.
+`native.rs` holds the OCI install path, which is Docker Hub, manifests, layer download and extract, and a
+smoke test. It also holds the container/session path for `run`/`login`, metadata and mount specs. That path
+includes the signal plumbing where regression #68 lived. Guard differences are stated in its brief. The help
+fixture proves nothing about a file with no Clap surface, so the load-bearing evidence is the 84 tests,
+`shell_fidelity.py`, `soak_sessions.py` and the detach/attach round trip.
 
 ### S4 - integration
 
-1. `scripts/integrate_branches.py` for each branch: it counts the commits to pick from the branch's
-   **base**, refuses a branch that touched a parent-owned file, and asserts the pick count before
+1. Run `scripts/integrate_branches.py` for each branch. It counts the commits to pick from the branch's
+   **base**. It refuses a branch that touched a parent-owned file. It asserts the pick count before
    and after.
-2. Where two branches extracted the same file, reconstruct deterministically: take one branch's
+2. Where two branches extracted the same file, reconstruct deterministically. Take one branch's
    final file and re-run `scripts/extract_cli_module.py` with the other branch's symbol list. Never
    hand-resolve a thousand conflicting lines.
-3. Re-check every ledger predicate that greps a file a branch replaced wholesale - a master-side fix
-   to that file is silently undone by taking the branch's copy, and that is exactly how the #41
+3. Re-check every ledger predicate that greps a file a branch replaced wholesale. A master-side fix
+   to that file is silently undone when the parent takes the branch's copy, and that is exactly how the #41
    `args_os` fix was lost and caught.
-4. Gates on the merged tree: `cargo fmt --all -- --check`; `--bin podnext` plus every test target;
-   `proot-distro-core --lib`; the 123-screen help dump against the TRACKED fixture
-   `research/cli-help-baseline.txt`; `build_issue_ledger.py --offline` with 0 FAIL; `check_non_goals.py`.
-   (That path is not the untracked scratch file: comparing one of those across worktrees cost three
-   defects in a single round - see `86a148b`)
-5. Provenance, because the target directory is shared: build and copy inside the lock, prove the
-   binary with a string only this tree has, prove the library with the test names in the output.
-6. Push, then read the CI run on the pushed head: the ledger job must report all predicates with
+4. Run these gates on the merged tree. Run `cargo fmt --all -- --check`. Build `--bin podnext` plus
+   every test target. Build `proot-distro-core --lib`. Compare the 123-screen help dump against the
+   TRACKED fixture `research/cli-help-baseline.txt`. Run `build_issue_ledger.py --offline` with 0 FAIL.
+   Run `check_non_goals.py`. That path is not the untracked scratch file. A comparison of one of those
+   across worktrees cost three defects in a single round - see `86a148b`.
+5. Provenance, because the target directory is shared. Build and copy inside the lock. Prove the
+   binary with a string only this tree has. Prove the library with the test names in the output.
+6. Push, then read the CI run on the pushed head. The ledger job must report all predicates with
    verdicts and 0 FAIL.
 
-### S5 - release preparation (documentation only, no behaviour change)
+### S5 - release preparation, documentation only, no behaviour change
 
-- `Cargo.toml` `0.1.8` to **`0.2.0`**; `Cargo.lock` follows. It is `0.2.0` and not `0.1.9` or `0.1.10`
-  because `v0.1.9` was tagged and withdrawn (`ed7dc3f`, before any release existed) and `roadmap.md`
-  this work needs a number of its own, and roadmap section 10 (now `v0.3.0`) records the renumbering.
+- `Cargo.toml` moves from `0.1.8` to **`0.2.0`**. `Cargo.lock` follows. It is `0.2.0` and not `0.1.9` or `0.1.10`,
+  because `v0.1.9` was tagged and withdrawn, at `ed7dc3f`, before any release existed. `roadmap.md` needs
+  a number of its own for this work, and roadmap section 10, now `v0.3.0`, records the renumbering.
 - `CHANGELOG.md`: move `[Unreleased]` to `## [0.2.0] - <date>`, with every entry naming its commit.
 - Re-record the warning ceiling to the value the settled tree actually produces. It is 290 in the fixture
   today and the runner measured **266** - the detach/attach work consumes symbols that the extraction had
   left as unused imports. A ceiling only refuses growth, so the gap is safe but it is slack, and slack is
-  what the next unrelated change spends. Re-measure **cold** on the device (`--cold`) and record both
+  what the next unrelated change spends. Re-measure **cold** on the device with `--cold`, and record both
   toolchains, because the ceiling is keyed by toolchain and a warm build measures zero.
-- Housekeeping entry for the nine one-shot commit scripts removed in `28dba29`, so the release notes do not
+- Add a housekeeping entry for the nine one-shot commit scripts removed in `28dba29`, so the release notes do not
   imply the repository always looked like this.
 - `docs/src/roadmap.md`: stamp section 9 statuses with the measured numbers, including any criterion
   that ends the release as a **recorded exception** rather than met.
@@ -168,17 +171,17 @@ file with no Clap surface, so the load-bearing evidence is the 84 tests, `shell_
 
 ### S6 - tag, release, smoke test
 
-Order matters here, and reading `.github/workflows/release.yml` is what settled it: the release is created
-with `draft: false` and the action's default `make_latest`, so **pushing the tag publishes a release marked
-latest immediately**. The smoke test therefore has to happen BEFORE the tag, not after it. The `Release`
-job's `publish-crates` step is skipped on a tag push (`if: workflow_dispatch && version != ''`), so nothing
-else chases the tag.
+Order matters here, and the reading of `.github/workflows/release.yml` is what settled it. The release is
+created with `draft: false` and the action's default `make_latest`, so **a tag push publishes a release
+marked latest immediately**. The smoke test therefore has to happen BEFORE the tag, not after it. The
+`Release` job's `publish-crates` step is skipped on a tag push, with condition
+`if: workflow_dispatch && version != ''`, so nothing else chases the tag.
 
 1. Land S5, then wait for the **PDN CI/CD** run on that commit to be green. Its
    `Rust Android Cross-Compile (aarch64)` job uploads `pn-android-aarch64` - a release-mode aarch64 Android
    binary - and that is the artifact to test, not the debug binary the device builds locally.
 2. Download and smoke-test it **before any tag exists** - now one command, so the order cannot be
-   remembered wrongly: `sh scripts/preflight_release.sh <sha> 0.2.0` finds the PDN CI/CD run for the commit,
+   remembered wrongly. `sh scripts/preflight_release.sh <sha> 0.2.0` finds the PDN CI/CD run for the commit,
    refuses to continue unless it is `success`, downloads `pn-android-aarch64`, proves it is a ~20 MB aarch64
    ELF, and runs the smoke test against it. Detail of what it does by hand:
    `gh run download <run-id> -n pn-android-aarch64 -D $PREFIX/tmp/rel-art`, `chmod +x`, then
@@ -186,7 +189,7 @@ else chases the tag.
    exercised against `fc6d288`'s artifact - 11 of 11 steps ok, exit 0, on this device.
 3. Tag `v0.2.0` on the S5 commit and push the tag.
 4. Watch `Release Automation` to completion, then download the **published** artifacts and run the smoke
-   test again against those exact bytes: the release job builds its own binaries, so the published ones are
+   test again against those exact bytes. The release job builds its own binaries, so the published ones are
    the authoritative artifact even though they come from the same commit. If that run fails, withdraw the
    release and the tag - this project has done it once and the procedure is known: `gh release delete` and
    `git push --delete origin v0.2.0`, then fix forward.
@@ -195,13 +198,14 @@ else chases the tag.
 
 Release-body note: the workflow's "Generate changelog" step used `git log -n 50` as the release body, so a
 release page carried fifty commit subjects rather than the curated section. It now reads the `[0.2.0]`
-section out of `CHANGELOG.md` via `scripts/extract_changelog.sh` (five controls: section found, `v` prefix,
-`Unreleased`, missing version -> exit 1 with empty stdout, no arguments -> exit 2), falling back to the
-commit list only when the section is absent - and saying so in the body when it does.
+section out of `CHANGELOG.md` via `scripts/extract_changelog.sh`. That script has five controls. It finds
+the section. It requires the `v` prefix. It rejects `Unreleased`. A missing version exits 1 with empty
+stdout, and no arguments exit 2. The step falls back to the commit list only when the section is absent,
+and it says so in the body in that case.
 
 ### S6 executed - v0.2.0 tagged
 
-**Preflight, before the tag existed** (`sh scripts/preflight_release.sh 087bc0a 0.2.0`):
+**Preflight, before the tag existed**, with `sh scripts/preflight_release.sh 087bc0a 0.2.0`:
 
 ```
 run 42114547149 conclusion: success
@@ -220,19 +224,17 @@ PREFLIGHT PASSED - safe to tag 0.2.0
 ```
 
 Fourteen of fourteen steps against the CI-built release-mode aarch64 binary. Note the step that is new since
-the withdrawn attempt: the detach/attach round trip is exercised by the smoke test itself (55 bytes, marker
-seen), so the reattach path has coverage that runs at release time rather than a claim in a document.
+the withdrawn attempt. The smoke test itself exercises the detach/attach round trip, with 55 bytes and a
+marker, so the reattach path has coverage at release time rather than a claim in a document.
 
-**Why the artifact comes from `087bc0a` and not from the tag's commit.** `ci.yml` filters on paths
-(`crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`, `deny.toml`, `.github/workflows/**`), so a
-documentation-only commit produces no run and therefore no artifact. **Correction (6 Nov):** this paragraph
-originally added "and has no `workflow_dispatch`", which is false and was false when written - `ci.yml` has
-carried `workflow_dispatch` since its first commit (`d35ec30`) and still did at `v0.1.8`. The path filter
-alone is the whole mechanism, and it also supplies the cleaner remedy that should have been recommended here:
-dispatch the workflow by hand on the release commit, so its own artifact exists and no diff proof is needed.
-The release commit
-(`0881275`) touches documentation only, and the proof that this is the same code is a diff rather than a
-promise:
+**Why the artifact comes from `087bc0a` and not from the tag's commit.** `ci.yml` filters on paths. The
+patterns are `crates/**`, `tests/**`, `Cargo.toml`, `Cargo.lock`, `deny.toml` and `.github/workflows/**`. A
+documentation-only commit produces no run and therefore no artifact. **Correction, 6 Nov:** this paragraph
+originally added "and has no `workflow_dispatch`", which is false and was false when written. `ci.yml` has
+carried `workflow_dispatch` since its first commit, `d35ec30`, and still did at `v0.1.8`. The path filter
+alone is the whole mechanism. It also supplies the cleaner remedy for this document: dispatch the workflow
+by hand on the release commit, so its own artifact exists and no diff proof is needed. The release commit
+`0881275` touches documentation only. The proof that this is the same code is a diff rather than a promise:
 
 ```
 $ git diff --quiet 087bc0a..HEAD -- crates/ Cargo.toml Cargo.lock && echo "the code is unchanged"
@@ -243,17 +245,17 @@ That workaround is in `research/PATH_TRANSLATION_AND_SHIM_INTEGRITY.md` section 
 worth one line of YAML.
 
 **Tag**: annotated `v0.2.0` on `0881275`, pushed. The release body is generated from the `[0.2.0]` section of
-`CHANGELOG.md` by `scripts/extract_changelog.sh` - verified by reading the published release's body, which is
-the check that the fix from `e64bb47` actually reaches a release rather than only a test.
+`CHANGELOG.md` by `scripts/extract_changelog.sh`. The published release's body was read to verify this. That
+check proves the fix from `e64bb47` reaches a release rather than only a test.
 
 ## 4. The standing protocol for every batch
 
-- One worktree and one branch per department, cut from the base named in its ticket; the child
-  commits and **never pushes**; the parent cherry-picks.
+- One worktree and one branch per department, cut from the base named in its ticket. The child
+  commits and **never pushes**. The parent cherry-picks.
 - Builds serialised: `flock $HOME/.hermes/cache/scratch/cargo-mutex.lock` around
   `heavy --budget-mb N -- -- env -u LD_LIBRARY_PATH cargo ...`. The device's memory guard kills
   a job that exceeds its budget, and a killed job is not a failed test.
-- The gate runs first and is read; the commit is a separate command. A commit that rode along with
+- The gate runs first and is read. The commit is a separate command. A commit that rode along with
   its own test is how a broken test target reached master once.
 - Every ticket states a **negative control**: the demonstration that its check can go red. A check
   that has never been seen failing is not yet a check.
@@ -283,4 +285,4 @@ It does not promise a date. It does not claim the four "not met" criteria will b
 dispatched - a department that cannot meet its criterion must leave its branch at a compiling state
 and report where it stopped. And it does not claim the list of criteria is complete: the three
 tickets in S3 exist because a criterion was read closely enough to notice that half of it had never
-been exercised, and reading the remaining criteria that closely is part of S3, not after it.
+been exercised, and a close read of the remaining criteria is part of S3, not after it.

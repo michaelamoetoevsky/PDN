@@ -1,20 +1,20 @@
-# External Capability Benchmark — proot-distro 5.10.3 vs PDN `podnext` 0.1.7
+# External Capability Benchmark: proot-distro 5.10.3 compared to PDN `podnext` 0.1.7
 
-Host-side (Termux shell) side-by-side test. **Raw evidence only — every number below is copied from an actual timed command.** No synthesized values.
+Host-side test in the Termux shell. This is raw evidence. Every number below comes from a timed command. No synthesized values.
 
-- Date: 2026-11-03 (WIB, UTC+07:00)
-- Host: Android 16, aarch64, Termux (proot-distro rootfs store under $PREFIX/var/lib; PDN under `~/.podnext/`)
-- `proot-distro`: system binary v5.10.3 (`/data/data/com.termux/files/usr/bin/proot-distro`, by @sylirre)
-- `podnext`: `/data/data/com.termux/files/home/workspace/PDN/target/release/podnext` (podnext 0.1.7)
+- Date: 2026-11-03, WIB, UTC+07:00
+- Host: Android 16, aarch64, Termux. The proot-distro rootfs store is under $PREFIX/var/lib. PDN is under `~/.podnext/`
+- `proot-distro`: system binary v5.10.3 at `/data/data/com.termux/files/usr/bin/proot-distro`, by @sylirre
+- `podnext`: `/data/data/com.termux/files/home/workspace/PDN/target/release/podnext`, podnext 0.1.7
 - Shell: bash 5.x, `TIMEFORMAT='REAL=%R USER=%U SYS=%S'`
 - All measurements `n=3`, both tools, median reported.
 
 ### Collision-avoidance note
 A concurrent subagent owns the shared `alpine` containers in **both** tools. Per instruction, the shared `alpine` container was **never removed/reset/reinstalled**. Dedicated bench containers were used for all timing:
-- proot-distro: `pd-bench` (`proot-distro install alpine --name pd-bench`)
-- PDN: `pdn-bench` (`podnext install alpine --name pdn-bench`)
+- proot-distro: `pd-bench`, from `proot-distro install alpine --name pd-bench`
+- PDN: `pdn-bench`, from `podnext install alpine --name pdn-bench`
 
-Both bench containers were **left installed** at the end (for the next agent). Only the two backup archives created in step 8 were deleted.
+Both bench containers were **left installed** at the end for the next agent. Only the two backup archives created in step 8 were deleted.
 
 ---
 
@@ -30,11 +30,11 @@ Both bench containers were **left installed** at the end (for the next agent). O
 | SEARCH alpine (exit) | 0 (plain-space table, 34 lines) | 0 (box-unicode table, 57 lines) | both work |
 | Multi-cmd shell exec (`id;uname;…`) | exit 0, all cmds OK | exit 0, all cmds OK | both work (see section 7 diffs) |
 
-Notes on winner column: INSTALL is network-bound (~4 MiB layer each run) so the 1.2 s delta is mostly jitter, not architectural. LIST/LOGIN deltas are structural (Rust single binary vs shell/Python wrapper) and are consistent across all 3 runs.
+Notes on the winner column. INSTALL is network-bound, with about 4 MiB per layer each run. Thus the 1.2 s delta is mostly jitter, not architectural. LIST and LOGIN deltas are structural, from a Rust single binary against a shell or Python wrapper. These deltas are consistent across all 3 runs.
 
 ---
 
-## 1. Clean state — `remove` / `clear-cache` (bench containers)
+## 1. Clean state: `remove` and `clear-cache` for bench containers
 
 ```bash
 $ proot-distro remove pd-bench
@@ -51,7 +51,7 @@ DEBUG execute_command: START Remove { name: "pdn-bench", force: true }
 Error: Container 'pdn-bench' not found        # first call, container absent — OK
 ```
 
-### FINDING — `podnext remove` is a no-op (returns 0, does not delete)
+### FINDING: `podnext remove` is a no-op and does not delete
 After `pdn-bench` existed, removal reported success but the container persisted:
 
 ```bash
@@ -68,13 +68,13 @@ $ ls ~/.podnext/containers/            # AFTER — still present
 almalinux  alpine  pdn-bench  test-alpine  test-pdn-install
 ```
 
-`podnext list` also still shows `pdn-bench`. Consequence for this benchmark: subsequent PDN cold runs were forced clean with a manual `rm -rf ~/.podnext/containers/pdn-bench` instead of `podnext remove`. Evidence of the bug is retained below (a plain `podnext remove pdn-bench -f` followed by `podnext install` errors "already exists", see section 2).
+`podnext list` also still shows `pdn-bench`. For this benchmark, subsequent PDN cold runs were forced clean with a manual `rm -rf ~/.podnext/containers/pdn-bench` instead of `podnext remove`. Evidence of the bug is retained below. A plain `podnext remove pdn-bench -f` followed by `podnext install` errors with "already exists". See section 2.
 
 ---
 
-## 2. INSTALL benchmark (cold)
+## 2. INSTALL benchmark, cold start
 
-### proot-distro — `proot-distro install alpine --name pd-bench` (clear-cache + remove before each run)
+### proot-distro: `proot-distro install alpine --name pd-bench` before each run, with clear-cache and remove
 
 ```bash
 $ TIMEFORMAT='REAL=%R USER=%U SYS=%S'
@@ -94,9 +94,9 @@ REAL=10.109 USER=0.660 SYS=0.243
 REAL=9.486 USER=0.667 SYS=0.298
 ```
 
-- Samples (REAL): 11.209 / 10.109 / 9.486 → **median 10.109**
+- Samples from REAL: 11.209 / 10.109 / 9.486 with **median 10.109**
 
-### PDN — `podnext install alpine --name pdn-bench` (container removed before each run)
+### PDN: `podnext install alpine --name pdn-bench` after container removal before each run
 
 ```bash
 $ podnext remove pdn-bench -f ; time podnext install alpine --name pdn-bench
@@ -112,7 +112,7 @@ Rootfs: /data/data/com.termux/files/home/.podnext/containers/pdn-bench/rootfs
 REAL=8.871 USER=0.330 SYS=0.318
 ```
 
-RUN 2 and RUN 3 were first attempted with the tool's own `podnext remove` and **failed**, proving the section 1 no-op bug:
+RUN 2 and RUN 3 were first attempted with the tool's own `podnext remove`. These runs failed and prove the section 1 no-op bug:
 
 ```bash
 # RUN 2 (attempt via podnext remove — FAILED)
@@ -122,7 +122,7 @@ Error: Container 'pdn-bench' already exists at /data/data/com.termux/files/home/
 REAL=0.034 USER=0.014 SYS=0.013
 ```
 
-Re-run with a manual wipe (`rm -rf ~/.podnext/containers/pdn-bench`):
+Re-run with a manual wipe of the container directory: `rm -rf ~/.podnext/containers/pdn-bench`
 
 ```bash
 # RUN 2 (manual wipe)
@@ -135,12 +135,12 @@ REAL=7.936 USER=0.374 SYS=0.416
 REAL=8.868 USER=0.361 SYS=0.275
 ```
 
-- Valid samples (REAL): 8.871 / 7.936 / 8.868 → **median 8.868**
-- (`--force` exists on `podnext install`, but task said remove container between runs; manual wipe used because `remove` is broken.)
+- Valid samples from REAL: 8.871 / 7.936 / 8.868 with **median 8.868**
+- The `--force` flag exists on `podnext install`. The task said to remove the container between runs. A manual wipe was used because `remove` is broken.
 
 ---
 
-## 3. LOGIN / command-exec benchmark — `login <bench> -- echo hello` (n=3)
+## 3. LOGIN and command-exec benchmark: `login <bench> -- echo hello`, n=3
 
 ```bash
 $ TIMEFORMAT='REAL=%R USER=%U SYS=%S'
@@ -163,11 +163,11 @@ REAL=0.342 USER=0.042 SYS=0.165      # RUN3
 # median 0.347
 ```
 
-Both print `hello`, exit 0. PDN emits a large `[DEBUG …]` banner on every login (noise; likely intended to be silenced in release/default verbosity).
+Both print `hello` and exit 0. PDN emits a large `[DEBUG …]` banner on every login. This banner is noise. The makers likely intended to silence it at release or default verbosity.
 
 ---
 
-## 4. LIST benchmark (n=3)
+## 4. LIST benchmark, n=3
 
 ```bash
 $ time proot-distro list
@@ -197,8 +197,8 @@ REAL=0.034 USER=0.008 SYS=0.019      # RUN3
 # median 0.034
 ```
 
-- **Correctness flag:** `podnext list` reports DISTRO=`ubuntu`, VERSION=`22.04` for the **alpine** containers (and for every container). Metadata is mislabeled — DISTRO/VERSION columns are unreliable.
-- Row order is non-deterministic (RUN1/2/3 list the same rows in different order — HashMap iteration).
+- **Correctness flag:** `podnext list` reports DISTRO=`ubuntu`, VERSION=`22.04` for the **alpine** containers and for every container. The metadata is mislabeled, so the DISTRO and VERSION columns are unreliable.
+- The row order is non-deterministic. RUN1, RUN2 and RUN3 list the same rows in different order. This behavior comes from HashMap iteration.
 
 ---
 
@@ -217,13 +217,13 @@ hello
 REAL=0.418 USER=0.036 SYS=0.201      # supported, exit 0
 ```
 
-Both support RUN mode and execute the command. PDN `run` additionally offers `-d/--detach`, `-p/--publish`, `-v/--volume`, `--network`, `--entrypoint`, `-t/--tty`, `-r/--rm` (docker-style flags; all confirmed present in `podnext run --help`). proot-distro `run` is entrypoint-oriented (no such flags).
+Both tools support RUN mode and execute the command. PDN `run` also offers `-d/--detach`, `-p/--publish`, `-v/--volume`, `--network`, `--entrypoint`, `-t/--tty` and `-r/--rm`. These are docker-style flags and all are present in `podnext run --help`. proot-distro `run` is entrypoint-oriented and has no such flags.
 
 ---
 
-## 6. SEARCH — `search alpine` (first 15 lines each)
+## 6. SEARCH: `search alpine`, first 15 lines each
 
-### proot-distro (exit 0, 34 lines total) — plain space-aligned table
+### proot-distro, exit 0, 34 lines total, plain space-aligned table
 ```bash
 $ proot-distro search alpine
 [*] Searching Docker Hub for 'alpine'...
@@ -243,7 +243,7 @@ alpine/terragrunt  Auto-trigger docker build for terra...     19  17.0M
 alpine/bombardier  Auto-trigger docker build for bomba...     30  17.1M
 ```
 
-### podnext (exit 0, 57 lines total) — unicode box table, untruncated pulls
+### podnext, exit 0, 57 lines total, unicode box table, untruncated pulls
 ```bash
 $ podnext search alpine
 DEBUG main: Executing command: Search { query: "alpine", limit: 25, format: Table }
@@ -262,11 +262,11 @@ DEBUG main: Executing command: Search { query: "alpine", limit: 25, format: Tabl
 +-------------------+-----------------------------------------------------+-------+-------------+----------+
 ```
 
-Format delta: proot-distro = human-short pulls (`12.4B`), 34 lines. PDN = raw integer pulls, box table, 57 lines (borders). PDN supports `-f json|yaml|text`, proot-distro has no format flag.
+Format delta: proot-distro uses human-short pulls like `12.4B` and writes 34 lines. PDN uses raw integer pulls, a box table and 57 lines for the borders. PDN supports `-f json|yaml|text`. proot-distro has no format flag.
 
 ---
 
-## 7. SHELL end-to-end (multi-command, non-interactive)
+## 7. SHELL end-to-end, multi-command, non-interactive
 
 Command: `/bin/sh -c 'id; uname -a; cat /etc/alpine-release; echo $PATH; ls /'`
 
@@ -292,7 +292,7 @@ apex bin data dev etc home lib linkerconfig media mnt odm opt proc product root 
 EXIT=0
 ```
 
-**No command failed in either tool** (all 5 cmds produced output, exit 0 in both). Differences observed:
+**No command failed in either tool.** All 5 commands produced output and exit 0 in both tools. Differences observed:
 
 | Aspect | proot-distro | podnext |
 |---|---|---|
@@ -302,13 +302,13 @@ EXIT=0
 | `$PATH` | clean container PATH + one Termux bin | inherits **entire host Termux PATH** incl. `hermes-agent/…/venv/bin`, duplicated `~/.local/bin` entries |
 | `ls /` | host Android `/` (default non-isolated, host bound) | host Android `/` (default non-isolated, host bound) |
 
-Both default to non-isolated (host filesystem visible). PDN leaks the caller environment (PATH) into the container and does not drop to root by default.
+Both tools default to non-isolated mode, with the host filesystem visible. PDN leaks the caller environment PATH into the container and does not drop to root by default.
 
 ---
 
 ## 8. BACKUP
 
-### proot-distro — `backup <bench> > file`
+### proot-distro: `backup <bench> > file`
 ```bash
 $ TIMEFORMAT='REAL=%R USER=%U SYS=%S'
 $ time proot-distro backup pd-bench > ~/pd-bench-backup.tar.gz
@@ -323,9 +323,9 @@ $ ls -la ~/pd-bench-backup.tar.gz
 $ file ~/pd-bench-backup.tar.gz
 /data/data/com.termux/files/home/pd-bench-backup.tar.gz: POSIX tar archive
 ```
-- Time 2.000 s, size **9,041,920 B (~8.6 MiB)**. Note: stdout is **uncompressed tar** despite the `.gz` name (only `-c/--compress` compresses).
+- Time 2.000 s, size **9,041,920 B**, about **8.6 MiB**. Note: stdout is **uncompressed tar** despite the `.gz` name. Only `-c/--compress` compresses.
 
-### PDN — `backup create <bench>`
+### PDN: `backup create <bench>`
 ```bash
 $ time podnext backup create pdn-bench
 DEBUG create_archive: archive metadata obtained, size=4631494
@@ -335,18 +335,18 @@ REAL=3.205 USER=1.291 SYS=0.723     EXIT=0
 $ ls -la ~/.podnext/backups/ab3a15f6-ca3a-4fbf-ad03-021e71b438e3.tar.gz
 -rw-------. 1 u0_a396 u0_a396 4631494 Nov  3 02:42 …/ab3a15f6-ca3a-4fbf-ad03-021e71b438e3.tar.gz
 ```
-- `--force` is **not** a valid flag (`error: unexpected argument '--force' found`, exit 2).
-- Time 3.205 s, size **4,631,494 B (~4.42 MiB, gzip)**.
-- **Correctness flags:** `podnext backup create` prints 282,399 chars of `DEBUG create_archive: failed to add symlink … No such file or directory (os error 2)` for *every* symlink in the rootfs (e.g. `usr/bin/whoami`, `usr/bin/sort`, `usr/bin/tail`). Symlinks appear to be dropped from the archive — restore fidelity is in doubt.
+- The `--force` flag is **not** valid. It gives the error `error: unexpected argument '--force' found` and exit 2.
+- Time 3.205 s, size **4,631,494 B**, about **4.42 MiB** with gzip.
+- **Correctness flags:** `podnext backup create` prints 282,399 chars of `DEBUG create_archive: failed to add symlink … No such file or directory (os error 2)` for *every* symlink in the rootfs, for example `usr/bin/whoami`, `usr/bin/sort` and `usr/bin/tail`. Symlinks appear dropped from the archive. Restore fidelity is in doubt.
 
-### `podnext backup list` after a successful create (BUG — empty)
+### `podnext backup list` after a successful create, bug, empty
 ```bash
 $ podnext backup list
 +----+------+-----------+------+--------+------+---------+
 | ID | NAME | CONTAINER | TYPE | STATUS | SIZE | CREATED |
 +----+------+-----------+------+--------+------+---------+
 ```
-Empty table despite the archive existing on disk and `Backup created with ID: …` having been printed. (proot-distro has no equivalent — backups go to a path the caller chooses.)
+The table is empty even though the archive exists on disk and `Backup created with ID: …` was printed. proot-distro has no equivalent. Its backups go to a path the caller chooses.
 
 ### Cleanup
 Archives created here were deleted:
@@ -359,7 +359,7 @@ ls: cannot access … No such file or directory   # confirmed gone
 
 ---
 
-## 9. Feature probes (`<tool> <cmd> --help`; exit 0 = subcommand exists)
+## 9. Feature probes from `<tool> <cmd> --help`, exit 0 means the subcommand exists
 
 ### proot-distro feature set, tested against PDN
 ```bash
@@ -378,8 +378,8 @@ build   : proot-distro_help_exit=0 podnext_help_exit=0
 push    : proot-distro_help_exit=0 podnext_help_exit=2
 restore : proot-distro_help_exit=0 podnext_help_exit=2
 ```
-- proot-distro-only, **absent in PDN**: `rename`, `reset`, `copy`, `sync`, `push`, top-level `restore` (PDN folds restore under `backup restore`).
-- Overlapping: `ps`, `kill`, `build` exist in both (semantics differ — PDN `build` is a multi-arch build service: `submit/status/cancel`).
+- proot-distro has these commands and PDN does not: `rename`, `reset`, `copy`, `sync`, `push` and top-level `restore`. PDN puts restore under `backup restore`.
+- These commands overlap: `ps`, `kill` and `build` exist in both tools. The semantics differ. PDN `build` is a multi-arch build service with `submit/status/cancel`.
 
 ### PDN feature set, tested against proot-distro
 ```bash
@@ -403,9 +403,9 @@ gitops    : podnext_help_exit=0 proot-distro_help_exit=1
 image     : podnext_help_exit=0 proot-distro_help_exit=1
 sessions  : podnext_help_exit=0 proot-distro_help_exit=1
 ```
-(proot-distro returns exit 1 for an unknown command = absent.) All 14 PDN extras exist; none exist in proot-distro.
+proot-distro returns exit 1 for an unknown command, which means absent. All 14 PDN extras exist. None exist in proot-distro.
 
-### PDN full top-level command set (`podnext help`)
+### PDN full top-level command set from `podnext help`
 ```
 install  list  login  run  ps  kill  remove  search  image  sessions  attach  info
 version  service  daemon  watchdog  quota  log  dbus  socket  boot  wakelock  policy
@@ -434,17 +434,17 @@ PDN --bind        PRESENT
 PDN -b            PRESENT
 PDN -u            PRESENT
 ```
-- proot-distro `login` has the full isolation/bind flag set (`--shared-home`, `--shared-tmp`, `--isolated`, `--minimal`, `--bind`).
-- PDN `login` exposes `--bind/-b`, `-u`, plus proot passthrough flags (`--kernel`, `--hostname`, `--uid`, `--gid`, `--seccomp`, `--sysvipc`, `--link2symlink`, `--env`) but **not** `--shared-home`/`--shared-tmp`/`--isolated`/`--minimal`. `podnext run` has the docker-style flag set (see section 5).
+- proot-distro `login` has the full isolation and bind flag set: `--shared-home`, `--shared-tmp`, `--isolated`, `--minimal` and `--bind`.
+- PDN `login` exposes `--bind/-b`, `-u`, plus proot passthrough flags: `--kernel`, `--hostname`, `--uid`, `--gid`, `--seccomp`, `--sysvipc`, `--link2symlink` and `--env`. It does **not** expose `--shared-home`, `--shared-tmp`, `--isolated` or `--minimal`. `podnext run` has the docker-style flag set, see section 5.
 
 ---
 
-## Raw log locations (session scratch, not guaranteed persistent)
+## Raw log locations, session scratch, not guaranteed persistent
 `~/.hermes/cache/scratch/bench/{pd,pdn}_{install_1,install_2,install_3,login,list,run,search,shell,backup}.log`
-Full `podnext backup create` output (282,399 chars) captured at `/data/data/com.termux/files/home/.hermes/cache/terminal-output/out-1793648518-5701-fce0.log`.
+Full `podnext backup create` output of 282,399 chars is captured at `/data/data/com.termux/files/home/.hermes/cache/terminal-output/out-1793648518-5701-fce0.log`.
 
 ## Bottom line
-- **Speed:** PDN wins decisively on LIST (~20×) and LOGIN (~1.6×); wins narrowly on cold INSTALL and RUN. proot-distro wins only on BACKUP wall-time, but produces a larger *uncompressed* archive.
-- **Feature breadth:** PDN ships far more subcommands (service/daemon/watchdog/quota/log/dbus/socket/boot/wakelock/policy/dashboard/gitops/network/volume/sessions). proot-distro ships `rename/reset/copy/sync/push/restore` that PDN lacks.
-- **Reliability defects observed in PDN 0.1.7:** (1) `remove` is a silent no-op (exit 0, container persists); (2) `backup create` fails to archive symlinks and floods 280K chars of DEBUG; (3) `backup list` shows empty after a successful create; (4) `list` reports wrong DISTRO/VERSION; (5) `login` leaks the host PATH and default-non-root while proot-distro defaults to root with a spoofed kernel; (6) debug banner printed unconditionally at default verbosity.
-- Containers `pd-bench` (proot-distro) and `pdn-bench` (PDN) left installed; shared `alpine` containers untouched; benchmark backup archives deleted.
+- **Speed:** PDN wins decisively on LIST, about 20 times faster, and on LOGIN, about 1.6 times faster. It wins narrowly on cold INSTALL and RUN. proot-distro wins only on BACKUP wall-time, but produces a larger *uncompressed* archive.
+- **Feature breadth:** PDN ships far more subcommands: service, daemon, watchdog, quota, log, dbus, socket, boot, wakelock, policy, dashboard, gitops, network, volume and sessions. proot-distro ships `rename/reset/copy/sync/push/restore` that PDN lacks.
+- **Reliability defects observed in PDN 0.1.7:** `remove` is a silent no-op that exits 0 and keeps the container. `backup create` fails to archive symlinks and floods 280K chars of DEBUG. `backup list` is empty after a successful create. `list` reports the wrong DISTRO and VERSION. `login` leaks the host PATH and does not start as root, while proot-distro starts as root with a spoofed kernel. The debug banner prints unconditionally at default verbosity.
+- The containers `pd-bench` for proot-distro and `pdn-bench` for PDN are left installed. The shared `alpine` containers are untouched. The benchmark backup archives are deleted.

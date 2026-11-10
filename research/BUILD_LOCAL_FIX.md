@@ -1,13 +1,13 @@
-# Issue #29 — `podnext build local` produced no image: reproduction, root cause, fix
+# Issue #29: `podnext build local` produced no image: reproduction, root cause, fix
 
-Department: Build Systems Engineering (BSE). Branch: `dept/build-local`.
+Department: Build Systems Engineering, BSE. Branch: `dept/build-local`.
 Base revision: `5df9484`. Scope: `crates/podnext/src/commands/mod.rs`, build-local region only.
 
 ---
 
-## 1. Reproduction (pre-fix) — raw
+## 1. Reproduction before the fix: raw
 
-Fixture (throwaway, under scratch):
+The fixture is throwaway, under scratch:
 
 ```
 $ cat ctx/Dockerfile
@@ -16,7 +16,7 @@ RUN echo hello > marker.txt
 COPY app.txt /app.txt
 ```
 
-Run the real binary built from `5df9484` (`env -u LD_LIBRARY_PATH target/debug/podnext`):
+Run the real binary built from `5df9484` with `env -u LD_LIBRARY_PATH target/debug/podnext`:
 
 ```
 $ podnext build local -t bse-issue29:latest ctx
@@ -35,7 +35,7 @@ Successfully built image 'bse-issue29:latest'
 EXIT_CODE=0
 ```
 
-On-disk state before and after — nothing was written:
+On-disk state before and after: nothing was written.
 
 ```
 $ ls -la ~/.podnext/containers/bse-issue29   # before
@@ -57,23 +57,23 @@ This is the silent false success: exit 0, "Successfully built image", no image.
 
 Raw transcript: `$HOME/.hermes/cache/scratch/bse-repro.log`.
 
-### 1b. The stronger case — missing context
+### 1b. The stronger case: missing context
 
 `cmd_build_local` guarded its only real work with `if path.exists()` and printed
 the success line unconditionally afterwards. With a non-existent context the old
 code therefore did *no work at all* and still reported a built image. The new
-code fails hard (section 3, test `missing_context_is_a_hard_error_and_writes_nothing`).
+code fails hard. See section 3, test `missing_context_is_a_hard_error_and_writes_nothing`.
 
 ---
 
-## 2. Root cause — exact location
+## 2. Root cause: exact location
 
 `crates/podnext/src/commands/mod.rs` at `5df9484`:
 
 - `cmd_build_local`, line **2036**.
-- Layer diff guarded by `if path.exists()`, line **2093**; computes
-  `compute_layer_diff(<empty tempdir>, &path, out_tar)` — a tar of the raw build
-  context against an empty base — then deletes the tarball (lines 2104–2106).
+- The code guards the layer diff with `if path.exists()` at line **2093**.
+  That call computes `compute_layer_diff(<empty tempdir>, &path, out_tar)`, a tar of the raw
+  build context against an empty base. The code then deletes the tarball at lines 2104 to 2106.
 - Unconditional success, line **2109**:
 
 ```rust
@@ -81,42 +81,42 @@ println!("\nSuccessfully built image '{}'", target_tag);
 ```
 
 No step anywhere in the function writes to the runtime's image store. That store
-is `~/.podnext/containers/<name>/rootfs` + `metadata.json` — what
-`ContainerManager::load_containers` (`crates/proot-distro-core/src/container.rs:45`)
-scans and what `podnext run` (`native.rs:577` → `ContainerManager::get`,
-`container.rs:153`) and `podnext image ls` read. The `FROM` base was printed but
-never pulled, and the context was tarred in isolation rather than assembled on a
-rootfs. Result: exit 0 with no runnable artifact.
+is `~/.podnext/containers/<name>/rootfs` + `metadata.json`. The loader
+`ContainerManager::load_containers` in `crates/proot-distro-core/src/container.rs:45`
+scans that store. `podnext run` in `native.rs:577` calls `ContainerManager::get`
+in `container.rs:153`, and `podnext image ls` reads the same store. The `FROM` base
+was printed but never pulled, and the build tarred the context in isolation rather
+than assembled a rootfs. Result: exit 0 with no runnable artifact.
 
 ---
 
 ## 3. Fix
 
-`cmd_build_local` now delegates to `build_local_image`, which returns only after
-the image is on disk; the success line is unreachable on failure.
+`cmd_build_local` now delegates to `build_local_image`. That function returns only
+after the image is on disk. The success line is unreachable on failure.
 
-`build_local_image` (mod.rs, new):
+New function `build_local_image` in mod.rs:
 
-1. Hard-errors if the build context does not exist, or if there is no `FROM`.
-2. Resolves the base from the last `FROM`. `FROM scratch` → empty rootfs (Docker's
-   empty base, no pull). Otherwise pulls the base with the existing
+1. Stop with a hard error if the build context does not exist, or if there is no `FROM`.
+2. Resolve the base from the last `FROM`. `FROM scratch` gives an empty rootfs,
+   the Docker empty base, with no pull. Otherwise pull the base with the existing
    `native::install_image_native` into `~/.podnext/containers/<tag>/rootfs`.
-3. Applies the Dockerfile in order: `COPY`/`ADD` copied into the rootfs;
-   `RUN` executed **inside the rootfs** through the proot backend
-   (`ContainerManager::execute_container`), non-zero → `bail!`; `ENV`/`WORKDIR`
-   carried into the run environment; `CMD`/`ENTRYPOINT`/`LABEL` recorded.
-4. Writes `metadata.json` and only returns `Ok` once the rootfs exists.
+3. Apply the Dockerfile in order. Copy `COPY` and `ADD` into the rootfs. Run `RUN`
+   **inside the rootfs** through the proot backend
+   `ContainerManager::execute_container`. A non-zero result gives `bail!`. Carry
+   `ENV` and `WORKDIR` into the run environment. Record `CMD`, `ENTRYPOINT` and `LABEL`.
+4. Write `metadata.json`. Return `Ok` only after the rootfs exists.
 
 The tag is the store key, so `podnext run <tag>` finds the result directly.
 
-Removed as dead code: `execute_run` (RUN no longer runs in the build context) and
-its two tests.
+This change removes the dead code `execute_run`, because RUN no longer runs in the
+build context. It also removes its two tests.
 
 ---
 
-## 4. After evidence — raw
+## 4. After evidence: raw
 
-### 4a. Missing context now refuses (offline)
+### 4a. Missing context now refuses, offline
 
 ```
 $ podnext build local -t bse-missing:latest .../does-not-exist
@@ -146,7 +146,7 @@ Successfully built image 'bse-real:latest'
 EXIT_CODE=0
 ```
 
-On-disk result (all real):
+On-disk result, all real:
 
 ```
 containers/bse-real:latest/rootfs                     <- pulled alpine rootfs
@@ -172,7 +172,7 @@ OS=3.19.9
 RUN_EXIT=0
 ```
 
-### 4c. Offline deterministic case (`FROM scratch`)
+### 4c. Offline deterministic case with `FROM scratch`
 
 ```
 $ podnext build local -t bse-scratch:latest .../scratchctx
@@ -185,13 +185,13 @@ containers/bse-scratch:latest/metadata.json
 ```
 
 Raw transcripts: `bse-postfix.log`, `bse-postfix-real.log`, `bse-postfix-run.log`,
-`bse-postfix-final.log` (all under `$HOME/.hermes/cache/scratch/`).
+`bse-postfix-final.log`, all under `$HOME/.hermes/cache/scratch/`.
 
 ---
 
 ## 5. Tests
 
-`cargo test -p podnext --locked` (via memory guard + flock):
+`cargo test -p podnext --locked` with memory guard and flock:
 
 ```
 running 11 tests ... test result: ok. 11 passed; 0 failed; 0 ignored
@@ -199,51 +199,51 @@ running 11 tests ... test result: ok. 11 passed; 0 failed; 0 ignored
 test result: ok. 2 passed; 0 failed; 0 ignored
 ```
 
-New regression tests (`commands::build_local_tests`):
-- `missing_context_is_a_hard_error_and_writes_nothing` — asserts `Err` is returned
-  and the image store is untouched (contract, not one exact string).
-- `successful_build_registers_a_runnable_image` — asserts the store contains
+New regression tests in `commands::build_local_tests`:
+- `missing_context_is_a_hard_error_and_writes_nothing` asserts that `Err` is
+  returned and the image store is untouched. This is a contract check, not one exact string.
+- `successful_build_registers_a_runnable_image` asserts that the store contains
   `<containers_dir>/<tag>/rootfs/<file>` with the copied bytes and a
-  `metadata.json` naming the tag. Offline via `FROM scratch`.
+  `metadata.json` that names the tag. It runs offline via `FROM scratch`.
 
-### Test-count delta (13 → 11) — named
+### Test-count delta: 13 to 11, named
 
 Two tests were **removed as dead-code coverage**, not to force green:
 - `build_local_tests::run_instructions_execute_in_order_in_context`
 - `build_local_tests::failing_run_propagates`
 
-Both exercised `execute_run`, which ran RUN with `sh -c` in the *build context* —
-exactly the defective behaviour #29 removes (RUN must run inside the assembled
-rootfs). `execute_run` is no longer called by any product path, so it and its
-tests were deleted. RUN-in-rootfs is now covered by the integration evidence in
-section 4b (RUN wrote `marker.txt` inside the pulled rootfs). The two `ARG` tests
-(`arg_is_accepted_and_substituted`, `arg_without_default_is_declared_empty`) were
-kept unchanged. Net: −2 dead-code tests, +2 regression tests.
+Both tests exercised `execute_run`, which ran RUN with `sh -c` in the *build
+context*. That is exactly the defective behaviour that #29 removes. RUN must run
+inside the assembled rootfs. `execute_run` is no longer called by any product
+path, so this change deleted it and its tests. The integration evidence in section
+4b now covers RUN in the rootfs, because RUN wrote `marker.txt` inside the pulled
+rootfs. The two `ARG` tests, `arg_is_accepted_and_substituted` and
+`arg_without_default_is_declared_empty`, were kept unchanged. Net: −2 dead-code tests, +2 regression tests.
 
 ---
 
-## 6. Residual gaps (honest)
+## 6. Residual gaps, honest
 
-1. **`ENV`/`WORKDIR` are not persisted for later `podnext run`.** They are applied
-   to the RUN environment during the build and recorded in `metadata.json`, but
-   `ContainerManager::load_containers` ignores those keys, so a subsequent
-   `podnext run` does not reinstate them. Fixing that touches the shared loader
-   (out of this scope).
-2. **Wildcards / `--from=` stage copies / multi-stage builds unsupported.**
-   `COPY`/`ADD` handle one source path; the parser already collapses multi-source
-   COPY, and multi-stage `FROM … AS` is ignored beyond the last `FROM`.
+1. **`ENV` and `WORKDIR` are not persisted for later `podnext run`.** The build
+   applies them to the RUN environment and records them in `metadata.json`.
+   `ContainerManager::load_containers` ignores those keys, so a later
+   `podnext run` does not reinstate them. A correct fix touches the shared loader,
+   which is out of this scope.
+2. **Wildcards, `--from=` stage copies and multi-stage builds are unsupported.**
+   `COPY` and `ADD` handle one source path. The parser already collapses multi-source
+   COPY. The build ignores multi-stage `FROM … AS` beyond the last `FROM`.
 3. **`FROM scratch` produces an image with no shell**, so `RUN` cannot execute in
-   it (Docker behaves the same); such a build is metadata+filesystem only.
-4. **`EXPOSE`/`USER` are parsed and ignored** (recorded nowhere); `CMD`/`ENTRYPOINT`
-   are stored in `metadata.json` but the runtime does not yet consume them.
-5. **A tag containing `:` as a container-directory name** (e.g. `bse-real:latest`)
+   it. Docker behaves the same. Such a build is metadata and filesystem only.
+4. **`EXPOSE` and `USER` are parsed and ignored.** The code records them nowhere.
+   `CMD` and `ENTRYPOINT` are stored in `metadata.json`, but the runtime does not yet consume them.
+5. **A tag with `:` as a container-directory name**, for example `bse-real:latest`,
    makes proot print `can't sanitize binding ".../containers/bse-real"` for the
-   sysdata/guestdirs bind mounts (proot bind specs are `host:guest:flags`, so a
-   `:` in the host path confuses them). Execution still works (section 4b), but the fake
+   sysdata and guestdirs bind mounts. proot bind specs are `host:guest:flags`, so a
+   `:` in the host path confuses them. Execution still works, as in section 4b, but the fake
    `/proc` stubs are not bound for such names. A sanitised on-disk name with a
-   `run <tag>` alias would fix this; not done here.
-6. No OCI manifest/config or `~/.podnext/images` entry is produced — the runtime's
-   runnable image store is the container directory, which is what is written.
+   `run <tag>` alias can fix this. This change does not include that fix.
+6. This change produces no OCI manifest or config, and no `~/.podnext/images`
+   entry. The runtime's runnable image store is the container directory. That is what the code writes.
 
 ---
 

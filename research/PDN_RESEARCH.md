@@ -1,9 +1,9 @@
-# PDN (podnext) v0.1.7 — User-Facing Capability Inventory
+# PDN podnext v0.1.7: User-Facing Capability Inventory
 
 Evidence-by-log inventory. Every claim cites observed command output, file path, or line number.
 Repo: `/data/data/com.termux/files/home/workspace/PDN`. Binary: `target/release/podnext`.
-Investigation time: 2026-11-03 ~02:30–02:50 WIB.
-Anything not directly observed is marked **UNVERIFIED**.
+Investigation time: 2026-11-03 ~02:30-02:50 WIB.
+A claim without direct observation is marked **UNVERIFIED**.
 
 ---
 
@@ -35,17 +35,17 @@ $ ./target/release/podnext version
 podnext 0.1.0
 ```
 
-`crates` workspace members (6): `proot-core`, `proot-distro-core`, `proot-compat`, `pn-gateway`, `pn-next`, `podnext`.
+`crates` workspace has 6 members: `proot-core`, `proot-distro-core`, `proot-compat`, `pn-gateway`, `pn-next`, `podnext`.
 
-**EVIDENCE:** `sha256sum`, `file`, `ls -l` on `target/release/podnext`; `./target/release/podnext --version` / `version`; `Cargo.toml`.
+**EVIDENCE:** `sha256sum`, `file`, `ls -l` on `target/release/podnext`. Also `./target/release/podnext --version` / `version`. Also `Cargo.toml`.
 
 ### 1a. The version-string mismatch (root cause) — IMPORTANT, concurrent edit
 
-The release **binary** was built `02:08:46`, before the source fix (below). It emits `0.1.0`
-because it was compiled from source that hardcoded the string. During this investigation the
-source was edited live (mtimes `02:41`/`02:45`), removing the hardcodes.
+The release **binary** was built `02:08:46`, before the source fix below. It emits `0.1.0`
+because the compiled source had the string hardcoded. The source was edited live
+while this investigation ran, at `02:41`/`02:45`. Those edits removed the hardcodes.
 
-Observed hardcoded `"0.1.0"` at session start (grep of `crates/podnext/src`):
+Observed hardcoded `"0.1.0"` at session start. The grep command ran on `crates/podnext/src`:
 
 | file:line | content (at ~02:35) | function |
 |---|---|---|
@@ -55,7 +55,7 @@ Observed hardcoded `"0.1.0"` at session start (grep of `crates/podnext/src`):
 | `crates/podnext/src/main.rs:2231` | `println!("podnext 0.1.0")` ← the `podnext version` output | `cmd_version` Text branch |
 | `crates/podnext/src/native.rs:48` | `.header("User-Agent", "podnext/0.1.0")` | Docker Hub search UA |
 
-Current source state (~02:41–02:45, `main.rs` mtime `2026-11-03 02:41:04`, `native.rs` `02:45:16`) — all five now use `env!("CARGO_PKG_VERSION")`:
+Current source state from 02:41 to 02:45. All five sites now use `env!("CARGO_PKG_VERSION")`. The `main.rs` mtime is `2026-11-03 02:41:04`, and the `native.rs` mtime is `02:45:16`:
 
 ```
 1853:        version: env!("CARGO_PKG_VERSION").to_string(),
@@ -67,7 +67,7 @@ native.rs:48:        .header("User-Agent", format!("podnext/{}", env!("CARGO_PKG
 
 `grep -rn '0\.1\.0' crates/podnext/src/` now returns **no matches**.
 
-Remaining hardcoded `"0.1.0"` elsewhere (NOT the CLI version command; may surface in API/dashboard):
+Other sites keep the hardcoded `"0.1.0"`. These are NOT the CLI version command. They can surface in the API or dashboard:
 
 ```
 crates/pn-gateway/src/config.rs:29:            version: "0.1.0".to_string(),
@@ -78,16 +78,16 @@ crates/pn-next/src/cluster/mod.rs:448:            version: "0.1.0".to_string(),
 ```
 
 **Conclusion:** the mismatch is a **stale binary**, not a live source hardcode. Source was fixed
-mid-investigation; the release binary was not rebuilt. `cargo build --release` should make
-`version`/`info` print `0.1.7`. **UNVERIFIED** whether rebuild is complete (binary mtime still `02:08`).
+mid-investigation. The release binary was not rebuilt. `cargo build --release` will make
+`version`/`info` print `0.1.7`. **UNVERIFIED** whether rebuild is complete. The binary mtime is still `02:08`.
 
-**EVIDENCE:** `grep -n '0\.1\.0'` / `grep -n 'CARGO_PKG_VERSION' crates/podnext/src/main.rs`; `sed -n` of lines 1853/1889/2221/2231 and native.rs:44–52; `ls -l --time-style=full-iso`; live runs of `version`/`info`/`--version`.
+**EVIDENCE:** `grep -n '0\.1\.0'` / `grep -n 'CARGO_PKG_VERSION' crates/podnext/src/main.rs`. Also `sed -n` of lines 1853/1889/2221/2231 and native.rs:44-52. Also `ls -l --time-style=full-iso`. Also live runs of `version`/`info`/`--version`.
 
 ---
 
-## 2. Full command tree (top-level)
+## 2. Full command tree, top level
 
-`podnext --help` (verbatim, full):
+`podnext --help`, verbatim and full:
 
 ```
 $ ./target/release/podnext --help
@@ -211,7 +211,7 @@ Options:
   -h, --help / -V, --version
 ```
 
-31 subcommands (30 + `help`). Below: usage line + command-specific flags for each.
+31 subcommands: 30 plus `help`. Below is the usage line and the command-specific flags for each.
 The following **GLOBAL block** is repeated verbatim under *every* subcommand and is not re-quoted:
 
 ```
@@ -285,7 +285,7 @@ Options:
   -u, --user <USER>                  User to run as (format: <name|uid>[:<group|gid>])
   -w, --workdir <WORKDIR>            Working directory inside the container
 ```
-NOTE: `-r` is declared twice in `run` (`--rm` and global `--rootfs`) — see section 8.
+NOTE: `-r` is declared twice in `run`, as `--rm` and global `--rootfs`. See section 8.
 
 ### ps
 ```
@@ -333,7 +333,7 @@ Usage: podnext version [OPTIONS]
 Options:
   -f, --format <FORMAT>              [default: table] [possible values: table, json, yaml, text]
 ```
-(Implied — `version --format json` observed; `version` with no args prints text.)
+Implied result: `version --format json` was observed. `version` with no args prints text.
 
 ### sessions
 ```
@@ -363,9 +363,9 @@ Arguments:
 
 ---
 
-## 3. Subcommand families (with their own subcommands)
+## 3. Subcommand families that have their own subcommands
 
-### image — `podnext image [OPTIONS] <COMMAND>`
+### image: `podnext image [OPTIONS] <COMMAND>`
 ```
 Commands:
   pull     Pull an image from a registry
@@ -390,7 +390,7 @@ image inspect Usage: podnext image inspect [OPTIONS] [IMAGES]...    -f, --format
 image ls      Usage: podnext image ls [OPTIONS]   -f,--format; -a,--all
 ```
 
-### service — `podnext service [OPTIONS] <COMMAND>`
+### service: `podnext service [OPTIONS] <COMMAND>`
 ```
 Commands:
   start      Stop/Start/Restart/List/Status/Logs/Enable/Disable/Load/Create
@@ -418,7 +418,7 @@ service load     Usage: podnext service load [OPTIONS] <NAME>      (no own flags
 service create   Usage: podnext service create [OPTIONS] --config <CONFIG> <NAME>   -c, --config <CONFIG>
 ```
 
-### daemon — `podnext daemon [OPTIONS] <COMMAND>`
+### daemon: `podnext daemon [OPTIONS] <COMMAND>`
 ```
 Commands:
   start   Start daemon
@@ -436,7 +436,7 @@ daemon reload  Usage: podnext daemon reload [OPTIONS]    (no own flags)
 daemon logs    Usage: podnext daemon logs [OPTIONS]      -f, --follow ; -l, --lines [default: 100]
 ```
 
-### watchdog — `podnext watchdog [OPTIONS] <COMMAND>`
+### watchdog: `podnext watchdog [OPTIONS] <COMMAND>`
 ```
 Commands:
   status     Show watchdog status
@@ -452,9 +452,9 @@ watchdog setpolicy  Usage: podnext watchdog setpolicy [OPTIONS] <NAME> <POLICY> 
 watchdog reset      Usage: podnext watchdog reset [OPTIONS] <NAME>   (no own flags)
 watchdog events     Usage: podnext watchdog events [OPTIONS]  -l, --limit [default: 50]
 ```
-NOTE: top-level long_about advertises `podnext watchdog policy set ...`; actual subcommand is `setpolicy` (section 8).
+NOTE: top-level long_about advertises `podnext watchdog policy set ...`. The actual subcommand is `setpolicy`, see section 8.
 
-### quota — `podnext quota [OPTIONS] <COMMAND>`
+### quota: `podnext quota [OPTIONS] <COMMAND>`
 ```
 Commands:
   set    Set resource quota
@@ -473,7 +473,7 @@ quota usage  Usage: podnext quota usage [OPTIONS] <NAME>    -f, --format
 quota list   Usage: podnext quota list [OPTIONS]            -f, --format
 ```
 
-### log — `podnext log [OPTIONS] <COMMAND>`
+### log: `podnext log [OPTIONS] <COMMAND>`
 ```
 Commands:
   query  Query logs
@@ -492,7 +492,7 @@ log stats  Usage: podnext log stats [OPTIONS]             -f, --format
 log flush  Usage: podnext log flush [OPTIONS]             (no own flags)
 ```
 
-### dbus — `podnext dbus [OPTIONS] <COMMAND>`
+### dbus: `podnext dbus [OPTIONS] <COMMAND>`
 ```
 Commands:
   list     List D-Bus services
@@ -507,7 +507,7 @@ dbus call     Usage: podnext dbus call [OPTIONS] <BUS> <PATH> <INTERFACE> <METHO
 dbus monitor  Usage: podnext dbus monitor [OPTIONS] <BUS>
 ```
 
-### socket — `podnext socket [OPTIONS] <COMMAND>`
+### socket: `podnext socket [OPTIONS] <COMMAND>`
 ```
 Commands:
   register    Register socket activation
@@ -521,7 +521,7 @@ socket unregister  Usage: podnext socket unregister [OPTIONS] <NAME>
 socket list        Usage: podnext socket list [OPTIONS]   -f, --format
 ```
 
-### boot — `podnext boot [OPTIONS] <COMMAND>`
+### boot: `podnext boot [OPTIONS] <COMMAND>`
 ```
 Commands:
   enable   Enable auto-start at boot
@@ -535,7 +535,7 @@ boot disable  Usage: podnext boot disable [OPTIONS] <NAME>
 boot status   Usage: podnext boot status [OPTIONS]   -f, --format
 ```
 
-### wakelock — `podnext wakelock [OPTIONS] <COMMAND>`
+### wakelock: `podnext wakelock [OPTIONS] <COMMAND>`
 ```
 Commands:
   acquire  Acquire wake lock
@@ -550,7 +550,7 @@ wakelock release  Usage: podnext wakelock release [OPTIONS] <NAME>
 wakelock status   Usage: podnext wakelock status [OPTIONS]   -f, --format
 ```
 
-### policy — `podnext policy [OPTIONS] <COMMAND>`
+### policy: `podnext policy [OPTIONS] <COMMAND>`
 ```
 Commands:
   eval     Evaluate policies for a service
@@ -566,7 +566,7 @@ policy load     Usage: podnext policy load [OPTIONS] --file <FILE>   -f, --file 
 policy presets  Usage: podnext policy presets [OPTIONS]
 ```
 
-### backup — `podnext backup [OPTIONS] <COMMAND>`
+### backup: `podnext backup [OPTIONS] <COMMAND>`
 ```
 Commands:
   create   Create a backup
@@ -588,7 +588,7 @@ backup status   Usage: podnext backup status [OPTIONS] <BACKUP_ID>
 backup config   Usage: podnext backup config [OPTIONS]
 ```
 
-### build — `podnext build [OPTIONS] <COMMAND>`
+### build: `podnext build [OPTIONS] <COMMAND>`
 ```
 Commands: submit / status / cancel / list / artifacts / logs / help
 ```
@@ -601,7 +601,7 @@ build artifacts  Usage: podnext build artifacts [OPTIONS] <BUILD_ID>
 build logs       Usage: podnext build logs [OPTIONS] <BUILD_ID>        -f, --follow
 ```
 
-### gitops — `podnext gitops [OPTIONS] <COMMAND>`
+### gitops: `podnext gitops [OPTIONS] <COMMAND>`
 ```
 Commands: sync / status / resources / drift / reconcile / help
 ```
@@ -613,7 +613,7 @@ gitops drift      Usage: podnext gitops drift [OPTIONS]       -f, --format
 gitops reconcile  Usage: podnext gitops reconcile [OPTIONS] [NAME]
 ```
 
-### dashboard — `podnext dashboard [OPTIONS] <COMMAND>`
+### dashboard: `podnext dashboard [OPTIONS] <COMMAND>`
 ```
 Commands: start / stop / status / help
 ```
@@ -623,7 +623,7 @@ dashboard stop    Usage: podnext dashboard stop [OPTIONS]
 dashboard status  Usage: podnext dashboard status [OPTIONS]
 ```
 
-### network — `podnext network [OPTIONS] <COMMAND>`
+### network: `podnext network [OPTIONS] <COMMAND>`
 ```
 Commands: create / ls / inspect / rm / connect / disconnect / help
 ```
@@ -637,7 +637,7 @@ network connect     Usage: podnext network connect [OPTIONS] <NETWORK> <CONTAINE
 network disconnect  Usage: podnext network disconnect [OPTIONS] <NETWORK> <CONTAINER>
 ```
 
-### volume — `podnext volume [OPTIONS] <COMMAND>`
+### volume: `podnext volume [OPTIONS] <COMMAND>`
 ```
 Commands: create / ls / inspect / rm / prune / help
 ```
@@ -684,7 +684,7 @@ $ ls ~/.podnext/backups | wc -l
 #   12416ccd-5c85-470c-a9f7-6fabed63ad41.tar.gz   (4632579 bytes)
 ```
 
-One real `metadata.json` (`~/.podnext/containers/alpine/metadata.json`):
+One real `metadata.json` at `~/.podnext/containers/alpine/metadata.json`:
 
 ```json
 {
@@ -697,7 +697,7 @@ One real `metadata.json` (`~/.podnext/containers/alpine/metadata.json`):
 }
 ```
 
-Paths defined in `crates/proot-distro-core/src/paths.rs` (`ContainerPaths::new`):
+Paths defined in `crates/proot-distro-core/src/paths.rs`, function `ContainerPaths::new`:
 
 ```
 root_dir      = $HOME
@@ -712,7 +712,7 @@ container_state(name)  = containers_dir/<name>/state.json     (NOT present)
 ```
 
 Network/volume state is NOT under `~/.podnext`. It persists under `~/.config/podnext/`
-(`dirs::config_dir()`), from `proot-distro-core/src/{network,storage}.rs`:
+`dirs::config_dir()` is the base, from `proot-distro-core/src/{network,storage}.rs`:
 
 ```
 $ cat ~/.config/podnext/networks.toml
@@ -742,18 +742,18 @@ driver = "local"
 [persist-vol.options]
 ```
 
-Daemon socket (hardcoded, `crates/podnext/src/commands/mod.rs:53`):
+Daemon socket, hardcoded at `crates/podnext/src/commands/mod.rs:53`:
 `/data/data/com.termux/files/home/.local/run/pn-next/daemon.sock`.
-Supervisor dirs (defaults, `commands/mod.rs:267–273`): services `.config/pn-next/services`,
+Supervisor dirs use defaults at `commands/mod.rs:267–273`: services `.config/pn-next/services`,
 runtime `.local/run/pn-next`, logs `.local/log/pn-next`.
 
 **EVIDENCE:** `ls -la ~/.podnext*`, `find ~/.podnext -maxdepth 2`, `cat ~/.podnext/containers/alpine/metadata.json`, `cat ~/.config/podnext/{networks,volumes}.toml`, `paths.rs`, `commands/mod.rs:53,267–273`.
 
 ---
 
-## 5. Runtime architecture (module map) and real-vs-stub
+## 5. Runtime architecture module map and real-vs-stub
 
-Source tree (crate → files, observed via `find`):
+Source tree, crate to files, observed via `find`:
 
 | capability | implementing file(s) | status |
 |---|---|---|
@@ -775,16 +775,16 @@ Source tree (crate → files, observed via `find`):
 | gitops | `crates/pn-next/src/gitops/mod.rs` | **CLI entirely stub** |
 | multi-arch build | `crates/pn-next/src/multiarch_build/mod.rs` | **CLI entirely stub** |
 
-`grep -rn "todo!\|unimplemented!" crates/` → **no matches** (no panic-stubs; gaps are silent
-print-stubs / in-memory managers).
+`grep -rn "todo!\|unimplemented!" crates/` → **no matches**, no panic-stubs. The gaps are silent
+print-stubs / in-memory managers.
 
 ### CLI handler dispatch
-`crates/podnext/src/main.rs:1514–1596` (`execute_command`), families in
+`crates/podnext/src/main.rs:1514–1596` holds `execute_command`, families in
 `crates/podnext/src/commands/mod.rs`. `execute_*_command` functions:
 service:97, daemon:584, watchdog:650, quota:757, log:967, dbus:1115, socket:1188, boot:1220,
 wakelock:1284, policy:1363, backup:1439, build:1618, gitops:1677, dashboard:1732.
 
-### STUBS (handlers that only print / are no-ops) — observed in `commands/mod.rs`
+### STUBS, handlers that only print or are no-ops, observed in `commands/mod.rs`
 
 | command | line | evidence |
 |---|---|---|
@@ -806,31 +806,31 @@ wakelock:1284, policy:1363, backup:1439, build:1618, gitops:1677, dashboard:1732
 | `dashboard stop` | 1759–1763 | prints `(Dashboard stop not yet implemented)` |
 | `dashboard status` | 1765–1768 | prints `(Dashboard status not yet implemented)` |
 
-### In-memory / non-persistent managers (functional but ephemeral across invocations)
+### In-memory / non-persistent managers, functional but ephemeral across invocations
 `watchdog`, `quota`, `wakelock`, `policy list`, `dbus list`, `log query/stats` each construct a
-**fresh** manager per CLI invocation (`X::new(XConfig::default())`), so writes in one invocation do
+**fresh** manager per CLI invocation, `X::new(XConfig::default())`, so writes in one invocation do
 not survive to the next except where the module writes files. Modules that DO persist to disk:
-`termux_boot` (boot scripts), `resource_quota`/`supervisor` (cgroup files, only when a supervisor
-run holds them), `structured_logging` (`pdn.log`), `dbus/mod.rs` (`dbus.sock`), `network`/`storage`
-(TOML), `backup` (tar.gz).
+`termux_boot` writes boot scripts. `resource_quota`/`supervisor` write cgroup files, only when a supervisor
+run holds them. `structured_logging` writes `pdn.log`, `dbus/mod.rs` writes `dbus.sock`, `network`/`storage`
+write TOML, `backup` writes tar.gz.
 
 Observed: `quota get demo` returns **default** values even though `demo` was never set
-(`ResourceQuotas::default`, `crates/pn-next/src/resource_quota/mod.rs:81–99`: cpu 100, mem 512MB,
-swap 1GB, pids 100, nofile 1024). `watchdog status` and `dbus list` return empty tables.
+`ResourceQuotas::default`, `crates/pn-next/src/resource_quota/mod.rs:81–99`: cpu 100, mem 512MB,
+swap 1GB, pids 100, nofile 1024. `watchdog status` and `dbus list` return empty tables.
 
-**EVIDENCE:** `find crates/*/src -type f`; `grep -rn 'todo!\|unimplemented!'` (empty); `grep -n "execute_\|fn cmd_" commands/mod.rs`; verbatim reads of `commands/mod.rs:97–284,584–740,757–876,967–1062,1115–1220,1284–1435,1439–1614,1618–1768`; live `quota get demo`, `watchdog status`, `dbus list`, `policy presets`, `backup config`.
+**EVIDENCE:** `find crates/*/src -type f`. Also `grep -rn 'todo!\|unimplemented!'`, empty. Also `grep -n "execute_\|fn cmd_" commands/mod.rs`. Also verbatim reads of `commands/mod.rs:97–284,584–740,757–876,967–1062,1115–1220,1284–1435,1439–1614,1618–1768`. Also live `quota get demo`, `watchdog status`, `dbus list`, `policy presets`, `backup config`.
 
 ---
 
-## 6. proot invocation (`crates/proot-core/src/lib.rs`)
+## 6. proot invocation, `crates/proot-core/src/lib.rs`
 
-The engine shells out to the **system `proot` binary** (`PROOT_BIN` env, default `"proot"`),
-version comment targets `proot 5.1.107.101`. Two build paths: `start()` (daemon, no shell wrap)
-and `execute()` (foreground, `/bin/sh -c` wrapped). `proot-distro-core/src/container.rs:10`
+The engine shells out to the **system `proot` binary**, via the `PROOT_BIN` env, default `"proot"`,
+version comment targets `proot 5.1.107.101`. Two build paths: `start()` for a daemon, no shell wrap
+and `execute()` for a foreground process, `/bin/sh -c` wrapped. `proot-distro-core/src/container.rs:10`
 imports `proot_core::{ProotConfig, ProotEngine}` and `container.rs:80–88` constructs the engine,
 so `execute()` is the runtime path used by the CLI.
 
-Flags passed, in order (`execute()`, `lib.rs:217–276`):
+Flags passed, in order, in `execute()`, `lib.rs:217–276`:
 
 ```
 proot
@@ -857,100 +857,100 @@ proot
   /bin/sh -c "<command joined by spaces>"          lib.rs:272–276
 ```
 
-`start()` (`lib.rs:139–214`) passes the command **directly** (no `/bin/sh -c`): `cmd.arg(&command[0])` + args (`lib.rs:191–194`).
+`start()` `lib.rs:139–214` passes the command **directly**, no `/bin/sh -c`: `cmd.arg(&command[0])` + args `lib.rs:191–194`.
 
-Confirmed as required: `--rootfs=.` with `current_dir(rootfs)` ✔; `--kill-on-exit` ✔;
-`--link2symlink` ✔; `--sysvipc` ✔; `-L` ✔; `--bind=/dev,/proc,/sys` ✔;
-`add_android_system_binds` list ✔; `/bin/sh -c` wrapping (in `execute()`) ✔.
+Confirmed as required: `--rootfs=.` with `current_dir(rootfs)` ✔. `--kill-on-exit` ✔.
+`--link2symlink` ✔. `--sysvipc` ✔. `-L` ✔. `--bind=/dev,/proc,/sys` ✔.
+`add_android_system_binds` list ✔. `/bin/sh -c` wrapping, in `execute()` ✔.
 
-**EVIDENCE:** `read_file crates/proot-core/src/lib.rs` lines 55–358; `grep -n proot|--rootfs|... lib.rs`; `proot-distro-core/src/container.rs:10,80–88`.
+**EVIDENCE:** `read_file crates/proot-core/src/lib.rs` lines 55-358. `grep -n proot|--rootfs|... lib.rs`. `proot-distro-core/src/container.rs:10,80–88`.
 
 ---
 
-## 7. Backup implementation (`crates/pn-next/src/backup_restore/mod.rs`)
+## 7. Backup implementation, `crates/pn-next/src/backup_restore/mod.rs`
 
-Config defaults (`BackupConfig::default`, `mod.rs:72–115`):
-backup_dir `~/.podnext/backups` (`PDN_BACKUP_DIR` override), containers_dir `~/.podnext/containers`
-(`PDN_CONTAINERS_DIR` override), `max_backups_per_container: 10`, `max_total_size: 50 GiB`,
+Config defaults, `BackupConfig::default`, `mod.rs:72–115`:
+backup_dir `~/.podnext/backups`, `PDN_BACKUP_DIR` override. containers_dir `~/.podnext/containers`,
+`PDN_CONTAINERS_DIR` override. `max_backups_per_container: 10`, `max_total_size: 50 GiB`,
 `schedule_interval_secs: 3600`, `compression_level: 6`, `include_volumes: true`, `include_config: true`,
 `include_logs: false`, `encryption_enabled: false`.
 
-What is copied (`run_backup`, `mod.rs:518–653`):
-- **rootfs only if `include_volumes`** → copies `containers_dir/<container_id>/rootfs` (`mod.rs:563–576`).
-- container config if `include_config` (`mod.rs:579–582`) — but `backup_container_config` returns
-  `ContainerConfigSnapshot::default()` (**stub**, `mod.rs:762–767`).
-- logs if `include_logs` (`mod.rs:585–588`) — but `backup_logs` returns an empty snapshot
-  (**stub**, `mod.rs:769–775`).
+What is copied, `run_backup`, `mod.rs:518–653`:
+- **rootfs only if `include_volumes`** → copies `containers_dir/<container_id>/rootfs`, `mod.rs:563–576`.
+- container config if `include_config`, `mod.rs:579–582`, but `backup_container_config` returns
+  `ContainerConfigSnapshot::default()`, **stub**, `mod.rs:762–767`.
+- logs if `include_logs`, `mod.rs:585–588`, but `backup_logs` returns an empty snapshot
+  **stub**, `mod.rs:769–775`.
 
-Excluded directories (`backup_directory`, `mod.rs:676–760`): when walking, any directory whose
-`file_name()` matches `"proc" | "sys" | "dev"` is skipped (`mod.rs:736–738`). Symlinks preserved
-(`mod.rs:743–745`), regular files copied (`mod.rs:746–751`), other special files skipped (`mod.rs:752–754`).
-Per-file manifest entries record path,size,mode,uid,gid,mtime,SHA-256 checksum,file_type (`mod.rs:709–728`).
+Excluded directories, `backup_directory`, `mod.rs:676–760`. In the walk, any directory whose
+`file_name()` matches `"proc" | "sys" | "dev"` is skipped, `mod.rs:736–738`. Symlinks preserved
+`mod.rs:743–745`, regular files copied `mod.rs:746–751`, other special files skipped `mod.rs:752–754`.
+Per-file manifest entries record path,size,mode,uid,gid,mtime,SHA-256 checksum,file_type, `mod.rs:709–728`.
 
-Archive format (`create_archive`, `mod.rs:777–845`): **`.tar.gz`** — `flate2::write::GzEncoder`
-(level = `compression_level` 6) + `tar::Builder`, walking with `walkdir::WalkDir`; unreadable files
-are skipped (`mod.rs:818–828`). Checksum = SHA-256 of the final archive (`mod.rs:847–853`).
+Archive format, `create_archive`, `mod.rs:777–845`: **`.tar.gz`**, `flate2::write::GzEncoder`
+at level `compression_level` 6 plus `tar::Builder`, a walk with `walkdir::WalkDir`. Unreadable files
+are skipped, `mod.rs:818–828`. Checksum = SHA-256 of the final archive, `mod.rs:847–853`.
 
-Layout written (`mod.rs:544–608`): temp dir `backup_dir/<uuid>/` with `manifest.json`
-(`BackupManifest`, written at `mod.rs:595–596`) + `rootfs/`, then archive `backup_dir/<uuid>.tar.gz`;
-temp dir removed (`mod.rs:608`). Matches disk sample (37 entries of `<uuid>/` + `<uuid>.tar.gz`).
+Layout written, `mod.rs:544–608`: temp dir `backup_dir/<uuid>/` with `manifest.json`
+`BackupManifest`, written at `mod.rs:595–596`, plus `rootfs/`, then archive `backup_dir/<uuid>.tar.gz`.
+temp dir removed, `mod.rs:608`. Matches disk sample, 37 entries of `<uuid>/` + `<uuid>.tar.gz`.
 
-Manifest fields (`BackupManifest`, `mod.rs:216–224`): `files: Vec<ManifestEntry>`, `total_files`,
+Manifest fields, `BackupManifest`, `mod.rs:216–224`: `files: Vec<ManifestEntry>`, `total_files`,
 `total_size`, `volumes: Vec<VolumeInfo>`, `config: Option<ContainerConfigSnapshot>`,
-`logs: Option<LogsSnapshot>`. `ManifestEntry` (`mod.rs:226–236`): `path,size,mode,uid,gid,mtime,checksum,file_type`.
-Metadata (`BackupMetadata`, `mod.rs:175–192`): `id,name,container_id,container_name,backup_type,status,
+`logs: Option<LogsSnapshot>`. `ManifestEntry`, `mod.rs:226–236`: `path,size,mode,uid,gid,mtime,checksum,file_type`.
+Metadata, `BackupMetadata`, `mod.rs:175–192`: `id,name,container_id,container_name,backup_type,status,
 created_at,completed_at,size_bytes,compressed_size,checksum,manifest,labels,annotations,error_message`.
 
-Restore stubs: `restore_backup` unpacks the tar (`mod.rs:904–925`) but `restore_container` returns a
-random UUID without creating anything (**stub**, `mod.rs:950–959`). `load_backups` is a no-op
-(**stub**, `mod.rs:1129–1149` — "Simplified - would load actual metadata files"), so `backup list`
-on a fresh process sees nothing. `start_scheduled_backups` just logs a tick (**stub**,
-`mod.rs:1002–1017`). `get_container_info` hardcodes `image: "alpine"` (**stub**, `mod.rs:655–674`).
-`cmd_backup_create` passes `container` for both id and name (`commands/mod.rs:1485`).
+Restore stubs: `restore_backup` unpacks the tar, `mod.rs:904–925`, but `restore_container` returns a
+random UUID and creates nothing, **stub**, `mod.rs:950–959`. `load_backups` is a no-op
+**stub**, `mod.rs:1129–1149`, a simplified version that plans to load the actual metadata files, so `backup list`
+on a fresh process sees nothing. `start_scheduled_backups` just logs a tick, **stub**,
+`mod.rs:1002–1017`. `get_container_info` hardcodes `image: "alpine"`, **stub**, `mod.rs:655–674`.
+`cmd_backup_create` passes `container` for both id and name, `commands/mod.rs:1485`.
 
-**EVIDENCE:** `read_file crates/pn-next/src/backup_restore/mod.rs` (full, lines 1–1231); `ls ~/.podnext/backups`.
+**EVIDENCE:** `read_file crates/pn-next/src/backup_restore/mod.rs`, full, lines 1-1231. `ls ~/.podnext/backups`.
 
 ---
 
-## 8. Known gaps (observed in code / CLI)
+## 8. Known gaps, observed in code / CLI
 
-1. **Stale version binary** — release binary (`02:08`) prints `podnext 0.1.0` / info `0.1.0`
-   while `--version` prints `0.1.7`. Source fixed mid-session (mtimes `02:41`/`02:45`); needs
+1. **Stale version binary**, release binary `02:08` prints `podnext 0.1.0` / info `0.1.0`
+   while `--version` prints `0.1.7`. Source fixed mid-session, mtimes `02:41`/`02:45`. It needs
    `cargo build --release`. See section 1/section 1a.
-2. **`-r` short-flag collision in `run`** — `run --help` lists both `-r, --rm` and `-r, --rootfs`.
-   Potential clap conflict (section 2). **UNVERIFIED** whether it constructs the expected arg.
-3. **Help text ≠ real command tree** — top-level long_about advertises `podnext watchdog policy set …`
-   but the real subcommand is `watchdog setpolicy` (section 3). long_about examples are not validated against Clap.
-4. **`list` misreports distro/version** — every container shows `DISTRO=ubuntu VERSION=22.04`
-   (including `alpine`, whose `metadata.json` says `image: "alpine", tag: "latest"`):
+2. **`-r` short-flag collision in `run`**, `run --help` lists both `-r, --rm` and `-r, --rootfs`.
+   Potential clap conflict, section 2. **UNVERIFIED** whether it constructs the expected arg.
+3. **Help text ≠ real command tree**, top-level long_about advertises `podnext watchdog policy set ...`
+   but the real subcommand is `watchdog setpolicy`, section 3. long_about examples are not validated against Clap.
+4. **`list` misreports distro/version**, every container shows `DISTRO=ubuntu VERSION=22.04`
+   This includes `alpine`, whose `metadata.json` says `image: "alpine", tag: "latest"`:
    ```
    | NAME             | DISTRO | VERSION | ARCH    | STATUS  | CREATED          |
    | pdn-bench        | ubuntu | 22.04   | aarch64 | Stopped | 2026-11-02 19:41 |
    | test-alpine      | ubuntu | 22.04   | aarch64 | Stopped | 2026-11-02 19:41 |
    | alpine           | ubuntu | 22.04   | aarch64 | Stopped | 2026-11-02 19:41 |
    ```
-5. **Volume mountpoint hardcoded unwritable path** — `proot-distro-core/src/storage.rs:93,107`
-   sets `mountpoint = /var/lib/podnext/volumes/<name>`; `ls -ld /var/lib/podnext` →
-   `No such file or directory` (Android/Termux has no `/var/lib`, no root). `volume ls` prints it anyway.
-6. **Non-persistent CLI state** — `quota`/`watchdog`/`wakelock`/`policy`/`dbus`/`log` construct a
-   fresh manager per invocation; `quota set` then `quota get` do not round-trip. `quota get` shows
-   defaults regardless (section 5).
-7. **`ContainerPaths` defines dirs that are never created** — `images/`, `cache/`, `logs/`,
-   `config/` under `~/.podnext` are absent; container config path is `config.json`/`state.json`
-   in code but the on-disk file is `metadata.json` (section 4).
-8. **Debug logging always on** — every command prints `DEBUG main: Executing command: …` and
-   `DEBUG execute_command: START …`; backup prints extensive `DEBUG:` lines to stderr
-   (observed in all live runs; non-toggleable via `-v`).
-9. **Stub commands** — build (all 6), gitops (all 5), dashboard start/stop/status, daemon stop/reload/logs/status,
-   log tail, dbus call/monitor, policy eval/load, socket unregister/list; backup restore does not
-   recreate a container (section 5, section 7).
+5. **Volume mountpoint hardcoded unwritable path**, `proot-distro-core/src/storage.rs:93,107`
+   sets `mountpoint = /var/lib/podnext/volumes/<name>`. `ls -ld /var/lib/podnext` gives
+   `No such file or directory`, Android/Termux has no `/var/lib`, no root. `volume ls` prints it anyway.
+6. **Non-persistent CLI state**, `quota`/`watchdog`/`wakelock`/`policy`/`dbus`/`log` construct a
+   fresh manager per invocation. `quota set` then `quota get` do not round-trip. `quota get` shows
+   defaults regardless, section 5.
+7. **`ContainerPaths` defines dirs that are never created**, `images/`, `cache/`, `logs/`,
+   `config/` under `~/.podnext` are absent. Container config path is `config.json`/`state.json`
+   in code but the on-disk file is `metadata.json`, section 4.
+8. **Debug logging always on**, every command prints `DEBUG main: Executing command: ...` and
+   `DEBUG execute_command: START ...`. Backup prints extensive `DEBUG:` lines to stderr
+   observed in all live runs, non-toggleable via `-v`.
+9. **Stub commands**, build all 6, gitops all 5, dashboard start/stop/status, daemon stop/reload/logs/status,
+   log tail, dbus call/monitor, policy eval/load, socket unregister/list. Backup restore does not
+   recreate a container, section 5, section 7.
 
-**EVIDENCE:** live runs of `list`, `quota get demo`, `backup config`, `version`, `info`;
-`ls -ld /var/lib/podnext`; `proot-distro-core/src/storage.rs:93,107`; `paths.rs`;
-`commands/mod.rs` line refs in section 5; main.rs `--help` long_about vs `watchdog --help`.
+**EVIDENCE:** live runs of `list`, `quota get demo`, `backup config`, `version`, `info`.
+`ls -ld /var/lib/podnext`. `proot-distro-core/src/storage.rs:93,107`. `paths.rs`.
+`commands/mod.rs` line refs in section 5. main.rs `--help` long_about vs `watchdog --help`.
 
 ---
 
 *Generated by read-only inspection. Source files under `crates/podnext/src` were edited
-concurrently by another process during this run (mtimes 02:41 / 02:45) — line contents for
-section 1a reflect the state at the cited timestamps; the shipped binary predates them.*
+concurrently by another process during this run, mtimes 02:41 / 02:45. Line contents for
+section 1a reflect the state at the cited timestamps. The shipped binary predates them.*

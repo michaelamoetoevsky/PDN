@@ -1,27 +1,17 @@
 # The image store and the push mechanism: what PDN has, what it is missing, and how the reference implementation does it
 
-Status: analysis, no code changed. Related: #37 (lookup wall), and the issue filed from this document for
-the layer wall. Measured on this device (Termux Android 16, aarch64) against `master` `effbfc1`.
+Status: analysis. No code changed. Related: #37, the lookup wall. This document also files the issue for the layer wall. Measured on Termux Android 16 aarch64 against `master` `effbfc1` on this device.
 
 ---
 
 ## 1. Why this document exists
 
-`podnext image push <ref>` fails for every image, and it fails for two independent reasons that look
-like one:
+`podnext image push <ref>` fails for every image. It fails for two independent reasons that look like one cause.
 
-1. **The lookup wall.** `cmd_image_push` constructs `proot_distro_core::ImageManager::new()`, which
-   builds an empty `HashMap` and never loads anything from disk
-   (`crates/proot-distro-core/src/image.rs:27`). The `images.get(...)` inside `ImageManager::push`
-   therefore always misses, before any network call is made.
-2. **The layer wall.** Even with the lookup fixed, the store holds no layer blobs at all. The crate
-   says so itself in `image.rs`: `push` refuses early with *"PDN does not retain layer blobs after
-   extraction"*, and a locally built image has no `layers` field anywhere — `metadata.json` for
-   `alpine`, `deb-pdn` and `deb-renamed` was checked and has no layer key of any kind.
+1. **The lookup wall.** `cmd_image_push` constructs `proot_distro_core::ImageManager::new()`. That call builds an empty `HashMap` and never loads data from disk. See `crates/proot-distro-core/src/image.rs:27`. The `images.get(...)` call inside `ImageManager::push` always misses, before any network call.
+2. **The layer wall.** The store holds no layer blobs at all, even after the lookup is fixed. The crate says this in `image.rs`. The `push` function refuses early with *"PDN does not retain layer blobs after extraction"*. Also, a locally built image has no `layers` field in any place. `metadata.json` for `alpine`, `deb-pdn` and `deb-renamed` has no layer key of any kind.
 
-Wall 1 is a bug. Wall 2 is a design decision that was never made explicitly, and the two are
-routinely confused because both surface as "Image 'x' not found locally". This document separates
-them, prices both, and records how the implementation PDN is modelled on solves the same problem.
+Wall 1 is a bug. Wall 2 is a design decision that was never made explicitly. People confuse the two walls because both surface as "Image 'x' not found locally". This document separates them, prices both, and records how the reference implementation solves the same problem.
 
 ---
 
@@ -35,11 +25,9 @@ them, prices both, and records how the implementation PDN is modelled on solves 
 | `image ls` already reads this store | `cmd_image_ls` lists `ContainerManager`, not `ImageManager` |
 | Layer blobs are discarded after extraction | `image.rs` refusal message; no blob cache exists under `~/.podnext/` |
 
-Consequence: everything that treats an image as *OCI artifacts* (manifest, config, layers) has
-nothing to work with, and `push` — which is nothing but "ship those artifacts" — cannot be made to
-work by fixing the lookup alone.
+Consequence: software that treats an image as *OCI artifacts* has nothing to work with. These artifacts are the manifest, the config and the layers. `push` only ships these artifacts. A repair of the lookup alone cannot make `push` work.
 
-Measured costs that follow from this model (this device):
+Measured costs that follow from this model on this device:
 
 ```
 image ls            median 28.6 ms   (10 containers, 7 with metadata.json)
@@ -53,9 +41,7 @@ tar+gzip             62 ms for 9.1 MB  ⇒ ≈2.1 s for a 307 MB rootfs
 
 ## 3. The reference: Termux `proot-distro`'s image infrastructure
 
-The version installed here
-(`$PREFIX/lib/python3.14/site-packages/proot_distro/`, 77 modules, 2.7 MB) is a Python implementation
-with a complete registry-facing image layer. Structure, by module:
+The version installed here is at `$PREFIX/lib/python3.14/site-packages/proot_distro/`. It has 77 modules and 2.7 MB. It is a Python implementation with a complete registry-facing image layer. The structure follows, by module:
 
 ### 3.1 Storage layout
 
@@ -69,41 +55,23 @@ LAYER_CACHE_DIR        = BASE_CACHE_DIR/oci_layers
 MANIFEST_CACHE_DIR     = BASE_CACHE_DIR/oci_manifests
 ```
 
-`helpers/docker/cache.py` documents the blob layout: **one file per blob, named for the digest of its
-content** (`oci_layers/<digest with ':' replaced by '_'>`), and a digest-to-path mapper that validates
-the digest grammar first so a crafted digest cannot escape the cache directory. That last detail is a
-security boundary of exactly the kind PDN hit in `#16`/`#37`: an untrusted string becoming a path.
+`helpers/docker/cache.py` documents the blob layout. The layout is **one file per blob, named for the digest of its content**, in `oci_layers/<digest with ':' replaced by '_'>`, plus a digest-to-path mapper. That mapper validates the digest grammar first, so a crafted digest cannot escape the cache directory. That last point is a security boundary. PDN hit the same class of boundary in `#16`/`#37`: an untrusted string becomes a path.
 
-The decisive inversion, and the answer to "why would you push an image you already have":
+The decisive inversion answers a key question. Why push an image that is already here?
 
-> the container rootfs is **derived state**. The image is the manifest + config + layer blobs, held
-> digest-addressed in the cache. `apply_layer` (`helpers/docker/layers.py`) turns layers into the
-> rootfs; nothing is ever "pushed" from the rootfs.
+> The container rootfs is **derived state**. The image is the manifest + config + layer blobs, held digest-addressed in the cache. `apply_layer` in `helpers/docker/layers.py` turns layers into the rootfs. Nothing is ever "pushed" from the rootfs.
 
 ### 3.2 Build: one layer per instruction, by filesystem diff
 
-`helpers/layer_diff.py` (771 lines) provides `snapshot` (fingerprint every entry under a rootfs),
-`diff_snapshots` (added / modified / deleted), `_whiteout_paths` (deleted paths → OCI whiteout
-entries), and `write_layer_tar` (gzipped OCI layer). `helpers/build_engine/engine.py` calls the diff
-after each dispatched instruction and records a history entry whose `empty_layer` flag is set from
-whether the handler actually grew `stage.layers` — the OCI image-config spec requires the count of
-non-empty-layer history entries to equal the number of layers, and the comment in the engine notes
-that getting this wrong "makes built layers invisible".
+`helpers/layer_diff.py` has 771 lines. It provides `snapshot`, which fingerprints every entry under a rootfs. It provides `diff_snapshots`, which lists added, modified and deleted entries. It provides `_whiteout_paths`, which turns deleted paths into OCI whiteout entries. It provides `write_layer_tar`, which writes a gzipped OCI layer. `helpers/build_engine/engine.py` calls the diff after each dispatched instruction. It records a history entry whose `empty_layer` flag is set from the growth of `stage.layers`. The OCI image-config spec requires the count of non-empty-layer history entries to equal the number of layers. The comment in the engine notes that an error here "makes built layers invisible".
 
-Multi-stage is supported: `helpers/build_engine/stage.py` gives each stage its own directory and its
-own scopes for `ENV`/`ARG`/`WORKDIR`/`USER`/`SHELL`, with `COPY --from=<stage>` resolved through the
-stage's descriptors rather than through host paths.
+Multi-stage builds are supported. `helpers/build_engine/stage.py` gives each stage its own directory and its own scopes for `ENV`/`ARG`/`WORKDIR`/`USER`/`SHELL`. `COPY --from=<stage>` resolves through the stage's descriptors, not through host paths.
 
-`helpers/oci_writer.py` assembles the blobs: `build_manifest_and_config` (manifest + config, config
-`history` taken from the engine), `canonical_json` (sorted keys, no whitespace — so the digest is
-reproducible), and `store_in_cache`, whose docstring states the goal plainly: a **built** image is
-written through the same `save_manifest_cache` path as a **pulled** one, "same cache key, same
-payload shape", so a later `install` is indistinguishable and works offline.
+`helpers/oci_writer.py` assembles the blobs. `build_manifest_and_config` makes the manifest and the config, with the config `history` taken from the engine. `canonical_json` sorts the keys and removes all whitespace, so the digest is reproducible. `store_in_cache` has a docstring that states the goal plainly. A **built** image is written through the same `save_manifest_cache` path as a **pulled** one, with "same cache key, same payload shape". A later `install` is identical and works offline.
 
 ### 3.3 Push: Docker Registry v2, blob-by-blob
 
-`helpers/docker/push.py` (516 lines) implements the transfer. `push_image` is documented as "push a
-built image (resolved from the manifest cache) to its registry", and its step order is:
+`helpers/docker/push.py` has 516 lines and implements the transfer. `push_image` is documented as "push a built image, resolved from the manifest cache, to its registry". The step order is:
 
 ```
 parse_tag_reference → load_manifest_cache → manifest_layers
@@ -114,7 +82,7 @@ parse_tag_reference → load_manifest_cache → manifest_layers
    → _put_manifest (PUT /v2/<repo>/manifests/<tag|digest>)
 ```
 
-Supporting machinery, all present and named for the failure it handles:
+The support machinery is all present. Each part is named for the failure it handles:
 
 | Concern | Mechanism |
 |---|---|
@@ -129,12 +97,7 @@ Supporting machinery, all present and named for the failure it handles:
 
 ### 3.4 The mirror-image path
 
-`helpers/docker/pull.py` (708 lines) is the same protocol in reverse (blobs into `LAYER_CACHE_DIR`,
-then applied). `commands/install_local.py` additionally accepts a **local archive**, auto-detecting
-two formats — a raw rootfs tarball and an **OCI image layout** (`oci-layout` marker present) — and
-hashes blobs against the digest the archive names them by. Its comments are explicit that an archive
-is a stranger's input: bounded reads and a ceiling on declared members, because neither the archive
-size nor its own claims are trusted.
+`helpers/docker/pull.py` has 708 lines. It is the same protocol in reverse, with blobs placed into `LAYER_CACHE_DIR` and then applied. `commands/install_local.py` also accepts a **local archive** and detects two formats. The formats are a raw rootfs tarball and an **OCI image layout** with the `oci-layout` marker. It hashes blobs against the digest that the archive names them by. Its comments are explicit that an archive is a stranger's input. It uses bounded reads and a ceiling on declared members, because it trusts neither the archive size nor the archive claims.
 
 ---
 
@@ -148,33 +111,20 @@ Three coherent futures, with the cost this device measured:
 | **B — keep the rootfs, tar the rootfs at push time** | ≈0.35 s raw / ≈2.1 s gzip per 307 MB, paid once per push, on the image that exists | `push` works with a single-layer image | No build history; one giant layer; a registry sees a 307 MB blob it must store whole; `pull` on the other side gets one layer |
 | **C — store OCI artifacts (manifest + config + layers), derive the rootfs** | +0.1–0.25 s per build for the diff/snapshot work (measured rootfs walk band), plus compressed layer storage | Everything in section 3: real push, real pull, offline install from a layout archive, `image ls`/`inspect` with digests, reproducible manifests | The largest change: `build local`, `install`, the container layout and `#29`'s "the container directory is the image" all move |
 
-Option C is what the reference implementation does, and it is the only one under which the words
-"push" and "pull" mean what they mean everywhere else. Option B is a defensible intermediate if the
-only goal is "get this rootfs to another machine once". Option A is what the code does today, minus
-the false promise: `image push` currently exists, prints "Pushing image: …", and cannot succeed.
+Option C is what the reference implementation does. It is the only one under which the words "push" and "pull" mean what they mean everywhere else. Option B is a defensible intermediate if the only goal is "get this rootfs to another machine once". Option A is what the code does today, minus the false promise. `image push` exists now, prints "Pushing image: ...", and cannot succeed.
 
-Note what is *not* on the table: fixing only the lookup (wall 1) and leaving the store without
-layers. That is the state that produced `#17`, where `push` uploaded a manifest describing blobs that
-were never sent — a failure that only appears later, on someone else's `docker pull`.
+Note what is *not* on the table. One repair fixes only the lookup, wall 1, and leaves the store without layers. That state produced `#17`, where `push` uploaded a manifest that describes blobs which were never sent. That failure appears only later, on someone else's `docker pull`.
 
 ---
 
 ## 5. Licence and independence
 
-Termux `proot-distro` is **GPL-3.0** (`__init__.py` header: "either version 3 of the License").
-PDN declares **GPL-2.0-or-later** in `Cargo.toml` and in `README.md`, and is a Rust reimplementation.
+Termux `proot-distro` is **GPL-3.0**. Its `__init__.py` header says "either version 3 of the License". PDN declares **GPL-2.0-or-later** in `Cargo.toml` and in `README.md`, and is a Rust reimplementation.
 
 Two consequences recorded here because they bound any follow-up work:
 
-1. **This document describes architecture, not code.** Module names, function names and protocol
-   behaviour are referenced so the designs can be compared; no implementation may be transcribed
-   across the licence boundary, and GPL-3.0-only terms are not compatible with GPL-2.0-only. Any PDN
-   implementation of section 3 must be written independently from the OCI/Docker specifications.
-2. **The repository's own licence metadata disagrees with itself**, found while checking this:
-   `Cargo.toml:19` says `license = "GPL-2.0-or-later"`, `README.md` says GPL-2.0-or-later, and the
-   `LICENSE` file (34 lines) contains the **Apache-2.0** text ("Copyright 2026 PDN Contributors",
-   "Apache License"). One of the three is wrong, and this is exactly the kind of thing that has to be
-   settled before anyone reasons about what may be taken from where.
+1. **This document describes architecture, not code.** The text references module names, function names and protocol behaviour, so the designs can be compared. No implementation can cross the licence boundary. GPL-3.0-only terms are not compatible with GPL-2.0-only. Any PDN implementation of section 3 must be written independently from the OCI/Docker specifications.
+2. **The repository's own licence metadata disagrees with itself.** This mismatch was found while this document was checked. `Cargo.toml:19` says `license = "GPL-2.0-or-later"`. `README.md` says GPL-2.0-or-later. The `LICENSE` file has 34 lines and contains the **Apache-2.0** text, "Copyright 2026 PDN Contributors", "Apache License". One of the three is wrong. People must settle this point before they reason about what can be taken from where.
 
 ---
 

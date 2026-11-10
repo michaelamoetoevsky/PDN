@@ -1,6 +1,6 @@
 # Migration Guide: From PRoot-distro to PDN
 
-This guide helps you migrate from the traditional `proot-distro` shell scripts to PDN (PRoot Distro Next).
+This guide helps you migrate from the traditional `proot-distro` shell scripts to PDN, also known as PRoot Distro Next.
 
 ## Why Migrate?
 
@@ -33,7 +33,7 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 | `proot-distro backup ubuntu` | `podnext backup create ubuntu` | Full tar.gz container snapshot |
 | `proot-distro restore <file>` | `podnext backup restore <id>` | Restore snapshot to new container |
 
-### File Operations (Host <-> Container)
+### File Operations Host to Container
 
 | PRoot-distro | PDN | Notes |
 |--------------|-----|-------|
@@ -101,7 +101,7 @@ This guide helps you migrate from the traditional `proot-distro` shell scripts t
 
 ### Container Config Comparison
 
-**PRoot-distro (shell variables in distro definition):**
+**PRoot-distro shell variables in the distro definition:**
 
 ```bash
 # ~/.termux/proot-distro/distros/ubuntu.sh
@@ -111,7 +111,7 @@ TARBALL_URL["aarch64"]="https://..."
 TARBALL_SHA256["aarch64"]="..."
 ```
 
-**PDN (TOML configuration):**
+**PDN TOML configuration:**
 
 ```toml
 # not-pdn-config: the previous pn-next schema, shown as the "before" of the
@@ -168,14 +168,14 @@ podnext run ubuntu-new -b ~/.termux/proot-distro/installed/ubuntu:/mnt/old -- \
 
 ### Migrating Bind Mounts
 
-**PRoot-distro (in `~/.termux/proot-distro/installed/ubuntu/etc/proot-distro/binds`):**
+**PRoot-distro bind file at `~/.termux/proot-distro/installed/ubuntu/etc/proot-distro/binds`:**
 
 ```
 /sdcard:/sdcard
 /data/data/com.termux/files/home:/home/termux
 ```
 
-**PDN (in container TOML or CLI flags):**
+**PDN, in the container TOML or in CLI flags:**
 
 ```bash
 # Via CLI
@@ -270,7 +270,7 @@ podnext run ubuntu -v /dev/dri:/dev/dri -- glxinfo | grep "OpenGL renderer"
 
 ## Troubleshooting Migration Issues
 
-### Issue: Container won't start
+### Issue: Container does not start
 
 **Check:** Security profile compatibility
 
@@ -315,7 +315,7 @@ podnext run ubuntu -- cmd
 
 If migration fails, you can always fall back to `proot-distro`:
 
-1. PDN doesn't modify `proot-distro` installations
+1. PDN does not modify `proot-distro` installations
 2. Both can coexist
 3. Use `proot-distro` commands as before
 

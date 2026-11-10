@@ -1,22 +1,22 @@
-# PR #26 — Red-Check Forensics
+# PR #26 Red-Check Forensics
 
-**Verdict: all three claims hold. Nothing in PR #26's diff can produce either red check; both are repo-side.**
+**Verdict: all three claims hold. Nothing in PR #26's diff can produce either red check. Both red checks are repo-side.**
 
 - Repo: `michaelamoetoevsky/PDN`
-- PR: [#26](https://github.com/michaelamoetoevsky/PDN/pull/26) — *feat(pn-next): implement export_to_compose mapping for ServiceConfig*
-- Author: `gabm0932` (fork) · Head: `71611baef2ab2bb15a30826f29c4f8f6f0738cd4` ("Merge branch 'master' into master", maintainer branch update) · Base: `master` · Review: `APPROVED` · `mergeStateStatus: UNSTABLE`
-- Diff: `+11 −0` in one file (`crates/pn-next/src/supervisor.rs`)
-- Red checks on the head: **Benchmark → job "Run Benchmarks"** (`…/runs/41824324217/job/126555807470`) and **PDN CI/CD → job "Rust Host Build"** (`…/runs/41824324094/job/126555857820`). Every other job on the head is `success` (Release: `skipped`).
+- PR: [#26](https://github.com/michaelamoetoevsky/PDN/pull/26), title `feat(pn-next): implement export_to_compose mapping for ServiceConfig`
+- Author: `gabm0932`, a fork · Head: `71611baef2ab2bb15a30826f29c4f8f6f0738cd4`, message "Merge branch 'master' into master", a maintainer branch update · Base: `master` · Review: `APPROVED` · `mergeStateStatus: UNSTABLE`
+- Diff: `+11 −0` in one file, `crates/pn-next/src/supervisor.rs`
+- Red checks on the head: **Benchmark → job "Run Benchmarks"** at `…/runs/41824324217/job/126555807470` and **PDN CI/CD → job "Rust Host Build"** at `…/runs/41824324094/job/126555857820`. Every other job on the head is `success`. The Release job is `skipped`.
 
 Evidence below was collected read-only: `gh run view` / `--log-failed`, `gh api`, `git show`, `git log`, `grep`. Local checkout: `master @ 3e260dc6e9f70bff5f46f78f04c2a8bbada328d4`.
 
 ---
 
-## Claim 1 — the Benchmark red is repo-side · **CONFIRMED**
+## Claim 1. The Benchmark red check is repo-side. **CONFIRMED**
 
-### (a) Which line produces it, at the PR's head
+### (a) Which line produces it, at the PR head
 
-At the PR head `71611ba`, the failing step is `Compare with baseline` (`.github/workflows/benchmark.yml:105`) and the aborting line is **`git stash pop`** (step body line 17), preceded by **`git stash`** (step body line 7).
+At the PR head `71611ba`, the failing step is `Compare with baseline` at `.github/workflows/benchmark.yml:105`. The aborting line is **`git stash pop`** at step body line 17. The line before it is **`git stash`** at step body line 7.
 
 ```
 $ gh api "repos/michaelamoetoevsky/PDN/contents/.github/workflows/benchmark.yml?ref=71611ba…" --jq .content | base64 -d | grep -n "Compare with baseline" -A 30
@@ -44,7 +44,7 @@ $ gh run view 41824324217 --log-failed | grep -i "stash entries\|exit code 128\|
 2082:Run Benchmarks  Compare with baseline  …  ##[error]Process completed with exit code 128.
 ```
 
-Root cause: the CI checkout is clean, so `git stash` has nothing to save — it prints `No local changes to save` and creates **no** stash entry; the later `git stash pop` then finds nothing, prints `No stash entries found.` and exits non-zero, aborting the step **after** the benchmarks had already run. The log also pins the run to this PR: the last checkout line reads `HEAD is now at ebc7914 Merge 71611baef… into 5af5b029…` — i.e. GitHub's merge ref for PR #26.
+Root cause: the CI checkout is clean. So `git stash` has nothing to save. It prints `No local changes to save` and creates **no** stash entry. The later `git stash pop` then finds nothing, prints `No stash entries found.` and exits non-zero. Thus it aborts the step **after** the benchmarks already ran. The log also pins the run to this PR. The last checkout line reads `HEAD is now at ebc7914 Merge 71611baef… into 5af5b029…`. That is GitHub's merge ref for PR #26.
 
 ### (b) The step is gated on `pull_request`, so master never ran it
 
@@ -54,9 +54,9 @@ Root cause: the CI checkout is clean, so `git stash` has nothing to save — it 
 if: github.event_name == 'pull_request' && github.event.pull_request.base.repo.full_name == github.repository
 ```
 
-**CONFIRMED** — the guard is on `github.event_name == 'pull_request'`. On a `push` to `master` the whole `Compare with baseline` step is skipped, which is exactly why master's Benchmark runs looked green while every fork PR died on it. (The `benchmark.yml` `on:` block triggers on both `push` and `pull_request`; only this step is PR-only.)
+**CONFIRMED**. The guard is on `github.event_name == 'pull_request'`. On a `push` to `master`, the whole `Compare with baseline` step is skipped. That explains why master's Benchmark runs looked green while every fork PR failed on it. The `benchmark.yml` `on:` block triggers on both `push` and `pull_request`. Only this step is PR-only.
 
-### (c) The defect is already fixed on current master
+### (c) Current master already has the fix
 
 ```
 $ git log --format='%h %ci %s' -6 -- .github/workflows/benchmark.yml
@@ -66,7 +66,7 @@ e2d2b0a 2026-11-04 17:07:41 +0700 fix(benches): repair 26 compile errors and sto
 c760e61 2026-11-04 09:46:10 +0700 ci(workflows): add concurrency control, path filters, --locked and honest gates
 ```
 
-Commit **`c04f14578d4a8891e2a1d62465c5a306ab102824`** ("drop the stash dance") removed both `git stash` and `git stash pop`. The `git show` diff:
+Commit **`c04f14578d4a8891e2a1d62465c5a306ab102824`**, with the message "drop the stash dance", removed both `git stash` and `git stash pop`. The `git show` diff:
 
 ```diff
            git fetch origin "$BASEREF:$BASEREF"
@@ -82,7 +82,7 @@ Commit **`c04f14578d4a8891e2a1d62465c5a306ab102824`** ("drop the stash dance") r
 -          git stash pop
 ```
 
-Current master line content (`.github/workflows/benchmark.yml:105–118`) — step no longer contains either stash command:
+Current master line content at `.github/workflows/benchmark.yml:105–118`. The step no longer contains either stash command:
 
 ```
 105:      - name: Compare with baseline
@@ -99,11 +99,11 @@ Current master line content (`.github/workflows/benchmark.yml:105–118`) — st
 118:          git checkout "$BASEREF"
 ```
 
-**Timing note that makes this airtight:** the PR head `71611ba` was created `2026-11-04T11:51:21Z`, but the fix `c04f145` landed at `20:04:26 +0700 = 13:04:26Z`. So the head was cut **before** the fix existed — the head still carries the pre-fix `benchmark.yml` (line 123 `git stash pop`), which is precisely what failed. A green re-run on a head that merges the post-fix master would not hit this step's bug.
+**This timing note makes the claim airtight.** The PR head `71611ba` was created `2026-11-04T11:51:21Z`. The fix `c04f145` landed at `20:04:26 +0700 = 13:04:26Z`. Thus the head was cut **before** the fix existed. The head still carries the pre-fix `benchmark.yml`, and line 123 is `git stash pop`. That line is precisely what failed. A green re-run on a head that merges the post-fix master will not hit this step's bug.
 
 ---
 
-## Claim 2 — the PDN CI/CD red is a flake, not the contributor's code · **CONFIRMED**
+## Claim 2. The PDN CI/CD red check is a flake, not the contributor's code. **CONFIRMED**
 
 ### (a) The same suite is green on master and on the PR's earlier head
 
@@ -123,9 +123,9 @@ $ gh run view 41835842744 --json conclusion,headSha,event,workflowName,createdAt
  "headSha":"3e260dc6e9f70bff5f46f78f04c2a8bbada328d4","workflowName":"PDN CI/CD"}
 ```
 
-The PR author's change (`6ac4101b`) passed the full PDN CI/CD workflow on its own. Master `5af5b029` passed *30 seconds before* the failing merge-head run started. The failure appeared only on the merge ref that combined master with the same +11 lines.
+The PR author's change at `6ac4101b` passed the full PDN CI/CD workflow on its own. Master `5af5b029` passed *30 seconds before* the failing merge-head run started. The failure appeared only on the merge ref. That ref combined master with the same +11 lines.
 
-Failing log:
+The failed log:
 
 ```
 $ gh run view 41824324094 --log-failed | grep -n "test_restart_policy_on_abnormal\|test result\|panicked"
@@ -136,7 +136,7 @@ $ gh run view 41824324094 --log-failed | grep -n "test_restart_policy_on_abnorma
 9155:  error: test failed, to rerun pass `-p pdn-integration-tests --test supervisor_e2e`
 ```
 
-`18 passed; 1 failed` in the same binary; the red job is `Rust Host Build` (`test` step).
+`18 passed; 1 failed` in the same binary. The red job is `Rust Host Build`, in the `test` step.
 
 ### (b) The failing test cannot be touched by the PR's change
 
@@ -170,7 +170,7 @@ The panic is at `tests/supervisor_e2e.rs:536`, a **timing assertion**:
     );
 ```
 
-The test drives it with fixed sleeps and a 1 s restart delay — `supervision_interval(1000ms)`, `base_delay_secs=1`, then `sleep(1000ms)` after start and `sleep(3000ms)` after the kill — and asserts on the resulting state. That is a bet on the scheduler, not an observed transition, i.e. structurally flaky. The PR's added code is `impl ServiceConfig { pub fn export_to_compose(…) -> String }`, a **new, never-called** method appended at module scope; it changes no existing behaviour and is not referenced by the test binary. It cannot flip this assertion.
+The test drives it with fixed sleeps and a 1 s restart delay: `supervision_interval(1000ms)`, `base_delay_secs=1`, then `sleep(1000ms)` after start and `sleep(3000ms)` after the kill. Then it asserts on the resulting state. That is a bet on the scheduler, not an observed transition. Thus the test is structurally flaky. The PR's added code is `impl ServiceConfig { pub fn export_to_compose(…) -> String }`, a **new, never-called** method appended at module scope. It changes no existing behaviour, and the test binary does not reference it. It cannot flip this assertion.
 
 ### (c) Measured flake rate of the workflow
 
@@ -182,11 +182,11 @@ last 40:    {'success': 14, 'cancelled': 1, 'failure': 25}   # window 2026-10-31
 master branch only (32 runs): {'success': 14, 'cancelled': 1, 'failure': 17}
 ```
 
-**Last ~40 PDN CI/CD runs: 14 success / 25 failure / 1 cancelled** (failure rate 64 % of concluded runs; 36 % green). Restricted to runs on `master`/`main`/`develop`: **14 success / 17 failure / 1 cancelled** over 32 runs. A ~2-in-3 failure rate is not a prompt-commit anomaly — it is the workflow's baseline behaviour, and a red tick on any individual head carries almost no signal about that head's code.
+**Last ~40 PDN CI/CD runs: 14 success / 25 failure / 1 cancelled.** The failure rate is 64 % of concluded runs. The green rate is 36 %. Restricted to runs on `master`/`main`/`develop`, the counts are **14 success / 17 failure / 1 cancelled** over 32 runs. A ~2-in-3 failure rate is not a prompt-commit anomaly. It is the workflow's baseline behaviour. A red tick on any individual head carries almost no signal about that head's code.
 
 ---
 
-## Claim 3 — the contributor's change is sound in isolation · **CONFIRMED**
+## Claim 3. The contributor's change is sound in isolation. **CONFIRMED**
 
 ```
 $ gh pr diff 26
@@ -215,11 +215,11 @@ index 6e06512..d83035f 100644
 - **One file:** `crates/pn-next/src/supervisor.rs` only.
 - **Cannot affect either red check:** it adds a single new method that nothing calls. It does not touch `benchmark.yml`, `tests/supervisor_e2e.rs`, the `[[bench]]` targets, or any code path exercised by `test_restart_policy_on_abnormal`. The only observable effect is one more never-executed function in the crate.
 
-**Contributor-side caveat (not a check failure):** the method is dead code and is formatted inconsistently with `rustfmt` (the long `String::from(...)` line). Neither matters to `cargo test`, but `cargo fmt --all -- --check` in the `Rust Host Build` job could flag the formatting if it ever ran on this file — worth a quick `cargo fmt` on the author's side, but it is *not* what the red checks reported.
+**Contributor-side caveat, not a check failure:** the method is dead code. The method is formatted inconsistently with `rustfmt`, on the long `String::from(...)` line. Neither item matters to `cargo test`. However, `cargo fmt --all -- --check` in the `Rust Host Build` job can flag the formatting if it runs on this file. A quick `cargo fmt` on the author's side is worth the effort. That formatting issue is *not* what the red checks reported.
 
 ---
 
-## Claim 4 — what happens if it is merged now · **master is unprotected; nothing blocks the merge**
+## Claim 4. If the merge happens now. **Master is unprotected. Nothing blocks the merge.**
 
 ```
 $ gh api repos/michaelamoetoevsky/PDN/branches/master/protection
@@ -230,15 +230,15 @@ $ gh api repos/michaelamoetoevsky/PDN/rulesets
 []
 ```
 
-**Branch protection: NONE.** `master` has no classic branch protection and no repository ruleset, therefore **no required status checks and no required reviews**. The `mergeStateStatus: UNSTABLE` on the PR reflects only that a check is red — it is a mergeability *annotation*, not a gate. With the button available and `reviewDecision: APPROVED`, GitHub will allow the merge.
+**Branch protection: NONE.** `master` has no classic branch protection and no repository ruleset. Therefore **no required status checks and no required reviews** apply. The `mergeStateStatus: UNSTABLE` on the PR reflects only that a check is red. It is a mergeability *annotation*, not a gate. With the button available and `reviewDecision: APPROVED`, GitHub will allow the merge.
 
 What the recorded red checks mean **after** merge:
 
 - They stay attached to the now-historical head `71611ba` and vanish from the merge commit's own check list as the branch advances.
-- **Benchmark**: the PR-only step would not run on the resulting master push at all, so a green master Benchmark run proves nothing about PR #26's benchmark; the failure cannot recur on master by construction.
-- **PDN CI/CD**: the flaky `test_restart_policy_on_abnormal` can still red-tick a post-merge master run, independent of this PR — merging does not fix the flake. Tracking it as a repo-side issue (the fix commit's message already files it as `#CI-6`) is the durable remedy.
+- **Benchmark**: the PR-only step will not run on the resulting master push at all. Thus a green master Benchmark run proves nothing about PR #26's benchmark. The failure cannot recur on master by construction.
+- **PDN CI/CD**: the flaky `test_restart_policy_on_abnormal` can still red-tick a post-merge master run, independent of this PR. Merging does not fix the flake. The durable remedy is to track it as a repo-side issue. The fix commit's message already files it as `#CI-6`.
 
-Net: the red ticks are **not** merge blockers (nothing is enforced) and are **not** attributable to `gabm0932`'s +11 lines. Merging is safe from a CI-signal standpoint; the honest framing for the contributor is "your change is fine; our benchmark workflow was broken on PRs and our restart-policy test is flaky — both tracked repo-side."
+Net: the red ticks are **not** merge blockers. Nothing is enforced. The red ticks are **not** attributable to `gabm0932`'s +11 lines. The merge is safe from a CI-signal standpoint. The honest framing for the contributor is this: your change is fine. Our benchmark workflow was broken on PRs. Our restart-policy test is flaky. Both items are tracked repo-side.
 
 ---
 

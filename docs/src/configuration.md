@@ -4,11 +4,11 @@
 
 PDN uses a layered configuration system:
 
-1. **Global Config** (`~/.config/pn-next/config.toml`) - System-wide settings
-2. **Container Config** (`~/.config/pn-next/containers/<name>.toml`) - Per-container settings
-3. **Security Profiles** (`~/.config/pn-next/security/<name>.toml`) - Security hardening
-4. **Network Config** (`~/.config/pn-next/networks/<name>.toml`) - Network definitions
-5. **Storage Config** (`~/.config/pn-next/storage/<name>.toml`) - Storage pools
+1. **Global Config** at `~/.config/pn-next/config.toml` - System-wide settings
+2. **Container Config** at `~/.config/pn-next/containers/<name>.toml` - Per-container settings
+3. **Security Profiles** at `~/.config/pn-next/security/<name>.toml` - Security hardening
+4. **Network Config** at `~/.config/pn-next/networks/<name>.toml` - Network definitions
+5. **Storage Config** at `~/.config/pn-next/storage/<name>.toml` - Storage pools
 6. **CLI Flags** - Override any setting at runtime
 
 ## Global Configuration
@@ -177,23 +177,24 @@ max_plugins = 20
 
 ## Loading and validating
 
-The gateway reads its settings from the `[gateway]` table of a PDN configuration file. The file
-is named explicitly - there is no implicit search path, so a deployment either names its file or
-gets no gateway configuration at all:
+The gateway reads its settings from the `[gateway]` table of a PDN configuration file. The
+operator names the file explicitly. There is no implicit search path. Thus a deployment either
+names its file or gets no gateway configuration at all:
 
 ```bash
 podnext config validate ./gateway.toml
 PN_GATEWAY_CONFIG=./gateway.toml podnext config validate
 ```
 
-`podnext config validate` reads the file with the same loader the gateway uses, so an unknown key,
-a malformed value or an unreadable duration fails here rather than at startup. A valid file prints
-the values it resolves to and exits 0; an invalid one prints the offending key with its line and
-column and exits 2.
+`podnext config validate` reads the file with the same loader that the gateway uses. Thus an
+unknown key, a malformed value or an unreadable duration fails here rather than at startup. A
+valid file prints the values it resolves to and exits 0. An invalid file prints the offending key
+with its line and column and exits 2.
 
-Keys under `[gateway]` are strict: an unknown key is always an error, because a typo that is
-silently ignored becomes a setting that silently does not apply. Sections outside `[gateway]`
-(`[general]`, `[grpc]`, `[api]`, ...) belong to other components and are left to them.
+Keys under `[gateway]` are strict: an unknown key is always an error. A typo that the code
+silently ignores becomes a setting that silently does not apply. Sections outside `[gateway]`
+belong to other components and are left to them. Those sections include `[general]`, `[grpc]`,
+`[api]` and others.
 
 ## Duration values
 
@@ -213,16 +214,16 @@ check_interval = "2m"
 | `h` | hours |
 | `d` | days |
 
-Long forms (`"30 seconds"`, `"2 minutes"`) are accepted as well. A bare number is read as
-seconds (`timeout = 30`), and the native `{ secs = 30, nanos = 0 }` table still loads, so
-configuration written before the string form existed keeps working.
+Long forms such as `"30 seconds"` and `"2 minutes"` are accepted as well. The loader reads a bare
+number as seconds, for example `timeout = 30`. The native `{ secs = 30, nanos = 0 }` table still
+loads. Thus configuration written before the string form existed keeps working.
 
-An unknown unit is a load error that names the offending value, for example
-`unknown duration unit "parsecs" in "5 parsecs"`. That is deliberate: falling back to zero
-would turn a typo into a disabled timeout.
+An unknown unit is a load error that names the offending value. One example is
+`unknown duration unit "parsecs" in "5 parsecs"`. That is deliberate. A fallback to zero turns a
+typo into a disabled timeout.
 
-When PDN writes a configuration back out, durations are rendered in this string form using
-the largest exact unit, so `300s` is written as `"5m"`.
+When PDN writes a configuration back out, it renders durations in this string form. It uses the
+largest exact unit. Thus it writes `300s` as `"5m"`.
 
 
 ## Container Configuration
@@ -527,7 +528,7 @@ architectures = ["SCMP_ARCH_AARCH64", "SCMP_ARCH_X86_64"]
 rules = {}
 ```
 
-#### `unconfined` - No restrictions (for debugging)
+#### `unconfined` - No restrictions for debugging
 
 ```toml
 [profile]

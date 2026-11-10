@@ -1,15 +1,15 @@
-# Dispositions for the audit findings (roadmap section 9.1)
+# Dispositions for the audit findings, roadmap section 9.1
 
-Section 9.1 asks that every finding be triaged: fixed, filed, or declined with a reason. The
-ledger enforces the rule mechanically - an issue with neither a predicate nor a hand-written
-reason fails the gate, and a generated fallback no longer masquerades as a disposition. This
-file is the prose form of the same thing, so a reader of the release does not have to read
-Python. **It is generated, not maintained**: `scripts/build_issue_ledger.py --disposition`
-rewrites it from the same tables the ledger prints, so it cannot drift from the gate.
+Section 9.1 asks for a triage of every finding: fixed, filed, or declined with a reason. The
+ledger enforces the rule mechanically. An issue with no predicate and no hand-written
+reason fails the gate. A generated fallback no longer acts as a disposition. This
+file is the prose form of the same thing. A reader of the release then does not have to read
+Python. **The file is generated, not maintained**. The command `scripts/build_issue_ledger.py --disposition`
+rewrites it from the same tables that the ledger prints. It cannot drift from the gate.
 
-Generated 2026-11-05 21:43:36Z against `d982e59`: **70 issues**, of which 45 carry
+Generated 2026-11-05 21:43:36Z against `d982e59`: **70 issues**. Of these, 45 carry
 predicates, 13 are declined with a written reason, and 12 are wayfinder
-work items whose acceptance criteria live in the map issue (#48) rather than in a predicate.
+work items. The acceptance criteria of those work items live in the map issue #48, not in a predicate.
 
 | # | state | title | disposition |
 |---|---|---|---|
@@ -84,7 +84,7 @@ work items whose acceptance criteria live in the map issue (#48) rather than in 
 | 71 | CLOSED | Three scripts resolve their temp base into /tmp/tmp on any host without $PREFIX | predicate(s): the temp-base expression that broke three times is gone from scripts; the rule lives in one module and its self-check can fail |
 | 72 | CLOSED | [criterion gap] section 9.2 says no file over ~800 lines; native.rs is 1605, grown from 11 | work item (acceptance criteria in the map issue): **UNTRIAGED - the ledger fails until this is written down** |
 
-**A row is not a resolution.** `predicate(s)` means the fix is asserted by a check that this
-ledger runs and that can fail; `declined` means the reason is written down. Neither is a
-statement that the underlying behaviour was observed end to end - see the ledger's own SKIPPED
-section for the checks that produced no verdict.
+**A row is not a resolution.** `predicate(s)` means a check asserts the fix. This
+ledger runs that check and the check can fail. `declined` means the reason is written down. Neither word
+states that we observed the underlying behaviour from end to end. See the SKIPPED
+section of the ledger for the checks that produced no verdict.

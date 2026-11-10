@@ -1,18 +1,19 @@
-# Issue #30 — `podnext build local` Dockerfile completeness: reproduction, fixes, evidence
+# Issue #30: Dockerfile completeness for `podnext build local`: reproduction, fixes, evidence
 
-Department: Container Build Engineering (CBE). Role: Build Runtime Engineer.
+Department: Container Build Engineering. Short name: CBE. Role: Build Runtime Engineer.
 Branch: `dept/build-completeness`. Base revision: `72ef9d6`.
 Files owned/changed: `crates/podnext/**` only.
 
-This closes the residual gaps recorded in `research/BUILD_LOCAL_FIX.md` section 6
-(items 1, 2, 4) and takes the wildcard slice of item 3. Everything below was run
-against a real built binary (`cargo build -p podnext --locked`, shared
-`CARGO_TARGET_DIR`, under the memory guard and the cargo mutex). The pre-fix
-binary was frozen to `$HOME/.hermes/cache/scratch/podnext-before` before the
-first rebuild, so before/after is the same fixture on two binaries.
+This closes the residual gaps recorded in `research/BUILD_LOCAL_FIX.md` section 6.
+The gaps are items 1, 2, and 4. This also takes the wildcard slice of item 3.
+All work below ran against a real built binary. The build command is
+`cargo build -p podnext --locked`, with a shared `CARGO_TARGET_DIR`, under the
+memory guard and the cargo mutex. I froze the pre-fix binary to
+`$HOME/.hermes/cache/scratch/podnext-before` before the first rebuild. Thus the
+before and after runs use the same fixture on two binaries.
 
-Test fixture (`$HOME/.hermes/cache/scratch/c2/ctx1/Dockerfile`, throwaway tag
-`c2env:latest`):
+Test fixture: `$HOME/.hermes/cache/scratch/c2/ctx1/Dockerfile` with throwaway tag
+`c2env:latest`:
 
 ```
 FROM alpine:3.19
@@ -28,9 +29,9 @@ CMD ["/bin/sh"]
 
 ---
 
-## Item 1 — ENV/WORKDIR are not reinstated at `podnext run` (fixed)
+## Item 1: ENV/WORKDIR are not reinstated at `podnext run`. Status: fixed
 
-### Reproduction (raw, pre-fix binary)
+### Reproduction, raw, pre-fix binary
 
 ```
 $ podnext-before run c2env:latest -- /bin/sh -c 'echo GREETING=[$GREETING]; echo APP_MODE=[$APP_MODE]; echo PWD=$(pwd); echo MARKER=$(cat /srv/app/marker.txt 2>&1); echo APP=$(cat app.txt 2>&1)'
@@ -42,19 +43,20 @@ APP=cat: can't open 'app.txt': No such file or directory
 RUN_EXIT=0
 ```
 
-The image *has* the values — `metadata.json` written by the build:
+The image *has* the values. The build wrote `metadata.json`:
 
 ```json
 { "env": { "APP_MODE": "prod", "GREETING": "hello-from-image" },
   "working_dir": "/srv/app", ... }
 ```
 
-so the image did not behave as it was built: empty environment, `cwd=/`.
+Thus the image did not behave as it was built. The environment was empty and
+`cwd=/`.
 
 ### Root cause
 
-`ContainerManager::load_containers` (`crates/proot-distro-core/src/container.rs:105`)
-builds each container's config from the directory name and `os-release` only:
+`ContainerManager::load_containers` at `crates/proot-distro-core/src/container.rs:105`
+builds each container config from the directory name and `os-release` only:
 
 ```rust
 let config = ContainerConfig {
@@ -67,27 +69,27 @@ let config = ContainerConfig {
 ```
 
 The backend *does* read exactly those two fields when it builds the proot
-command (`crates/proot-distro-core/src/runtime.rs:143` `config.cwd`,
-`:151` `config.env`), so they were dropped only because nothing reloaded them
-from the image metadata. `run_container_native`
-(`crates/podnext/src/native.rs:626` at base) passed the empty config straight
-through.
+command. The fields are `config.cwd` at `crates/proot-distro-core/src/runtime.rs:143`
+and `config.env` at `:151`. Nothing reloaded them from the image metadata. That
+is why they were dropped. `run_container_native` passed the empty config straight
+through. Its location is `crates/podnext/src/native.rs:626` at base.
 
 ### Fix
 
-`crates/podnext/src/native.rs:588` — new `apply_image_runtime_config`, called at
-`native.rs:628` in `run_container_native` immediately after `ContainerManager::get`:
+`crates/podnext/src/native.rs:588` adds `apply_image_runtime_config`.
+`run_container_native` calls it at `native.rs:628` immediately after
+`ContainerManager::get`:
 
-- reads `<rootfs>/../metadata.json`, applies `env` (object → `env_vars`, sorted
-  for determinism) and `working_dir`;
-- a value already set on the container wins, so a caller override is never
-  clobbered;
-- absent/unparseable metadata is a no-op (installed containers have none).
+- It reads `<rootfs>/../metadata.json`. It applies `env` and `working_dir`. It
+  maps the `env` object to `env_vars` and sorts them for determinism.
+- A value already set on the container wins. Thus nothing clobbers a caller
+  override.
+- Absent or unparseable metadata is a no-op. Installed containers have none.
 
-This is deliberately in the `run` path (owned file) rather than the shared
-loader, so no other consumer of `ContainerManager` changes behaviour.
+This is deliberately in the `run` path, an owned file, rather than the shared
+loader. Thus no other consumer of `ContainerManager` changes behaviour.
 
-### After (raw)
+### After, raw
 
 ```
 $ podnext run c2env:latest -- /bin/sh -c 'echo GREETING=[$GREETING]; echo APP_MODE=[$APP_MODE]; echo PWD=$(pwd); echo MARKER=$(cat marker.txt); echo APP=$(cat app.txt)'
@@ -99,18 +101,19 @@ APP=real app content
 RUN_EXIT=0
 ```
 
-Tests: `native::image_runtime_config_tests` — `run_reinstates_env_and_working_dir_from_metadata`,
-`explicit_config_is_not_clobbered_by_metadata`, `missing_metadata_is_a_no_op`
-(all offline). Build half asserted by
-`commands::build_local_tests::env_and_workdir_are_recorded_for_the_run_path`.
+Tests: `native::image_runtime_config_tests` holds
+`run_reinstates_env_and_working_dir_from_metadata`,
+`explicit_config_is_not_clobbered_by_metadata`, and `missing_metadata_is_a_no_op`.
+All tests are offline. `commands::build_local_tests::env_and_workdir_are_recorded_for_the_run_path`
+asserts the build half.
 
 ---
 
-## Item 2 — EXPOSE and USER were parsed and discarded (fixed: recorded)
+## Item 2: EXPOSE and USER were parsed and discarded. Status: recorded
 
-### Reproduction (raw, pre-fix)
+### Reproduction, raw, pre-fix
 
-`metadata.json` of the pre-fix build (full file):
+`metadata.json` of the pre-fix build, the full file:
 
 ```json
 {
@@ -127,29 +130,29 @@ Tests: `native::image_runtime_config_tests` — `run_reinstates_env_and_working_
 }
 ```
 
-`EXPOSE 8080` and `USER nobody` are absent: the build matched
-`Instr::Expose(_) | Instr::User(_) => {}` (base `commands/mod.rs:2214`) and dropped them.
+`EXPOSE 8080` and `USER nobody` are absent. The build matched
+`Instr::Expose(_) | Instr::User(_) => {}` at base `commands/mod.rs:2214`. It dropped them.
 
-### Decision (which behaviour, and why)
+### Decision, which behaviour and why
 
-- **EXPOSE → recorded.** In Docker `EXPOSE` is metadata: it documents a port and
-  never binds or publishes one. This runtime has no host port-forwarding daemon,
-  so recording is the faithful behaviour (and the only non-lying one). Duplicate
-  ports are collapsed; `EXPOSE 8080/tcp` keeps the port only.
-- **USER → recorded, not enforced.** Enforcing it means running the guest as a
-  specific uid/gid, and proot maps every guest id to the single host uid;
-  `ContainerConfig` has no user/uid field, so plumbing it through
+- **EXPOSE to recorded.** In Docker `EXPOSE` is metadata. It documents a port and
+  never binds or publishes one. This runtime has no host port-forwarding daemon.
+  Thus the faithful behaviour is to record the port. It is also the only
+  non-lying one. Duplicate ports are collapsed. `EXPOSE 8080/tcp` keeps the port only.
+- **USER to recorded, not enforced.** To enforce it, the guest must run as a
+  specific uid/gid. Proot maps every guest id to the single host uid.
+  `ContainerConfig` has no user/uid field. Thus to plumb it through
   `runtime.rs`/`proot-core` is a change to shared crates outside this branch's
-  owned files. The honest state is therefore "recorded"; a `USER` in a Dockerfile
+  owned files. The honest state is therefore "recorded". A `USER` in a Dockerfile
   still has no effect on execution here. This is a known, named limitation.
 
 ### Fix
 
-`crates/podnext/src/commands/mod.rs:2222` (`Expose`), `:2228` (`User`), both
-accumulated and written at `:2250` (`"exposed_ports"`, `"user"`); the build also
-prints `Expose: 8080` / `User: nobody`.
+`crates/podnext/src/commands/mod.rs:2222` holds `Expose` and `:2228` holds `User`.
+The build accumulates both and writes them at `:2250` as `"exposed_ports"` and
+`"user"`. The build also prints `Expose: 8080` and `User: nobody`.
 
-### After (raw)
+### After, raw
 
 ```
 $ podnext build local -t c2env:latest ctx1
@@ -165,14 +168,15 @@ Successfully built image 'c2env:latest'
 { ..., "exposed_ports": [ 8080 ], ..., "user": "nobody", ... }
 ```
 
-Test: `commands::build_local_tests::expose_and_user_are_recorded_in_metadata`
-(offline, `FROM scratch`; asserts dedup of `EXPOSE 8080` + `EXPOSE 8080/tcp`).
+Test: `commands::build_local_tests::expose_and_user_are_recorded_in_metadata`.
+It is offline and uses `FROM scratch`. It asserts dedup of `EXPOSE 8080` and
+`EXPOSE 8080/tcp`.
 
 ---
 
-## Item 3 (wildcard slice only) — `COPY src/*.rs` (fixed)
+## Item 3, wildcard slice only: `COPY src/*.rs`. Status: fixed
 
-### Reproduction (raw, pre-fix)
+### Reproduction, raw, pre-fix
 
 ```
 $ podnext-before build local -t c2glob:latest ctx3      # Dockerfile: FROM scratch / COPY src/*.rs /opt/app/
@@ -183,18 +187,19 @@ EXIT=1
 
 ### Root cause
 
-`copy_into_rootfs` (base `commands/mod.rs:2250`) did `ctx.join(src).exists()` on
-the literal pattern; `*` is not a real path character, so it always failed.
+`copy_into_rootfs` at base `commands/mod.rs:2250` did `ctx.join(src).exists()` on
+the literal pattern. The `*` is not a real path character. Thus it always failed.
 
 ### Fix
 
-`commands/mod.rs:2273` `copy_into_rootfs` now expands `*`/`?` within a path
-component (`expand_glob` `:2341`, `glob_match` `:2372`) and copies every match
-via the extracted `copy_one` (`:2311`). A pattern matching nothing is a hard
-error; multiple matches require a directory destination ending in `/`, as Docker
-requires. `--from=` and multi-stage are still unsupported (see below).
+At `commands/mod.rs:2273`, `copy_into_rootfs` now expands `*`/`?` within a path
+component. The helpers are `expand_glob` at `:2341` and `glob_match` at `:2372`.
+It copies every match with the extracted `copy_one` at `:2311`. A pattern that
+matches nothing is a hard error. Multiple matches require a directory destination
+that ends in `/`, as Docker requires. `--from=` and multi-stage are still
+unsupported. See below.
 
-### After (raw)
+### After, raw
 
 ```
 $ podnext build local -t c2glob:latest ctx3
@@ -214,9 +219,9 @@ Tests: `glob_match_handles_star_and_question`,
 
 ---
 
-## Item 4 — tag containing `:` (characterised precisely; NOT fixed — root cause is outside this branch's owned files)
+## Item 4: tag that contains `:`. Characterised precisely and NOT fixed. Root cause is outside this branch's owned files
 
-### Reproduction (raw)
+### Reproduction, raw
 
 Same build as item 1, same binary as item 3:
 
@@ -232,7 +237,7 @@ Successfully built image 'c2env:latest'
 
 `podnext run c2env:latest ...` prints the same 11 warnings.
 
-### It is NOT cosmetic — controlled A/B on the same binary and rootfs
+### It is NOT cosmetic. Controlled A/B on the same binary and rootfs
 
 ```
 ### A: colon tag c2env:latest ###
@@ -252,47 +257,50 @@ EXIT=0
 [sanitize warnings: 0]
 ```
 
-So for a tag containing `:` the `/dev/shm` sibling (`guestdirs`) and every
-`/proc` stub (`sysdata`) are **silently not bound** — exactly the two features
-those modules exist to provide. Execution still works, which is why #29 only
-noticed the warning.
+Thus for a tag that contains `:`, the `/dev/shm` sibling and every `/proc` stub
+are **silently not bound**. The `/dev/shm` sibling belongs to `guestdirs` and the
+`/proc` stub belongs to `sysdata`. Those two modules exist to provide exactly
+these two features. Execution still works. Thus #29 noticed only the warning.
 
-### Root cause (exact)
+### Root cause, exact
 
 The bind specs are strings of the form `"<host>:<guest>"`:
 
-- `crates/proot-distro-core/src/sysdata.rs:278` `bindings()` →
-  `format!("{}:{}", stub.display(), guest_path)`;
-- `crates/proot-distro-core/src/guestdirs.rs:47` `bindings()` →
-  `format!("{}:/dev/shm", dir.display())`;
-- joined into `engine_guard.config.bind` (`runtime.rs:113`) and passed to the
-  real `proot` binary, which parses `host:guest:flags` and splits on `:`.
-  With a host path `.../containers/c2env:latest/sysdata/loadavg`, the first `:`
-  ends the host path → source becomes `.../containers/c2env`, which does not
-  exist → `can't sanitize binding`.
+- `crates/proot-distro-core/src/sysdata.rs:278` `bindings()` returns
+  `format!("{}:{}", stub.display(), guest_path)`.
+- `crates/proot-distro-core/src/guestdirs.rs:47` `bindings()` returns
+  `format!("{}:/dev/shm", dir.display())`.
+- The code joins them into `engine_guard.config.bind` at `runtime.rs:113` and
+  passes them to the real `proot` binary. That binary parses `host:guest:flags`
+  and splits on `:`. With a host path
+  `.../containers/c2env:latest/sysdata/loadavg`, the first `:` ends the host path.
+  The source becomes `.../containers/c2env`, which does not exist. That causes
+  `can't sanitize binding`.
 
-Confirmed by the message itself: the path it reports is truncated exactly at the
-colon (`.../containers/c2env`).
+The message itself confirms this. The path it reports is truncated exactly at the
+colon, `.../containers/c2env`.
 
 ### Why not fixed here
 
-The two fix sites are `sysdata.rs` and `guestdirs.rs` (or the store key), all in
-`crates/proot-distro-core/**`, which this branch does **not** own. The only
-in-scope alternative — storing the image under a colon-free directory name —
-would break the `run <tag>` lookup, `image ls`, `login`, `rm` and regress the
-`containers/<tag>/rootfs` layout that #29 established, so it was rejected.
+The two fix sites are `sysdata.rs` and `guestdirs.rs`, or the store key. All are
+in `crates/proot-distro-core/**`, which this branch does **not** own. The only
+in-scope alternative is to store the image under a colon-free directory name.
+That alternative breaks the `run <tag>` lookup, `image ls`, `login`, and `rm`. It
+also regresses the `containers/<tag>/rootfs` layout that #29 established. Thus it
+was rejected.
 
-**Precise fix (not applied):** make the host path of a bind spec colon-free.
-Either (a) build `config.bind` from a colon-safe runtime directory
-(`containers/<sanitised>/`), or (b) escape `:` in the host path and teach
-`proot-core`'s bind parsing (`crates/proot-core/src/cli.rs:105`,
-`parse_bind_mounts`) the same escape. It belongs to `proot-distro-core`.
+**Precise fix, not applied:** make the host path of a bind spec colon-free.
+Option a: build `config.bind` from a colon-safe runtime directory,
+`containers/<sanitised>/`. Option b: escape `:` in the host path and teach
+`proot-core` bind parsing the same escape. The bind parsing is at
+`crates/proot-core/src/cli.rs:105`, `parse_bind_mounts`. It belongs to
+`proot-distro-core`.
 
 ---
 
 ## Tests and suite state
 
-`cargo test -p podnext --locked`, run under the memory guard + cargo mutex:
+`cargo test -p podnext --locked` ran under the memory guard and the cargo mutex:
 
 ```
 test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
@@ -301,8 +309,8 @@ test result: ok.  2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
    (unittests src/daemon.rs)
 ```
 
-Base was 11 + 2 for this crate (per `BUILD_LOCAL_FIX.md` section 5), i.e. 13 → 21.
-Eight new tests added, none removed:
+Base was 11 + 2 for this crate, per `BUILD_LOCAL_FIX.md` section 5. That is 13 to
+21. Eight new tests were added and none were removed:
 
 - `native::image_runtime_config_tests` × 3
 - `commands::build_local_tests::expose_and_user_are_recorded_in_metadata`
@@ -311,27 +319,28 @@ Eight new tests added, none removed:
 - `commands::build_local_tests::copy_wildcard_copies_every_match_into_a_directory`
 - `commands::build_local_tests::copy_wildcard_with_no_match_is_an_error`
 
-Regression guard for #29 kept and still green:
-`missing_context_is_a_hard_error_and_writes_nothing`,
-`successful_build_registers_a_runnable_image` (image written to
-`containers/<tag>/rootfs` + `metadata.json`; hard non-zero exit on a bad build).
+The regression guard for #29 is kept and still green. The tests are
+`missing_context_is_a_hard_error_and_writes_nothing` and
+`successful_build_registers_a_runnable_image`. The image is written to
+`containers/<tag>/rootfs` and `metadata.json`. A bad build causes a hard
+non-zero exit.
 
-## What I did NOT do (explicit)
+## What I did NOT do, explicit
 
-1. **Multi-stage builds / `FROM ... AS` + `--from=` stage copies** — not
-   implemented. Only the last `FROM` is used (pre-existing). No per-stage rootfs.
-2. **`**`, `[...]` character classes, brace expansion in COPY/ADD** — not
-   implemented; `*`/`?` per path component only (`ponytail:` note in the code).
-3. **USER enforcement** — recorded only; a Dockerfile `USER` does not change the
-   uid the guest runs as (see item 2 rationale).
-4. **EXPOSE port publishing** — recorded only; no host forwarding exists.
-5. **The `:` tag warning** — characterised with functional A/B evidence, not
-   fixed; the fix site (`sysdata.rs`/`guestdirs.rs`, or the store key) is in
+1. **Multi-stage builds / `FROM ... AS` + `--from=` stage copies**: not
+   implemented. Only the last `FROM` is used, pre-existing. No per-stage rootfs.
+2. **`**`, `[...]` character classes, brace expansion in COPY/ADD**: not
+   implemented. `*`/`?` per path component only. See the `ponytail:` note in the code.
+3. **USER enforcement**: recorded only. A Dockerfile `USER` does not change the
+   uid the guest runs as. See item 2 rationale.
+4. **EXPOSE port publishing**: recorded only. No host forwarding exists.
+5. **The `:` tag warning**: characterised with functional A/B evidence, not
+   fixed. The fix site is `sysdata.rs`/`guestdirs.rs`, or the store key. It is in
    `crates/proot-distro-core/**`, outside this branch's owned files.
-6. **OCI manifest / `~/.podnext/images` entry** — unchanged; the runnable store
-   remains the container directory (as established by #29).
-7. `podnext image inspect` still reads `ImageManager` (`~/.podnext/images`), not
-   these `metadata.json` files, so `exposed_ports`/`user` are not surfaced there.
+6. **OCI manifest / `~/.podnext/images` entry**: unchanged. The runnable store
+   remains the container directory, as established by #29.
+7. `podnext image inspect` still reads `ImageManager` at `~/.podnext/images`, not
+   these `metadata.json` files. Thus `exposed_ports`/`user` are not surfaced there.
 
 ## Reproduce it yourself
 
@@ -355,9 +364,9 @@ flock ... -c '... heavy ... cargo test -p podnext --locked'
 Raw transcripts: `$HOME/.hermes/cache/scratch/c2/{before-build,before-run,after-build,after-run,after-glob}.log`
 and the memory-guard logs under `$HOME/.hermes/logs/heavy/`.
 
-## Follow-up (this increment)
+## Follow-up, this increment
 
-Items 2-5 of the list above changed; re-measured against commit `b818e3b`:
+Items 2-5 of the list above changed. All items were re-measured against commit `b818e3b`:
 
 | # | Before | Now |
 |---|---|---|
@@ -369,11 +378,13 @@ Items 2-5 of the list above changed; re-measured against commit `b818e3b`:
 | 6 | no OCI manifest / `~/.podnext/images` entry | unchanged (the runnable store is still the container directory, #29) |
 | 7 | `image inspect` reads `ImageManager`, not `metadata.json` | unchanged |
 
-A defect introduced by item 5's fix was found and closed in the same commit: the base-image install
-and the `RUN` container lookup still used the raw tag, which cannot resolve a colon tag.
+A defect introduced by item 5's fix was found and closed in the same commit. The
+base-image install and the `RUN` container lookup still used the raw tag. That tag
+cannot resolve a colon tag.
 
-Verification: `cargo test -p podnext --locked` -> `26 passed; 0 failed` plus `2 passed` (the two new
-tests are `glob_match_handles_character_classes`, `double_star_is_refused_by_name`,
-`unsupported_dockerfile_shapes_are_refused`). End-to-end `RUN` with a colon tag is **not** covered by
-an offline test (it needs a real base image); the two call sites now share the single `key` variable,
-which is what the tests pin.
+Verification: `cargo test -p podnext --locked` gives `26 passed; 0 failed` plus
+`2 passed`. The two new tests are `glob_match_handles_character_classes`,
+`double_star_is_refused_by_name`, and `unsupported_dockerfile_shapes_are_refused`.
+End-to-end `RUN` with a colon tag is **not** covered by an offline test, because
+it needs a real base image. The two call sites now share the single `key`
+variable. The tests pin that.

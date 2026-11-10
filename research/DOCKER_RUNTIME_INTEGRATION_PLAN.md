@@ -2,16 +2,16 @@
 
 **Status:** Implementation Blueprint & Technical Architecture
 **Target Files:** `crates/proot-distro-core/src/runtime.rs`, `container.rs`, `lib.rs`, `crates/podnext/src/main.rs`
-**Host Environment:** Android 16 (API 36), aarch64, Linux 6.1.157, Termux unprivileged (`uid=10396`, `CapEff=0`)
+**Host Environment:** Android 16 API 36, aarch64, Linux 6.1.157, Termux unprivileged `uid=10396`, `CapEff=0`
 
 ---
 
 ## 1. Structural Comparison: Docker vs PRoot
 
 ### 1.1 Why Docker Cannot Run Under PRoot
-PRoot operates purely in user-space via `ptrace(2)` system call tracing (`PTRACE_SYSCALL`). PRoot is not a kernel; it merely intercepts select file-path and process-identity syscalls to simulate `chroot` and `fake root` (`uid=0`, `gid=0`).
+PRoot operates only in user-space. It uses the `ptrace(2)` system call and the `PTRACE_SYSCALL` trace mode. PRoot is not a kernel. It intercepts selected file-path and process-identity syscalls. It simulates `chroot` and `fake root` with `uid=0` and `gid=0`.
 
-Docker (`dockerd`) and OCI container runtimes (`runc`) cannot function merely through user-space path translation. Docker strictly requires genuine kernel-level virtualization and process isolation.
+Docker and OCI container runtimes cannot operate only through user-space path translation. The `dockerd` daemon and the `runc` container runtime strictly require genuine kernel-level virtualization and process isolation.
 
 ### 1.2 System Call Audit: Docker Requirements vs Android PRoot Reality
 
@@ -25,24 +25,24 @@ Docker (`dockerd`) and OCI container runtimes (`runc`) cannot function merely th
 | Write to cgroups v2 (`/sys/fs/cgroup`) | Writes to `cgroup.procs`, `cpu.max`, `memory.max`, `pids.max` | **Permission denied (`EACCES`)** (owned by Android system/root) | No cgroup emulation in ptrace | Containers fail resource governance; dockerd refuses to launch without a valid cgroup driver |
 
 ### 1.3 The PRoot Deception Trap
-When applications call `mount(2)` inside PRoot, PRoot intercepts the call and returns `0` (success). Consequently:
+When applications call `mount(2)` inside PRoot, PRoot intercepts the call and returns `0` for success. Consequently:
 1. `dockerd` assumes the `overlay2` storage driver is active and functional.
-2. When the first container is spawned, layer files are never actually unified by the kernel VFS. Binary executables inside the container are missing or unexecutable.
-3. Attempting to run Docker inside pure PRoot is an architecturally flawed premise from the outset.
+2. When the first container starts, the kernel VFS never unifies the layer files. Binary executables inside the container are absent or cannot execute.
+3. Any attempt to run Docker inside pure PRoot is architecturally flawed from the outset.
 
-### 1.4 The User-Mode Linux (UML) Solution
-`uml4termux` runs a genuine Linux kernel (`linux-bionic-smp`, arm64) as a single unprivileged Android user process:
+### 1.4 The User-Mode Linux UML Solution
+`uml4termux` runs the `linux-bionic-smp` kernel for arm64 as one unprivileged Android user process:
 - The guest kernel manages its own virtual page tables, process scheduler, VFS, networking stack, and cgroup controllers.
-- Inside the guest, processes execute with genuine root capabilities (`CapEff = 0x1fffffffff`).
+- Inside the guest, processes execute with genuine root capabilities. The guest reports `CapEff = 0x1fffffffff`.
 - Syscalls like `mount(overlay)`, `unshare(CLONE_NEWNS)`, `pivot_root`, and writes to `/sys/fs/cgroup` are executed directly by the UML guest kernel, not the host Android kernel.
-- The Android host only observes a standard compute thread and a loopback networking socket (`gvproxy`).
+- The Android host observes only a standard compute thread and a loopback networking socket. The socket is `gvproxy`.
 
 ---
 
 ## 2. Daemon Interface Audit: `uml4termuxd`
 
 ### 2.1 Architecture & Communication Topology
-The supervisor daemon `uml4termuxd` (or its twin `uml4termux-rs daemon`) governs the lifecycle of the UML VM and exposes a local UNIX domain socket.
+The supervisor daemon `uml4termuxd` governs the lifecycle of the UML VM. It also exposes a local UNIX domain socket. The twin daemon is `uml4termux-rs daemon`.
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -63,22 +63,22 @@ The supervisor daemon `uml4termuxd` (or its twin `uml4termux-rs daemon`) governs
 └────────────────────────────────────────────────────────┘
 ```
 
-- **Socket Path:** `${UML4TERMUX_RUNTIME}/daemon.sock` (Default: `/data/data/com.termux/files/usr/tmp/uml4termux/daemon.sock`).
+- **Socket Path:** `${UML4TERMUX_RUNTIME}/daemon.sock`. The default is `/data/data/com.termux/files/usr/tmp/uml4termux/daemon.sock`.
 - **File Permissions:** Mode `0600`, daemon umask `0077`.
-- **Authentication:** Prevents cross-UID connections via `SO_PEERCRED` verification (`cr.uid == geteuid()`). Every request is logged in `${UML4TERMUX_RUNTIME}/audit.log`.
+- **Authentication:** Prevents cross-UID connections. The daemon uses `SO_PEERCRED` verification and the test `cr.uid == geteuid()`. Every request is logged in `${UML4TERMUX_RUNTIME}/audit.log`.
 
-### 2.2 Wire Protocol (Runtime Contract v1)
+### 2.2 Wire Protocol: Runtime Contract v1
 Clients send **a single line of text** terminated by `\n`. The daemon responds with **a single JSON line** terminated by `\n`, then shuts down the write stream.
 
 Protocol Commands:
 1. `protocol` -> `{"protocol":1,"runtime_contract":1,"commands":["status","stop","ports","expose","exec","protocol"]}`
 2. `status` -> `{"state":"running"|"completed"|"idle","child_pid":12345,"restarts":0,"kernel":"...","mem":"1024M","ncpus":"4","uptime_s":120}`
-3. `stop` -> `{"state":"stopping"}` (sends SIGTERM/sysrq to guest)
+3. `stop` -> `{"state":"stopping"}`. The daemon sends SIGTERM or sysrq to the guest.
 4. `ports` -> `{"exposures":["127.0.0.1:8080 -> 192.168.127.2:80"]}`
 5. `expose <host_port> <guest_port>` -> `{"exposed":"127.0.0.1:<host_port> -> 192.168.127.2:<guest_port>"}`
 6. `exec <command>` -> Executes command in guest shell via PTY console channel.
 
-### 2.3 Command Wrapping (`exec`) & Output Extraction
+### 2.3 Command Wrapping and Output Extraction
 The daemon `uml4termuxd` does not stream stdout/stderr directly over the control socket. The control socket confirms execution:
 ```c
 seq = ++g_exec_seq;
@@ -92,7 +92,7 @@ snprintf(resp, sizeof(resp),
 respond(fd, resp);
 ```
 
-#### Guest Execution Flow (`docker-init.sh`):
+#### Guest Execution Flow: docker-init.sh
 The console agent reads from `/dev/console`:
 ```sh
 ( while IFS= read -r aline; do
@@ -107,27 +107,27 @@ The console agent reads from `/dev/console`:
 1. Agent emits: `__AGENT_GOT__: echo __EXEC_<seq>_BEGIN__; <cmd>; echo __EXEC_<seq>_DONE_$?`
 2. Agent evaluates the line inside a subshell `( eval ... ) &`.
 3. Guest prints start marker: `__EXEC_<seq>_BEGIN__`.
-4. Output (stdout/stderr) streams to `/dev/console`.
-5. Guest prints completion marker with exit code: `__EXEC_<seq>_DONE_$?` (e.g. `__EXEC_1_DONE_0`).
+4. Output from stdout and stderr streams to `/dev/console`.
+5. Guest prints the completion marker with the exit code: `__EXEC_<seq>_DONE_$?`. An example is `__EXEC_1_DONE_0`.
 6. Daemon writes PTY master output to `${UML4TERMUX_RUNTIME}/uml-console.log`.
 
-#### Client-side Parsing Strategy (PDN Runtime):
+#### Client-side Parsing Strategy in PDN Runtime:
 - Open `${UML4TERMUX_RUNTIME}/uml-console.log`.
 - Locate the line immediately following `__EXEC_<seq>_BEGIN__`.
 - Accumulate output until reaching `__EXEC_<seq>_DONE_<rc>`.
 - Extract integer `<rc>` as the process exit code.
 
 ### 2.4 Safety Invariants & Error Handling
-1. **Command Line Limit (`WM_EXEC_MAX` = 2000 bytes):** Commands exceeding 2000 bytes are rejected with `{"error":"command too long","limit":2000}`. PDN client validates length prior to sending.
-2. **Rate Limiting (`exec_rate_limited`):** Controlled by `UML4TERMUXD_EXEC_MIN_INTERVAL_MS` (default 100ms). Returns `{"error":"rate-limited","min_interval_ms":100}`. PDN client performs backoff retry.
-3. **Guest Readiness (`guest not running`):** Returned if UML child process has not started or PTY is closed.
-4. **Exclusive Backing Image Lock (`F_SETLK`):** UML takes an exclusive advisory lock on the image. Multiple instances must use copy-on-write overlays (`UML4TERMUXD_COW`).
+1. **Command Line Limit:** The limit `WM_EXEC_MAX` is 2000 bytes. Commands longer than 2000 bytes are rejected with `{"error":"command too long","limit":2000}`. The PDN client validates the length before it sends data.
+2. **Rate Limiting:** The error code is `exec_rate_limited`. The interval is controlled by `UML4TERMUXD_EXEC_MIN_INTERVAL_MS`. The default value is 100ms. The daemon returns `{"error":"rate-limited","min_interval_ms":100}`. The PDN client performs a backoff retry.
+3. **Guest Readiness:** The daemon returns the error `guest not running` when the UML child process has not started or the PTY is closed.
+4. **Exclusive Backing Image Lock:** UML takes an exclusive advisory lock with `F_SETLK`. Multiple instances must use copy-on-write overlays. The control flag is `UML4TERMUXD_COW`.
 
 ---
 
 ## 3. Design Step 1: `RuntimeBackend` Trait for PDN
 
-### 3.1 Module Definition (`crates/proot-distro-core/src/runtime.rs`)
+### 3.1 Module Definition in crates/proot-distro-core/src/runtime.rs
 
 ```rust
 //! Runtime Backend Abstraction for PDN (PRoot Distro Next)
@@ -286,7 +286,7 @@ impl RuntimeBackend for ProotBackend {
 ```
 
 ### 3.3 `UmlBackend` Implementation
-Client communicating with `uml4termuxd` over UNIX domain sockets:
+The client communicates with `uml4termuxd` over UNIX domain sockets:
 
 ```rust
 pub struct UmlBackend {
@@ -523,13 +523,13 @@ async fn cmd_docker(container_name: Option<String>, args: Vec<String>) -> Result
 
 ## 4. Hardware & Software Assets Verified on Host
 
-- **Global CLI:** `/data/data/com.termux/files/usr/bin/uml4termux` (v0.3.0+ available).
+- **Global CLI:** `/data/data/com.termux/files/usr/bin/uml4termux`. Version v0.3.0+ is available.
 - **C Daemon Binary:** `/data/data/com.termux/files/home/workspace/uml4termux/bin/uml4termuxd`.
 - **Rust Client/Daemon:** `/data/data/com.termux/files/home/workspace/uml4termux/rust/target/release/uml4termux-rs`.
-- **Assets (`~/.local/share/uml4termux/`):**
-  - `linux-bionic-smp` (13.2 MB, SHA256 verified): arm64 UML kernel with `OVERLAY_FS`, `NETFILTER`, `CGROUP_PIDS`, `MEMCG`.
-  - `debian-docker.ext4.gz` (245 MB): Debian 12 rootfs with Docker Engine 20.10.24, containerd, runc, BuildKit.
-  - `gvproxy` (12.7 MB): User-mode BESS networking and port forwarder.
+- **Assets:** The assets live in `~/.local/share/uml4termux/`.
+  - `linux-bionic-smp`: 13.2 MB, SHA256 verified. This is an arm64 UML kernel with `OVERLAY_FS`, `NETFILTER`, `CGROUP_PIDS`, and `MEMCG`.
+  - `debian-docker.ext4.gz`: 245 MB. This is a Debian 12 rootfs with Docker Engine 20.10.24, containerd, runc, and BuildKit.
+  - `gvproxy`: 12.7 MB. This is a user-mode BESS networking and port forwarder.
 
 ---
 

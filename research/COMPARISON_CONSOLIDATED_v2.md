@@ -1,13 +1,13 @@
-# PDN vs proot-distro — Consolidated Capability Comparison (v2)
+# PDN vs proot-distro - Consolidated Capability Comparison v2
 
 **Date**: 2026-11-03
 **Host**: Termux / Android 16, aarch64
-**Tools**: `proot-distro 5.10.3` (@sylirre, Python) vs `PDN podnext 0.1.7` (Rust)
-**Method**: 4 parallel subagents — 2 source/posture inventories, 1 external (host-side) benchmark, 1 internal (in-container) matrix. All numbers are from live timed runs; raw logs kept in `research/`.
+**Tools**: `proot-distro 5.10.3`, Python package by @sylirre, vs `PDN podnext 0.1.7`, a Rust binary
+**Method**: 4 parallel subagents. 2 source/posture inventories, 1 external host-side benchmark, 1 internal in-container matrix. All numbers are from live timed runs. Raw logs stay in `research/`.
 
 ---
 
-## Evidence bundles (do not delete)
+## Evidence bundles, do not delete
 
 | File | What it holds |
 |---|---|
@@ -18,7 +18,7 @@
 
 ---
 
-## 1. Performance (3 runs each, median, real seconds)
+## 1. Performance, 3 runs each, median, real seconds
 
 | Operation | proot-distro | PDN | Winner |
 |---|---|---|---|
@@ -28,7 +28,7 @@
 | `run -- echo hello` | 0.740 | 0.418 | PDN |
 | backup (alpine) | 2.000 → 9,041,920 B | 3.205 → 4,631,494 B | PDN smaller; proot-distro faster |
 
-Structural, not incidental: PDN is one static Rust binary; proot-distro is a Python package whose every command re-execs an interpreter.
+Structural, not incidental. PDN is one static Rust binary. proot-distro is a Python package whose every command re-execs an interpreter.
 
 ---
 
@@ -47,9 +47,9 @@ Structural, not incidental: PDN is one static Rust binary; proot-distro is a Pyt
 
 ---
 
-## 3. In-container behaviour (14-test matrix)
+## 3. In-container behaviour, 14-test matrix
 
-**Parity (both correct):** `/etc/alpine-release` = 3.24.3 · `hostname` = localhost · `/etc` isolation (no Android files leak) · `ls /` identical · filesystem write · `ps` · `/dev` denied · `/proc/mounts` identical view · exit codes (1/0) · `/bin/sh → /bin/busybox` · shell emulation · **`/proc/uptime`, `/proc/loadavg`, `/proc/stat` byte-identical after the sysdata fix** (`124.08 932.76`, `0.12 0.07 0.02 2/165 765`, `cpu  1954 0 2872 93276 259 340 250 83 0 0`).
+**Parity, both correct:** `/etc/alpine-release` = 3.24.3. `hostname` = localhost. `/etc` isolation, no Android files leak. `ls /` identical. Filesystem write. `ps`. `/dev` denied. `/proc/mounts` identical view. Exit codes 1/0. `/bin/sh → /bin/busybox`. Shell emulation. **`/proc/uptime`, `/proc/loadavg`, `/proc/stat` byte-identical after the sysdata fix**: `124.08 932.76`, `0.12 0.07 0.02 2/165 765`, `cpu  1954 0 2872 93276 259 340 250 83 0 0`.
 
 **Differences, and what they are:**
 
@@ -60,17 +60,17 @@ Structural, not incidental: PDN is one static Rust binary; proot-distro is a Pyt
 | `/proc/version` unreadable in PDN | **FIXED** — PDN now fabricates the blocked `/proc` entries the same way proot-distro does (see section 4 row 12) |
 | `/etc/hosts` reduced to 2 lines | Minor divergence, benign |
 
-**Genuine defects found (all reproduced live):**
+**Genuine defects found, all reproduced live:**
 
-1. **Host env leaked into the guest** — including live `*_API_KEY` values, plus Termux's `LD_PRELOAD` (libtermux-exec) and `LD_LIBRARY_PATH`. Those two are host-ABI, so every guest musl binary died: `apk`, `busybox`, `getent`, `nslookup` → `relocation error`, exit 127. → **FIXED**
-2. **Command re-wrapping corrupted quoting** — argv was space-joined then wrapped in `/bin/sh -c` with no re-quoting, so `/bin/sh -c '<script>'` collapsed (the inner `-c` ate a word). → **FIXED**
-3. **No `/etc/resolv.conf` provisioned** — the guest had no DNS at all (`apk update` → temporary error), where proot-distro writes one at install. → **FIXED**
-4. **`podnext remove` was a silent no-op** — printed "removed", exit 0, container stayed on disk (and the next `install` then said "already exists"). → **FIXED**
-5. **No fake `/proc` entries** — every `/proc` file Android blocks (`uptime`, `stat`, `loadavg`, `version`, `vmstat`, `cap_last_cap`) returned `Permission denied` in the guest, so `top`/`htop`/`free`/`uptime` read nothing. proot-distro solves this with a `sysdata/` dir of stubs bound over the real paths; PDN had a `SysdataManager` that wrote the stubs **into the rootfs**, where `--bind=/proc` masks them — dead code that never ran. → **FIXED** by reimplementing it to write beside the rootfs and bind, gated on the host file actually being unreadable.
+1. **Host env leaked into the guest.** The leak included live `*_API_KEY` values, plus Termux's `LD_PRELOAD`, that is libtermux-exec, and `LD_LIBRARY_PATH`. Those two are host-ABI, so every guest musl binary died: `apk`, `busybox`, `getent`, `nslookup` → `relocation error`, exit 127. → **FIXED**
+2. **Command re-wrapping corrupted quoting.** argv was space-joined then wrapped in `/bin/sh -c` with no re-quoting. So `/bin/sh -c '<script>'` collapsed, because the inner `-c` ate a word. → **FIXED**
+3. **No `/etc/resolv.conf` provisioned.** The guest had no DNS at all, so `apk update` gave a temporary error. By contrast, proot-distro writes one at install. → **FIXED**
+4. **`podnext remove` was a silent no-op.** It printed "removed", exit 0, and the container stayed on disk. The next `install` then said "already exists". → **FIXED**
+5. **No fake `/proc` entries.** Every `/proc` file that Android blocks, that is `uptime`, `stat`, `loadavg`, `version`, `vmstat`, and `cap_last_cap`, returned `Permission denied` in the guest. So `top`, `htop`, `free`, and `uptime` read nothing. proot-distro solves this with a `sysdata/` dir of stubs bound over the real paths. PDN had a `SysdataManager` that wrote the stubs **into the rootfs**, where `--bind=/proc` masks them. That dead code never ran. → **FIXED.** PDN now reimplements it to write beside the rootfs and bind. The new code runs only when the host file is unreadable.
 
 ---
 
-## 4. PDN quality issues (post-fix status)
+## 4. PDN quality issues, post-fix status
 
 | # | Issue | Status |
 |---|---|---|
@@ -103,10 +103,10 @@ Structural, not incidental: PDN is one static Rust binary; proot-distro is a Pyt
 
 ---
 
-## 5b. Post-fix verification (live, final binary)
+## 5b. Post-fix verification, live, final binary
 
-Every row below was run against the rebuilt binary (`podnext 0.1.7`, 15819944 B) and the
-output pasted verbatim in the command column.
+Every row below was run against the rebuilt binary `podnext 0.1.7`, 15819944 B, and the
+output is pasted verbatim in the command column.
 
 | Check | Command | Result |
 |---|---|---|
@@ -129,7 +129,7 @@ output pasted verbatim in the command column.
 | `/proc/version` | `podnext login alpine -- cat /proc/version` | real kernel `6.1.157-android14-…` (proot-distro reports its fake `6.17.0-PRoot-Distro`) |
 
 **Note on `[5]`:** the long-lived `alpine` container predates the install-time fix, so it has
-no `/etc/resolv.conf`; a fresh install does, and `apk update` then resolves 28571 packages.
+no `/etc/resolv.conf`. A fresh install does, and `apk update` then resolves 28571 packages.
 Reinstall any container created before this change to pick the file up.
 
 ---
@@ -142,7 +142,7 @@ Reinstall any container created before this change to pick the file up.
 | `list` | 0.677 s | 0.03–0.034 s | unchanged |
 | `backup create alpine` | 2.000 s → 9,041,920 B | ~3.2 s → 4,061,406 B (420 entries, 335 symlinks) | PDN smaller, proot-distro faster |
 
-The fixes cost nothing measurable on the hot paths; `login`/`list` remain ~2–20× faster.
+The fixes cost nothing measurable on the hot paths. `login` and `list` remain ~2-20× faster.
 
 ---
 
@@ -157,4 +157,4 @@ The fixes cost nothing measurable on the hot paths; `login`/`list` remain ~2–2
 | Host↔guest file plumbing | proot-distro | PDN lacks `copy`/`sync` |
 | Fast scripted container ops | **PDN** | ~20× faster `list`, ~1.6× faster login |
 
-Net: after this round PDN's container *runtime* is correct (isolation, DNS, env hygiene, quoting, symlinks, remove). Its remaining weaknesses are **unfinished feature surface** (`restore`, `build`, `gitops`, `copy/sync`) and **non-persistent CLI state**, not core container behaviour.
+Net: after this round PDN's container *runtime* is correct. That covers isolation, DNS, env hygiene, quoting, symlinks, and remove. Its remaining weaknesses are **unfinished feature surface** in `restore`, `build`, `gitops`, and `copy/sync`, plus **non-persistent CLI state**. These are not core container behaviour issues.
