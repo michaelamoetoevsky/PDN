@@ -3128,3 +3128,26 @@ else that prepares a directory tree - fails under the native engine.
 
 Battery after both: 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job`, `cp_tree`), 0 SUSPECT. The wait4 work did not
 regress anything: the 28 include every case that was EQUAL before it.
+
+### `mkdir -p` loses every nested component (2026-11-10 02:40 WIB)
+
+Isolated from the `cp_tree` battery case:
+
+```text
+sh -c 'mkdir -p /tmp/kk/a/b; ls -d /tmp/kk /tmp/kk/a /tmp/kk/a/b'
+
+proot : /tmp/kk   /tmp/kk/a   /tmp/kk/a/b
+native: /tmp/kk   ls: cannot access '/tmp/kk/a': No such file or directory
+                  ls: cannot access '/tmp/kk/a/b': No such file or directory
+```
+
+The FIRST component is created and every nested one is silently dropped, with `mkdir -p` still reporting rc=0 - so a
+guest preparing a directory tree (a recursive copy, an archive extraction, a build's output path) gets a success and no
+tree. This is the same family as the descriptor-relative `unlinkat` that was closed earlier tonight, which is the
+measurement worth carrying forward: both are descriptor-relative calls on a nested name, and for the removal the engine
+was found writing a HOST directory into the guest's argument. The equivalent check for `mkdirat` is the next thing to
+run - is the directory it resolves with a host path, is the call refused, or is it translated to a parent that does not
+exist yet.
+
+State: battery 30 cases, 28 EQUAL, 2 DIFFERENT (`background_job` = wait, `cp_tree` = this). All fixes are pushed; the
+tree is clean.
