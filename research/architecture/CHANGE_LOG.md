@@ -2860,3 +2860,26 @@ What is measured and certain for whoever picks this up:
 
 Housekeeping: the edit scripts live in `$HOME/.hermes/cache/scratch/pdn-*.py` because a shell-level guard refuses
 command text mentioning a recursive remove, and the phrase appears legitimately in these comments.
+
+### A register read-back must happen AFTER set_regs, or it measures nothing (2026-11-10 19:20 WIB)
+
+A print placed inside `write_path_and_redirect_arg`, immediately after `*slot = scratch`, showed
+
+```text
+REGSET arg_index=1 wrote=0x7fd8d62ae0 x1=0x557a2fede0 after_x1=0x557a2fede0
+```
+
+and reads like "the write did not stick" - `x1` does not hold the scratch address. It does not mean that. The print sits
+BEFORE `ptrace::setregs`, so `GETREGSET` returns the registers as the kernel last knew them, which is exactly the state
+before the write. The measurement was mine and it was invalid; the print was removed and the file restored to `b9e9f8e`.
+
+For whoever continues: reading the registers back only answers anything at the NEXT stop (the exit stop of the same
+call), or after `setregs` has run. Also visible in the same output and worth keeping, because it is real:
+
+```text
+unlinkat(fd=4,         path, 0)          <- the FILE removal, descriptor-relative
+unlinkat(AT_FDCWD,     path, 0x200)      <- the DIRECTORY removal, AT_REMOVEDIR
+```
+
+Both forms reach the engine with the right arguments, and the engine writes a translation for both, which is why the
+remaining question is not "is the call translated" but "what does the tracee see when the call actually runs".
