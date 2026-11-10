@@ -3387,3 +3387,31 @@ handling of that name is right and the model of the guest was wrong. That is a c
 
 Housekeeping: every probe removed by brace counting, no debug markers in the tree, battery unchanged at 30 cases /
 28 EQUAL / 2 DIFFERENT, everything pushed.
+
+### Both processes ARE traced; the second chdir per process is what does not update (2026-11-10 08:25 WIB)
+
+The effect first, from one command on both engines - the mis-joined name lands somewhere visible:
+
+```text
+mkdir -p /tmp/v1/a
+native: /tmp/a EXISTS, /tmp/v1/a missing      <- "a" was joined onto /tmp
+proot : /tmp/v1/a exists, /tmp/a missing      <- proot resolved "a" against /tmp/v1
+```
+
+So proot knows the directory the engine does not: the guest does move into `v1`, and the engine's idea of the cwd stays
+at `/tmp`. That much is now certain, and it is proot's behaviour that defines the target.
+
+Then the census, which falsifies the untraced-process hypothesis:
+
+```text
+pid census:  185 stops for pid 4085 (the shell), 151 for pid 4087 (the mkdir child)
+chdir stops: 2 for pid 4085, 2 for pid 4087
+clone seen:  2 events, both on pid 4085
+```
+
+Both processes are traced and each asks for TWO chdirs, while the previous probe saw the cwd update only once per
+process. So the second chdir takes a path that does not update: either its translation reports `Ok(false)` and the move
+is refused, or it never reaches the table at all (the bootstrap exemption or the catch-all arm).
+
+Next probe, exactly one line of output per chdir: which branch each of the two chdir stops takes - table hit (and what it
+stored), bootstrap exemption, or catch-all.
