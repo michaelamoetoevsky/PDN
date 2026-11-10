@@ -1558,12 +1558,6 @@ fn parent_loop(
                             Ok(true) => {
                                 // A successful `chdir` MOVES the guest: remember where it went so the
                                 // next relative path resolves there (guest-absolute, lexically joined).
-                                if std::env::var_os("PDN_CHDIR").is_some() {
-                                    eprintln!(
-                                        "CHDIRDBG stop_entry={} name={name} before={:?}",
-                                        slots[idx].at_entry, slots[idx].cwd
-                                    );
-                                }
                                 if name == "SYS_chdir" {
                                     if let Ok(Some(raw)) = peek_cstr(pid, args[arg_index]) {
                                         // The value read HERE is what the engine itself just wrote for the kernel: a
