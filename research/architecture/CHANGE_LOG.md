@@ -3415,3 +3415,28 @@ is refused, or it never reaches the table at all (the bootstrap exemption or the
 
 Next probe, exactly one line of output per chdir: which branch each of the two chdir stops takes - table hit (and what it
 stored), bootstrap exemption, or catch-all.
+
+### The exemption swallows the shell's chdirs - measured, and the flag that should stop it (2026-11-10 09:00 WIB)
+
+One line per chdir stop, naming the state the branch decision reads:
+
+```text
+CH3 pid=6939 child=true  entry=true  execve_handled=false bootstrap=true  table=true   <- the engine's own child (sh)
+CH3 pid=6939 child=true  entry=false execve_handled=false bootstrap=true  table=true
+CH3 pid=6942 child=false entry=true  execve_handled=true  bootstrap=false table=true   <- the mkdir child, normal
+CH3 pid=6942 child=false entry=false execve_handled=true  bootstrap=false table=true
+```
+
+The shell - the engine's own child - reports `execve_handled = false` on BOTH of its chdir stops, so the bootstrap
+exemption swallows both, no translation happens, and its stored cwd never moves. Its children then inherit a wrongly
+remembered directory, which is the whole of `mkdir -p`'s behaviour: the leaf is created relative to `/tmp` where the
+guest means `/tmp/x1`.
+
+The flag is now set at the PTRACE_EVENT_EXEC stop, which is where the engine learns that the exec happened - and that
+alone did NOT fix the case (`/tmp/a` still appears instead of `/tmp/x1/a`), so something else keeps the flag false at the
+chdir stops or resets it. The battery is unchanged at 30 cases / 28 EQUAL / 2 DIFFERENT, so the change is harmless.
+
+Where this leaves the defect: the exemption is keyed on a flag that is provably false when it should be true, at a stop
+where the engine's own child is asking to move. The next probe is the same one-line print plus the flag's value at the
+execve ENTRY stop and at the exec event for that pid - which of the two paths sets it, and whether the slot the chdir
+reads is the same slot the exec event wrote.

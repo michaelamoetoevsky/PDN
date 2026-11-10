@@ -1704,6 +1704,12 @@ fn parent_loop(
                 // Direct evidence of WHICH binary ran, rather than an inference from an exit code.
                 // For a fork descendant this names the bind/rootfs binary the grandchild executed.
                 report.executed = std::fs::read_link(format!("/proc/{}/exe", pid.as_raw())).ok();
+                // The child has now EXEC'd, so the engine's own pre-exec `chdir` (the bootstrap) is behind it
+                // (2026-11-10). Without this flag the bootstrap exemption kept swallowing every later `chdir` of the
+                // engine's child: measured, both chdir stops of `sh` reported `execve_handled=false bootstrap=true`,
+                // so its cwd never updated and its children inherited the wrong directory - which is why
+                // `mkdir -p /tmp/x1/a` created `/tmp/a` where proot creates `/tmp/x1/a`.
+                slots[idx].execve_handled = true;
                 // FALSE, not true: the next `PTRACE_SYSCALL` stop is the execve's own syscall-EXIT
                 // (the syscall has already succeeded and the image is replaced), so the stop AFTER
                 // that is the first ENTRY of the new program. Measured 2026-11-08, p4 step 3b.
