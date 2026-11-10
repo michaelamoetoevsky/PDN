@@ -44,8 +44,9 @@ PASS=0; DIFF=0; BLOCKED=0; SUSPECT=0; CASES=0
 # run_case <name> <engine> <command...>  -> stdout+stderr into $WORK/<name>.<engine>, exit status into a file
 run_case() {
   name="$1"; engine="$2"; shift 2
-  # shellcheck disable=SC2086
-  env -u LD_LIBRARY_PATH PN_TEST_ROOT="$STORE" HOME="$STORE" \
+  # A per-case ceiling: without one a guest that blocks (measured: `wait` on a background job under the native
+  # engine) stalls the whole battery instead of being reported as that case's difference.
+  timeout 30 env -u LD_LIBRARY_PATH PN_TEST_ROOT="$STORE" HOME="$STORE" \
       "$BIN" --engine "$engine" run "$CONTAINER" -- "$@" \
       >"$WORK/$name.$engine.out" 2>"$WORK/$name.$engine.err"
   echo $? >"$WORK/$name.$engine.rc"

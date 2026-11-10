@@ -3083,3 +3083,21 @@ Two notes about the instrument, both earned:
 - `pkill -f 'podnext'` killed the shell that ran it, exactly the trap this environment's notes warn about - the pattern
   matches the command text itself. Kill by program identity (`ps -eo comm=`) and exclude your own PID, or use `timeout`
   on the single command instead of hunting processes.
+
+### `wait` on a background job: the guest's shell stops after it (2026-11-10 01:10 WIB)
+
+Measured with `sh -xc`, which shows where the guest stops rather than only what it printed:
+
+```text
+proot:  + echo start / start / + wait / + echo bg / bg / + echo wait-rc=0 / wait-rc=0     rc=0
+native: + echo start / start / + + wait / echo bg / bg                                     rc=0   <- nothing after
+```
+
+So under the native engine the guest reaches `wait`, the background child runs, and then the shell produces no further
+output at all - the commands after `wait` are never executed, while the run still reports 0. The engine reaps
+descendants with its own `waitpid`, so the guest's `wait4` is racing the tracer for the same child; whichever side
+observes the exit, the shell must still continue.
+
+Also fixed in the instrument, because it bit during this measurement: the battery now gives every case a 30 second
+ceiling. Without one, a guest that blocks under one engine stalls the whole battery instead of being reported as that
+case's difference - which is exactly what happened when this case hung.
