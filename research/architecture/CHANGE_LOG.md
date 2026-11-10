@@ -2675,3 +2675,30 @@ The next measurement is the value the engine actually reads for that argument at
 "the read returned nothing" is made on data.
 
 Battery status after tonight: 8 EQUAL, 1 DIFFERENT (`write_read`), 1 SUSPECT.
+
+### Where the `utimensat` refusal actually comes from: site 7, the catch-all arm (2026-11-10 15:10 WIB)
+
+Marking all seven refusal sites and running `touch /tmp/f1 && rm -f /tmp/f1`:
+
+```text
+REFUSAL-SITE-7  (x6)   ->  the non-strict push of the CATCH-ALL arm
+```
+
+not `translate_path_remote` at all. That arm fires for a syscall that reached the `else` of the whole path-handling
+chain, so `path_syscall(88)` must be returning `None` for a call whose name `syscall_name(88)` prints as
+`SYS_utimensat`. Two concrete explanations remain, and neither is yet measured:
+
+- the arm for `SYS_utimensat` in `path_syscall` is unreachable - an earlier `if` in the same function returns first,
+  or the arm sits after an early `return None`; or
+- `nix::libc::SYS_utimensat` on this target is not 88, so the comparison never matches.
+
+The measurement that decides it is one line of output: the value of `path_syscall(88)` and of
+`nix::libc::SYS_utimensat` printed at the same stop. It was not taken before this session stopped, and two
+attempts to gate the arm instead produced a gate in the wrong place (`rindex("} else {")` matched the `else` of the
+refusal CONSTRUCTION, not the arm's own), so the tree was restored to `246d027` rather than left carrying an
+unproven edit.
+
+Also noted while measuring: `unlinkat` on an absolute path translates correctly (`raw="/tmp/f1" cwd=Some("/")`), so
+the write-side table works; the failure is specific to the calls that land in the catch-all arm.
+
+State of the end-to-end battery against a real Debian rootfs: 8 EQUAL, 1 DIFFERENT (`write_read`), 1 SUSPECT.
