@@ -3253,3 +3253,25 @@ What that narrows: the create of the PARENT produces no translated write at all,
 `fd_guest_dir` is `None` for it - the descriptor's target matches neither the rootfs nor any bind at the instant the
 call is handled. The next measurement is the fd target and the bind list printed at that exact stop, which is the probe
 that failed to anchor twice; it belongs in `patch` with an exact anchor, not in string surgery.
+
+### Two more falsifications, and where the next measurement must look (2026-11-10 05:00 WIB)
+
+The parent create of `mkdir -p` still produces neither a translated write nor a call into the descriptor helper - measured
+by instrumenting `host_dir_for_fd_as_guest` itself: `PDN_FDPROBE=1` with `mkdir -p /tmp/n6/a` prints NOTHING, so that
+function is never reached for this case, and the earlier run showed exactly one WRITEPATH (the leaf).
+
+Two explanations were tested and are now excluded:
+
+- `guest_access` (the engine's own answer for the seccomp-blocked `faccessat2`) is NOT the liar: it reads the guest path,
+  resolves it, and answers `-ENOENT` when the host path does not exist - read in the code, not assumed;
+- the descriptor branch of `translate_path_remote` is not silent because the fd is rejected: the helper is simply never
+  called, which is what its own instrumented absence proves.
+
+What that leaves, stated as the next probe and nothing more: the create of the parent is either not an entry stop (the
+path translation is gated to entries, and an exit stop silently skips it - the same inversion class that was fixed for
+a fork child's FIRST syscall tonight), or it is a syscall the table does not carry. The measurement that decides it is
+the full stop trace of ONE `mkdir -p` run - every stop for every pid, with the syscall name and the entry/exit flag -
+which is the instrument that produced the night's biggest fix and has not yet been pointed at this case.
+
+State: tree clean, no debug markers, battery 30 cases / 28 EQUAL / 2 DIFFERENT, everything pushed, CI 15/15 on the last
+verified commit.
