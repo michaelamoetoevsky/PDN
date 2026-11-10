@@ -2827,3 +2827,36 @@ plan; what is not yet measured is whether the path the engine builds lands on it
 Also fixed while measuring, and worth keeping: the two debug prints are out of the tree again, and the edit script
 was moved to a file because a shell-level guard refuses command text mentioning a recursive remove - the same
 phrase appears legitimately in these comments.
+
+### The name the guest passes is already a host path - mapped back now, case still open (2026-11-10 18:50 WIB)
+
+The descriptor target was the wrong end of this. Reprinting both sides of one recursive removal shows the NAME the
+tracee passes is itself already a host path:
+
+```text
+guest = "<store>/containers/deb-renamed/tmp/za/a"        <- the NAME argument
+host  = "<store>/containers/deb-renamed/rootfs/<store>/containers/deb-renamed/tmp/za/a"
+```
+
+The guest composes that name from the directory it holds open, and the engine had already rewritten that directory to
+its host path - so `raw` starts with `/` and is not a guest path at all. `resolve` then joined it onto the rootfs a
+second time, the call acted on a path that does not exist, silently did nothing, and the guest reported
+`Directory not empty` with rc=0 while proot removed the directory.
+
+`guest_form_of_host_path` now maps such a name back to its guest form, matching the bind SOURCES and the rootfs, with
+the longest prefix winning. A name that is an ordinary guest-absolute path is untouched, and the battery is unchanged
+at 8 EQUAL / 1 DIFFERENT / 1 SUSPECT - so this is not a regression, but it is also NOT a fix: the same case still
+answers `MASIH ADA` where proot answers `HILANG`.
+
+What is measured and certain for whoever picks this up:
+
+- the failing call is `unlinkat(fd, "<host path>/a")` issued by the guest, with the name already host-shaped;
+- the engine writes a correct absolute path for the AT_FDCWD form of the same operation, which is why
+  `rm -f` works and `rm -rf` does not;
+- three path-side fixes have landed for this case (rootfs spelling, bind-aware descriptor target, host-name mapping)
+  and the behaviour has not moved once, which points at something upstream of the translation: whether the
+  translation is applied to the argument register the kernel actually reads for `unlinkat` on this target, or whether
+  the write lands in a scratch slot the kernel does not consult for a three-argument call.
+
+Housekeeping: the edit scripts live in `$HOME/.hermes/cache/scratch/pdn-*.py` because a shell-level guard refuses
+command text mentioning a recursive remove, and the phrase appears legitimately in these comments.

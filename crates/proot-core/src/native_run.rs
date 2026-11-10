@@ -2443,7 +2443,10 @@ fn translate_path_remote(
     // 2026-11-09 on a real Debian rootfs: `-- /bin/sh -c '/bin/dash -c "echo CHILD-RAN"'` printed
     // CHILD-RAN but exited 1 on the un-translated `.`), a path that cannot escape the rootfs.
     let guest = if raw.starts_with('/') {
-        raw
+        // The name may already be a HOST path: see `guest_form_of_host_path`. Only when it is inside the
+        // rootfs or a bind source does this change anything, so an ordinary guest-absolute name is
+        // untouched.
+        guest_form_of_host_path(&raw, rootfs, &plan.binds).unwrap_or(raw)
     } else {
         // A DIRFD-RELATIVE name with a REAL descriptor (2026-11-09). `rm -rf /root/x` refused with
         // "SYS_unlinkat (35) [its path could not be translated]" because `rm` opens the directory and
@@ -2733,6 +2736,63 @@ fn resolve_cwd(plan: &RunPlan, guest: &str) -> Result<PathBuf> {
 ///     opened `/system/lib64/libnetd_client.so`, which a string `starts_with("/sys")` accepts -
 ///     producing the silently wrong `/sys/tem/lib64/libnetd_client.so`. `Path::starts_with` compares
 ///     whole components, so `/system` no longer matches a bind on `/sys`.
+/// Turn a path that is ALREADY a host path back into its guest form (2026-11-10).
+///
+/// A guest can compose a name from material the engine itself translated: a recursive removal reads the
+/// directory it opened through a descriptor and builds `<that directory>/<entry>`, so the NAME it passes is a
+/// host path. Mapping that name into the rootfs again put the file somewhere else entirely and the call
+/// silently did nothing (the guest reported `Directory not empty` and exited 0 where proot removed the
+/// directory). Both the rootfs and the bind SOURCES are recognised - the guest's `/tmp` is a bind whose source
+/// lives outside the rootfs - and the LONGEST match wins, so a bind nested inside another cannot shadow it.
+fn guest_form_of_host_path(
+    raw: &str,
+    rootfs: &Path,
+    binds: &[(String, PathBuf)],
+) -> Option<String> {
+    let path = Path::new(raw);
+    let canonical = std::fs::canonicalize(path).ok();
+    let mut best: Option<(usize, String)> = None;
+
+    // Every prefix that can appear in a name the guest composed: the bind sources first (the guest's
+    // `/tmp` is a bind whose source is outside the rootfs), then the rootfs itself with an empty guest
+    // directory.
+    let mut prefixes: Vec<(PathBuf, String)> = Vec::new();
+    for (guest, host) in binds {
+        prefixes.push((host.clone(), guest.clone()));
+        if let Ok(c) = std::fs::canonicalize(host) {
+            prefixes.push((c, guest.clone()));
+        }
+    }
+    prefixes.push((rootfs.to_path_buf(), String::new()));
+    if let Ok(c) = std::fs::canonicalize(rootfs) {
+        prefixes.push((c, String::new()));
+    }
+
+    for (prefix, guest_dir) in prefixes {
+        let len = prefix.as_os_str().len();
+        if best.as_ref().is_some_and(|(l, _)| len <= *l) {
+            continue;
+        }
+        for candidate in [Some(path), canonical.as_deref()].into_iter().flatten() {
+            let Ok(rel) = candidate.strip_prefix(&prefix) else {
+                continue;
+            };
+            let joined = format!("{}/{}", guest_dir.trim_end_matches('/'), rel.display());
+            let joined = joined.trim_end_matches('/').to_string();
+            best = Some((
+                len,
+                if joined.is_empty() {
+                    "/".to_string()
+                } else {
+                    joined
+                },
+            ));
+            break;
+        }
+    }
+    best.map(|(_, joined)| joined)
+}
+
 pub fn resolve(rootfs: &Path, guest: &str, binds: &[(String, PathBuf)]) -> PathBuf {
     let guest_path = Path::new(guest);
     if guest_path.starts_with(rootfs) {
